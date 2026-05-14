@@ -1,0 +1,40 @@
+[project]
+name = "its-trusted-fl"
+version = "1.0.0"
+description = "智慧交通可信任聯邦式學習實驗"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "flwr[simulation]>=1.26.0",
+    "torch",
+    "opacus",
+]
+
+[tool.flwr.app]
+publisher = "my-univ-lab"
+components.serverapp = "server_app:app"
+components.clientapp = "client_app:app"
+
+
+#######################################################################
+# CONFIGURATION MIGRATION NOTICE:
+#
+# What was previously called "federation config" for SuperLink
+# connections in pyproject.toml has been renamed and moved.
+#
+# These settings are now **SuperLink connection configuration**
+# and are defined in the Flower configuration file.
+#
+# The entries below are commented out intentionally and are kept
+# only as a migration reference.
+#
+# Docs: https://flower.ai/docs/framework/ref-flower-configuration.html
+#######################################################################
+
+# [tool.flwr.federations]
+# default = "local-simulation"
+
+# [tool.flwr.federations.local-simulation]
+# options.num-supernodes = 5
+
+[tool.setuptools]
+py-modules = ["task", "client_app", "server_app"]
