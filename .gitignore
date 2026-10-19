@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# 資料（體積大且可由腳本重建）
+data/
+*.xml.gz
+*.partial
+
+# 實驗輸出
+results/
+*.pt
+
+# Flower 專案專用設定（run_experiments.sh 自動產生）與煙霧測試暫存
+.flwr_home/
+.smoke/
+
+# 編輯器 / 系統
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

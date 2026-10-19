@@ -57,8 +57,10 @@ def _write_csv(path: Path, fields, rows):
 class RunLogger:
     """每次收到彙整就重寫 CSV，即使中途中斷也留有紀錄。"""
 
-    def __init__(self, out_dir, config: dict, extra: dict | None = None):
+    def __init__(self, out_dir, config: dict, extra: dict | None = None,
+                 vdid_map: dict | None = None):
         self.dir = Path(out_dir)
+        self.vdid_map = {int(k): v for k, v in (vdid_map or {}).items()}
         self.dir.mkdir(parents=True, exist_ok=True)
         self.rounds: dict[int, dict] = {}
         self.clients: dict[tuple[int, int], dict] = {}
@@ -71,7 +73,7 @@ class RunLogger:
     def _client(self, r):
         key = (int(r["round"]), int(r["partition-id"]))
         row = self.clients.setdefault(key, {"round": key[0], "partition": key[1]})
-        row["vdid"] = r.get("vdid", row.get("vdid"))
+        row["vdid"] = self.vdid_map.get(key[1], "")
         return row
 
     def on_train(self, replies: list[dict]) -> dict:

@@ -39,15 +39,16 @@ class AggregateTest(unittest.TestCase):
 class RunLoggerTest(unittest.TestCase):
     def test_writes_round_metrics_clients_and_config(self):
         with tempfile.TemporaryDirectory() as d:
-            log = RunLogger(Path(d) / "run1", config={"use-dp": True, "noise-multiplier": 1.1})
+            log = RunLogger(Path(d) / "run1", config={"use-dp": True, "noise-multiplier": 1.1},
+                            vdid_map={0: "A", 1: "B"})
             replies = [
-                {"round": 1, "partition-id": 0, "vdid": "A", "num-examples": 10, "train-loss": 1.0, "epsilon": 0.5},
-                {"round": 1, "partition-id": 1, "vdid": "B", "num-examples": 10, "train-loss": 3.0, "epsilon": 0.7},
+                {"round": 1, "partition-id": 0, "num-examples": 10, "train-loss": 1.0, "epsilon": 0.5},
+                {"round": 1, "partition-id": 1, "num-examples": 10, "train-loss": 3.0, "epsilon": 0.7},
             ]
             log.on_train(replies)
             log.on_eval([
-                {"round": 1, "partition-id": 0, "vdid": "A", "num-examples": 5, "eval-loss": 0.2, "mae-kmh": 3.0, "mse-kmh": 9.0},
-                {"round": 1, "partition-id": 1, "vdid": "B", "num-examples": 5, "eval-loss": 0.4, "mae-kmh": 5.0, "mse-kmh": 25.0},
+                {"round": 1, "partition-id": 0, "num-examples": 5, "eval-loss": 0.2, "mae-kmh": 3.0, "mse-kmh": 9.0},
+                {"round": 1, "partition-id": 1, "num-examples": 5, "eval-loss": 0.4, "mae-kmh": 5.0, "mse-kmh": 25.0},
             ])
             m = _rows(Path(d, "run1", "metrics.csv"))
             self.assertEqual(len(m), 1)

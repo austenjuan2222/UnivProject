@@ -1,52 +1,115 @@
+"""ClientApp（Flower 1.26 Message API）：每個 client = 一個 VD 偵測器。
+
+- 資料：data.load_client_arrays（依時間切 train/test，標準化只用 train）。
+- DP：use-dp=true 時以 Opacus 做 DP-SGD（Poisson 取樣、逐樣本裁剪、加噪）。
+- ε：每輪把（σ, q, 步數）存進 context.state，用全部歷史計算累計 ε 回報。
+"""
+from __future__ import annotations
+
+import logging
+import warnings
+
 import torch
-import torch.nn.functional as F
-from opacus import PrivacyEngine
-from flwr.client import NumPyClient, ClientApp
-from task import TrafficModel, load_data
+from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
+from flwr.clientapp import ClientApp
 
-class ITSClient(NumPyClient):
-    def __init__(self):
-        self.model = TrafficModel()
-        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=0.01)
-        self.train_loader, self.test_loader = load_data() # 載入訓練與測試集
-        
-        # 差異隱私保護機制 [8, 9, 10]
-        self.privacy_engine = PrivacyEngine()
-        self.model, self.optimizer, self.train_loader = self.privacy_engine.make_private(
-            module=self.model, optimizer=self.optimizer, data_loader=self.train_loader,
-            noise_multiplier=1.1, max_grad_norm=1.0
+from data import load_client_arrays
+from task import TrafficModel, evaluate, make_loader, set_seed, train, unwrap
+
+warnings.filterwarnings("ignore", category=UserWarning, module="opacus")
+logging.getLogger("flwr").setLevel(logging.INFO)
+
+DP_STATE_KEY = "dp-history"
+
+app = ClientApp()
+
+
+def _cfg(context: Context) -> dict:
+    c = context.run_config
+    return {
+        "data_dir": str(c["data-dir"]),
+        "lookback": int(c["lookback"]),
+        "hidden": int(c["hidden-size"]),
+        "train_frac": float(c["train-frac"]),
+        "batch_size": int(c["batch-size"]),
+        "lr": float(c["learning-rate"]),
+        "epochs": int(c["local-epochs"]),
+        "use_dp": bool(c["use-dp"]),
+        "sigma": float(c["noise-multiplier"]),
+        "clip": float(c["max-grad-norm"]),
+        "delta": float(c["target-delta"]),
+        "seed": int(c["seed"]),
+    }
+
+
+def _client_data(context: Context, cfg: dict):
+    pid = int(context.node_config["partition-id"])
+    n = int(context.node_config["num-partitions"])
+    return pid, load_client_arrays(cfg["data_dir"], pid, n, cfg["lookback"], cfg["train_frac"])
+
+
+def _model(cfg: dict, msg: Message) -> TrafficModel:
+    model = TrafficModel(cfg["lookback"], cfg["hidden"])
+    model.load_state_dict(msg.content["arrays"].to_torch_state_dict(), strict=True)
+    return model
+
+
+@app.train()
+def train_fn(msg: Message, context: Context) -> Message:
+    from privacy import append_history, compute_epsilon, history_tuples
+
+    cfg = _cfg(context)
+    pid, d = _client_data(context, cfg)
+    rnd = int(msg.content["config"]["server-round"])
+    set_seed(cfg["seed"] + 1000 * pid + rnd)
+
+    model = _model(cfg, msg)
+    optimizer = torch.optim.SGD(model.parameters(), lr=cfg["lr"])
+    loader = make_loader(d["X_train"], d["y_train"], cfg["batch_size"], shuffle=True,
+                         seed=cfg["seed"] + 1000 * pid + rnd)
+    metrics = {"num-examples": len(d["y_train"]), "round": rnd, "partition-id": pid}
+
+    if cfg["use_dp"]:
+        from opacus import PrivacyEngine
+
+        sample_rate = 1.0 / len(loader)  # 與 Opacus make_private 內部使用的 q 相同
+        engine = PrivacyEngine(accountant="rdp")
+        model, optimizer, loader = engine.make_private(
+            module=model, optimizer=optimizer, data_loader=loader,
+            noise_multiplier=cfg["sigma"], max_grad_norm=cfg["clip"], poisson_sampling=True,
         )
+        loss, steps = train(model, loader, optimizer, cfg["epochs"])
 
-    def fit(self, parameters, config):
-        # 接收全局模型並訓練
-        self.set_parameters(parameters)
-        self.model.train()
-        for batch in self.train_loader:
-            X, y = batch
-            self.optimizer.zero_grad()
-            loss = F.mse_loss(self.model(X), y)
-            loss.backward()
-            self.optimizer.step()
-        return self.get_parameters(config={}), len(self.train_loader.dataset), {}
+        prev = context.state[DP_STATE_KEY] if DP_STATE_KEY in context.state else None
+        prev = {k: list(prev[k]) for k in ("sigma", "q", "steps")} if prev is not None else None
+        hist = append_history(prev, cfg["sigma"], sample_rate, steps)
+        context.state[DP_STATE_KEY] = MetricRecord(hist)
+        metrics["epsilon"] = compute_epsilon(history_tuples(hist), cfg["delta"])
+    else:
+        loss, steps = train(model, loader, optimizer, cfg["epochs"])
 
-    # 關鍵修正點：新增評估方法以解決 5 failures 問題 [4, 1]
-    def evaluate(self, parameters, config):
-        self.set_parameters(parameters)
-        self.model.eval()
-        loss = 0.0
-        with torch.no_grad():
-            for batch in self.test_loader:
-                X, y = batch
-                loss += F.mse_loss(self.model(X), y).item()
-        return loss / len(self.test_loader), len(self.test_loader.dataset), {}
+    metrics["train-loss"] = float(loss)
+    return Message(
+        content=RecordDict({
+            "arrays": ArrayRecord(unwrap(model).state_dict()),
+            "metrics": MetricRecord(metrics),
+        }),
+        reply_to=msg,
+    )
 
-    def get_parameters(self, config):
-        return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
 
-    def set_parameters(self, parameters):
-        params_dict = zip(self.model.state_dict().keys(), parameters)
-        state_dict = {k: torch.tensor(v) for k, v in params_dict}
-        self.model.load_state_dict(state_dict, strict=True)
-
-# 關鍵修正點：使用.to_client() 消除 Deprecation Warning [5]
-app = ClientApp(client_fn=lambda context: ITSClient().to_client())
+@app.evaluate()
+def evaluate_fn(msg: Message, context: Context) -> Message:
+    cfg = _cfg(context)
+    pid, d = _client_data(context, cfg)
+    model = _model(cfg, msg)
+    r = evaluate(model, d["X_test"], d["y_test"], d["mean"], d["std"])
+    metrics = {
+        "num-examples": len(d["y_test"]),
+        "round": int(msg.content["config"]["server-round"]),
+        "partition-id": pid,
+        "eval-loss": r["loss"],
+        "mae-kmh": r["mae_kmh"],
+        "mse-kmh": r["mse_kmh"],
+    }
+    return Message(content=RecordDict({"metrics": MetricRecord(metrics)}), reply_to=msg)

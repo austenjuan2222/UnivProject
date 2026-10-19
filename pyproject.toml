@@ -1,40 +1,67 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "its-trusted-fl"
-version = "1.0.0"
-description = "智慧交通可信任聯邦式學習實驗"
+version = "1.1.0"
+description = "智慧交通可信任聯邦式學習實驗（高公局 VD 車速預測 + DP-SGD）"
 license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
 dependencies = [
-    "flwr[simulation]>=1.26.0",
-    "torch",
-    "opacus",
+    "flwr[simulation]>=1.26.0,<1.27",
+    "torch>=2.2",
+    "opacus>=1.5.4",
+    "numpy",
+    "pandas>=2.0",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+py-modules = [
+    "task", "data", "privacy", "results_log", "vd_parse", "vd_preprocess",
+    "client_app", "server_app",
 ]
 
 [tool.flwr.app]
 publisher = "my-univ-lab"
-components.serverapp = "server_app:app"
-components.clientapp = "client_app:app"
 
+[tool.flwr.app.components]
+serverapp = "server_app:app"
+clientapp = "client_app:app"
+
+# 執行設定：可用 flwr run . --run-config "key=value ..." 覆寫。
+# data-dir / results-dir 請用絕對路徑（flwr run 會把 app 安裝到別處執行）；
+# scripts/run_experiments.sh 會自動帶入。
+[tool.flwr.app.config]
+num-server-rounds = 20
+num-clients = 8            # 必須等於 Flower 設定檔的 options.num-supernodes 與 manifest 的 VD 數
+local-epochs = 1
+batch-size = 64
+learning-rate = 0.05
+lookback = 12              # 過去 12 筆 5 分鐘車速 → 預測下一筆
+hidden-size = 32
+train-frac = 0.8
+use-dp = true              # false = 無 DP 對照組
+noise-multiplier = 1.1
+max-grad-norm = 1.0
+target-delta = 1e-5
+seed = 42
+data-dir = "data/processed"
+results-dir = "results"
+run-name = ""              # 空字串 = 自動命名（dp_sigma1.1_時間 / nodp_時間）
 
 #######################################################################
-# CONFIGURATION MIGRATION NOTICE:
-#
-# What was previously called "federation config" for SuperLink
-# connections in pyproject.toml has been renamed and moved.
-#
-# These settings are now **SuperLink connection configuration**
-# and are defined in the Flower configuration file.
-#
-# The entries below are commented out intentionally and are kept
-# only as a migration reference.
-#
+# Flower >= 1.26：num-supernodes（模擬的 client 數）不再寫在這裡，
+# 而是在 Flower 設定檔（$FLWR_HOME/config.toml）的 [superlink.<name>]。
+# scripts/run_experiments.sh 會把 FLWR_HOME 指到專案內 .flwr_home/
+# 並依 manifest 的 VD 數自動寫入，不會動到你家目錄的設定。
 # Docs: https://flower.ai/docs/framework/ref-flower-configuration.html
 #######################################################################
 
-# [tool.flwr.federations]
-# default = "local-simulation"
-
-# [tool.flwr.federations.local-simulation]
-# options.num-supernodes = 5
-
-[tool.setuptools]
-py-modules = ["task", "client_app", "server_app"]
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
