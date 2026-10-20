@@ -26,37 +26,70 @@ def _to_local_naive(times: pd.Series) -> pd.Series:
     return t.dt.tz_convert(LOCAL_TZ).dt.tz_localize(None)
 
 
-def aggregate_5min(df: pd.DataFrame, min_valid_minutes: int = 3) -> pd.DataFrame:
-    """單一 VD 的每分鐘資料 → 5 分鐘。車速以流量加權（流量為 0 時取平均）。"""
+def _partials(df: pd.DataFrame) -> pd.DataFrame:
+    """每分鐘資料 → 每 (vdid, 5 分鐘桶) 的可加總量，跨檔案合併時直接相加即可。"""
     d = pd.DataFrame({
-        "time": _to_local_naive(df["time"]),
-        "speed": pd.to_numeric(df["speed"], errors="coerce"),
-        "volume": pd.to_numeric(df["volume"], errors="coerce").fillna(0).clip(lower=0),
-        "occupancy": pd.to_numeric(df["occupancy"], errors="coerce"),
-    })
-    d = d.drop_duplicates("time").set_index("time").sort_index()
+        "vdid": df["vdid"].astype(str).to_numpy(),
+        "time": _to_local_naive(df["time"]).to_numpy(),
+        "speed": pd.to_numeric(df["speed"], errors="coerce").to_numpy(),
+        "volume": pd.to_numeric(df["volume"], errors="coerce").fillna(0).clip(lower=0).to_numpy(),
+        "occupancy": pd.to_numeric(df["occupancy"], errors="coerce").to_numpy(),
+    }).drop_duplicates(["vdid", "time"])
     valid = d["speed"].notna()
-    d["w_speed"] = d["speed"].where(valid, 0.0) * d["volume"].where(valid, 0.0)
-    d["w"] = d["volume"].where(valid, 0.0)
-    d["n_valid"] = valid.astype(int)
-
-    g = d.resample(FREQ, label="left", closed="left")
+    w = d["volume"].where(valid, 0.0)
     out = pd.DataFrame({
-        "w_speed": g["w_speed"].sum(),
-        "w": g["w"].sum(),
-        "mean_speed": g["speed"].mean(),
-        "n_valid": g["n_valid"].sum(),
-        "volume": g["volume"].sum(),
-        "occupancy": g["occupancy"].mean(),
+        "vdid": d["vdid"],
+        "bucket": d["time"].dt.floor(FREQ),
+        "w_speed": d["speed"].where(valid, 0.0) * w,
+        "w": w,
+        "speed_sum": d["speed"].where(valid, 0.0),
+        "n_valid": valid.astype(int),
+        "volume": d["volume"],
+        "occ_sum": d["occupancy"].fillna(0.0),
+        "occ_n": d["occupancy"].notna().astype(int),
     })
-    speed = np.where(out["w"] > 0, out["w_speed"] / out["w"].where(out["w"] > 0, 1.0),
-                     out["mean_speed"])
-    speed = pd.Series(speed, index=out.index).where(out["n_valid"] >= min_valid_minutes)
-    return pd.DataFrame({
-        "speed": speed,
-        "volume": out["volume"].where(out["n_valid"] >= min_valid_minutes),
-        "occupancy": out["occupancy"].where(out["n_valid"] >= min_valid_minutes),
+    return out.groupby(["vdid", "bucket"], sort=False).sum().reset_index()
+
+
+def _finalize(part: pd.DataFrame, min_valid_minutes: int) -> pd.DataFrame:
+    """單一 VD 的部分和 → 5 分鐘 speed/volume/occupancy（車速以流量加權，流量為 0 時取平均）。"""
+    g = part.groupby("bucket").sum(numeric_only=True).sort_index()
+    idx = pd.date_range(g.index.min(), g.index.max(), freq=FREQ)
+    g = g.reindex(idx, fill_value=0)
+    ok = g["n_valid"] >= min_valid_minutes
+    mean_speed = g["speed_sum"] / g["n_valid"].where(g["n_valid"] > 0)
+    speed = np.where(g["w"] > 0, g["w_speed"] / g["w"].where(g["w"] > 0, 1.0), mean_speed)
+    occ = g["occ_sum"] / g["occ_n"].where(g["occ_n"] > 0)
+    out = pd.DataFrame({
+        "speed": pd.Series(speed, index=idx).where(ok),
+        "volume": g["volume"].astype(float).where(ok),
+        "occupancy": occ.where(ok),
     })
+    out.index.name = "time"
+    return out
+
+
+def aggregate_5min(df: pd.DataFrame, min_valid_minutes: int = 3) -> pd.DataFrame:
+    """單一 VD 的每分鐘資料 → 5 分鐘。"""
+    return _finalize(_partials(df), min_valid_minutes)
+
+
+def aggregate_files(files, pattern: str = "N1", vd_ids=None, min_valid_minutes: int = 3) -> dict:
+    """逐檔讀取（記憶體只需一天份），合併部分和後回傳 {vdid: 5 分鐘 DataFrame}。"""
+    rx = re.compile(pattern)
+    parts = []
+    for f in files:
+        df = pd.read_csv(f, usecols=["vdid", "time", "speed", "volume", "occupancy"],
+                         dtype={"vdid": str, "time": str})
+        keep = df["vdid"].isin(vd_ids) if vd_ids else df["vdid"].map(lambda v: bool(rx.search(v)))
+        df = df[keep]
+        if len(df):
+            parts.append(_partials(df))
+        print(f"  已彙整 {Path(f).name}", flush=True)
+    if not parts:
+        return {}
+    allp = pd.concat(parts, ignore_index=True)
+    return {vdid: _finalize(g, min_valid_minutes) for vdid, g in allp.groupby("vdid", sort=True)}
 
 
 def fill_short_gaps(s: pd.Series, max_gap: int = 3) -> pd.Series:
@@ -86,13 +119,6 @@ def select_vds(series: dict, pattern: str, n: int, min_valid_ratio: float = 0.8)
     return ok[:n]
 
 
-def load_raw(raw_dir: Path) -> pd.DataFrame:
-    files = sorted(Path(raw_dir).glob("vd_minute_*.csv"))
-    if not files:
-        raise FileNotFoundError(f"{raw_dir} 找不到 vd_minute_*.csv，請先執行 download_vd.py")
-    return pd.concat((pd.read_csv(f) for f in files), ignore_index=True)
-
-
 def preprocess(
     raw_dir,
     out_dir,
@@ -104,13 +130,11 @@ def preprocess(
     min_valid_minutes: int = 3,
 ) -> dict:
     raw_dir, out_dir = Path(raw_dir), Path(out_dir)
-    raw = load_raw(raw_dir)
-    if vd_ids:
-        raw = raw[raw["vdid"].isin(vd_ids)]
-    else:
-        raw = raw[raw["vdid"].astype(str).str.contains(pattern, regex=True)]
-
-    per_vd = {vdid: aggregate_5min(g, min_valid_minutes) for vdid, g in raw.groupby("vdid")}
+    files = sorted(Path(raw_dir).glob("vd_minute_*.csv"))
+    if not files:
+        raise FileNotFoundError(f"{raw_dir} 找不到 vd_minute_*.csv，請先執行 download_vd.py")
+    per_vd = aggregate_files(files, pattern=pattern, vd_ids=vd_ids,
+                             min_valid_minutes=min_valid_minutes)
     if not per_vd:
         raise ValueError("篩選後沒有任何 VD 資料")
     start = min(df.index.min() for df in per_vd.values())

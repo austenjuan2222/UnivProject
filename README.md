@@ -39,7 +39,7 @@ pip install -e ".[dev]"
 python scripts/download_vd.py --start 2024-03-04 --days 14 --vd-pattern "N1"
 
 # 5 分鐘聚合、補短缺口、挑出資料最完整的 8 個 VD
-python scripts/preprocess_vd.py --num-clients 8 --vd-pattern "N1"
+python scripts/preprocess_vd.py --num-clients 8 --vd-pattern "^VD-N1-[NS]-[0-9.]+-M-"   # 只取主線（-M-），排除匝道
 ```
 
 - 一天約 1,440 個檔案，下載可中斷，重跑會跳過已完成的日期（`.done` 標記）。

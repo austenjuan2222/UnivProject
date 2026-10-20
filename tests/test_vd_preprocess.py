@@ -8,6 +8,7 @@ import pandas as pd
 
 from vd_preprocess import (
     aggregate_5min,
+    aggregate_files,
     fill_short_gaps,
     preprocess,
     safe_name,
@@ -50,6 +51,34 @@ class Aggregate5MinTest(unittest.TestCase):
         out = aggregate_5min(df, min_valid_minutes=3)
         self.assertTrue(np.isnan(out["speed"].iloc[0]))
         self.assertAlmostEqual(out["speed"].iloc[1], 80.0)
+
+
+class AggregateFilesTest(unittest.TestCase):
+    def test_file_by_file_equals_all_at_once_even_across_midnight(self):
+        rng = np.random.default_rng(0)
+        a = _minute_rows("VD-N1-A", "2024-03-04T23:50:00+08:00", 20)
+        b = _minute_rows("VD-N1-B", "2024-03-04T23:50:00+08:00", 20)
+        df = pd.concat([a, b], ignore_index=True)
+        df["speed"] = rng.uniform(40, 100, len(df)).round(1)
+        df["volume"] = rng.integers(0, 30, len(df))
+        df.loc[[3, 25], "speed"] = np.nan
+        with tempfile.TemporaryDirectory() as d:
+            # 檔案切在 23:58（像真實資料 VDLive_0000 含前一天 23:58 的紀錄），桶子 23:55 橫跨兩檔
+            cut = pd.to_datetime(df["time"], format="ISO8601") < pd.Timestamp("2024-03-04T23:58:00+08:00")
+            df[cut].to_csv(Path(d, "vd_minute_20240304.csv"), index=False)
+            df[~cut].to_csv(Path(d, "vd_minute_20240305.csv"), index=False)
+            per_vd = aggregate_files(sorted(Path(d).glob("vd_minute_*.csv")), pattern="N1")
+        for vdid, g in df.groupby("vdid"):
+            expected = aggregate_5min(g)
+            pd.testing.assert_frame_equal(per_vd[vdid], expected, check_freq=False, check_names=False)
+
+    def test_pattern_filters_vds(self):
+        with tempfile.TemporaryDirectory() as d:
+            pd.concat([_minute_rows("VD-N1-A", "2024-03-04T08:00:00+08:00", 10),
+                       _minute_rows("VD-N3-B", "2024-03-04T08:00:00+08:00", 10)]
+                      ).to_csv(Path(d, "vd_minute_20240304.csv"), index=False)
+            per_vd = aggregate_files([Path(d, "vd_minute_20240304.csv")], pattern="N1")
+        self.assertEqual(list(per_vd), ["VD-N1-A"])
 
 
 class FillShortGapsTest(unittest.TestCase):
