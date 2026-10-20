@@ -35,7 +35,8 @@ class PlotResultsTest(unittest.TestCase):
             _run(d, "dp_sigma1.1", True, 1.1, [6, 5], [0.5, 1])
             main([d])
             self.assertTrue(Path(d, "comparison.png").stat().st_size > 1000)
-            rows = list(csv.DictReader(Path(d, "summary.csv").open(encoding="utf-8")))
+            with Path(d, "summary.csv").open(encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
             self.assertEqual(rows[0]["final_mae_kmh"], "3.0")
             self.assertEqual(rows[1]["final_epsilon"], "1.0")
             self.assertEqual(rows[0]["final_epsilon"], "")

@@ -71,7 +71,7 @@ def main(grid: Grid, context: Context) -> None:
         "versions": _versions(),
         "data": {k: manifest.get(k) for k in ("start", "end", "num_steps", "selection")},
         "clients": manifest.get("clients", []),
-    }, vdid_map=vdids)
+    }, vdid_map=vdids, expected_clients=num_clients)
 
     _check_num_nodes(grid, num_clients)
 

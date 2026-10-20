@@ -3,7 +3,7 @@
 # 並檢查輸出。用來確認環境與程式能端到端運作；結果數字沒有意義。
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PY="${PYTHON:-python}"
+PY="${PYTHON:-$(command -v python3 || command -v python)}"
 TMP="$ROOT/.smoke"
 rm -rf "$TMP"
 mkdir -p "$TMP"

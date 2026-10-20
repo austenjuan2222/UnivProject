@@ -78,8 +78,11 @@ class TaskTorchTest(unittest.TestCase):
                                             data_loader=make_loader(X, y, 64, True),
                                             noise_multiplier=1.1, max_grad_norm=1.0)
         _, steps = train(pm, ploader, popt, epochs=1)
-        ours = compute_epsilon([(1.1, 1 / len(ploader), steps)], delta=1e-5)
-        self.assertAlmostEqual(ours, pe.get_epsilon(1e-5), places=6)
+        ours = compute_epsilon([(1.1, ploader.sample_rate, steps)], delta=1e-5)
+        # Opacus 內部用 q=1/len(loader)，等於或略大於真實 q → 我們的 ε 不會比它大
+        self.assertLessEqual(ours, pe.get_epsilon(1e-5) + 1e-9)
+        if abs(1 / len(ploader) - ploader.sample_rate) < 1e-12:
+            self.assertAlmostEqual(ours, pe.get_epsilon(1e-5), places=6)
 
 
 if __name__ == "__main__":

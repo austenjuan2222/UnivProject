@@ -7,7 +7,7 @@ name = "its-trusted-fl"
 version = "1.1.0"
 description = "智慧交通可信任聯邦式學習實驗（高公局 VD 車速預測 + DP-SGD）"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "flwr[simulation]>=1.26.0,<1.27",
     "torch>=2.2",

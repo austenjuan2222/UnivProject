@@ -33,7 +33,8 @@ def collect_runs(root: Path) -> list[dict]:
     runs = []
     for d in sorted(p for p in root.iterdir() if (p / "metrics.csv").exists()):
         cfg = json.loads((d / "config.json").read_text(encoding="utf-8")).get("run_config", {})
-        rows = list(csv.DictReader((d / "metrics.csv").open(encoding="utf-8")))
+        with (d / "metrics.csv").open(encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
         use_dp = bool(cfg.get("use-dp"))
         sigma = _f(cfg.get("noise-multiplier"))
         runs.append({

@@ -43,7 +43,8 @@ class DownloadDayTest(unittest.TestCase):
                                keep=lambda v: "N1" in v, base="https://h/x", workers=4)
             self.assertEqual(res["failed"], [])
             out = Path(d, "vd_minute_20240304.csv")
-            rows = list(csv.DictReader(out.open(encoding="utf-8")))
+            with out.open(encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
             self.assertEqual(len(rows), 1440)
             self.assertEqual({r["vdid"] for r in rows}, {"VD-N1-A"})
             self.assertEqual(rows[0]["time"], "2024-03-04T00:00:00+08:00")

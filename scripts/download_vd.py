@@ -46,7 +46,7 @@ def _fetch_parse(url, fetch, keep, retries, backoff):
             return parse_vdlive_xml(fetch(url), keep=keep), None
         except urllib.error.HTTPError as e:
             if e.code == 404:  # 該分鐘檔案不存在，不必重試
-                return [], f"HTTP 404"
+                return [], "HTTP 404"
             last = e
         except Exception as e:  # noqa: BLE001 - 網路/解析錯誤都記錄後重試
             last = e

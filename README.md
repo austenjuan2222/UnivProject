@@ -16,7 +16,7 @@
 
 ## 1. 安裝
 
-需要 Python 3.10+（測試用到 `tomllib`，建議 3.11+）。
+需要 Python 3.11+。`.sh` 腳本在 Windows 請用 Git Bash 或 WSL 執行。
 
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
@@ -45,6 +45,7 @@ python scripts/preprocess_vd.py --num-clients 8 --vd-pattern "N1"
 **資料清理規則**：車道車速 ≤0 或 ≥200、或 Status≠0 視為無效；VD 車速 = 有效車道的流量加權平均
 （流量皆為 0 時取平均）；每 5 分鐘至少 3 分鐘有效才算數；連續 ≤3 格（15 分鐘）的缺口線性內插，
 更長的缺口保留空值，含空值的訓練視窗直接捨棄；只挑有效率 ≥80% 的 VD。
+（內插在時間切分前進行，切點兩側 ≤15 分鐘的缺口會互相參考鄰近值，影響至多 3 個點，可忽略。）
 
 輸出：`data/processed/<VDID>.csv`（time, speed, volume, occupancy）與 `manifest.json`
 （client 編號 ↔ VDID、期間、有效率、篩選條件）。
@@ -83,8 +84,8 @@ results/<批次時間>/
 └── summary.csv      各 run 最終／最佳 MAE、RMSE、最終 ε
 ```
 
-- `metrics.csv`：每輪 train_loss、eval_loss、mae_kmh、rmse_kmh、epsilon_max、epsilon_mean
-- `clients.csv`：每輪每個 client（含 VDID）的樣本數、loss、MAE、RMSE、累計 ε
+- `metrics.csv`：每輪實際回覆的 client 數（不足時會發出警告）、train_loss、eval_loss、mae_kmh、rmse_kmh、epsilon_max、epsilon_mean
+- `clients.csv`：每輪每個 client（含 VDID）的樣本數、loss、MAE、RMSE、累計 ε、DP 步數與 q
 - `config.json`：本次完整 run config、套件版本、資料期間與 client 清單
 
 ## 4. 隱私預算 ε 怎麼算
@@ -94,16 +95,24 @@ accountant 會歸零，得到的只是「單輪」ε（舊版程式與 Flower �
 
 本專案每輪把 `(σ, q, 步數)` 存進該 client 的 `context.state`，每次以全部歷史計算 RDP 總和再轉成
 (ε, δ)，與 Opacus `RDPAccountant` 使用同一組 orders 與同一個函式（`privacy.py`）。
-q = 1 / 每 epoch 批次數（與 Opacus `make_private` 相同）。ε 是**每個 client 對其本地資料**的
-record-level 保證；`epsilon_max` 為所有 client 中最大者。
+q 取自 Opacus `DPDataLoader.sample_rate`（Poisson 取樣的真實機率 = 1/每 epoch 批次數）；
+每輪的步數與 q 也寫進 `clients.csv`（`dp_steps`、`sample_rate`），可自行驗算。
+ε 是**每個 client 對其本地資料**的 record-level 保證；`epsilon_max` 為所有 client 中最大者。
 
-以預設 14 天資料估算（每 client 約 3,200 個訓練視窗、批次 64、每輪 1 個 local epoch、δ=1e-5）：
+**ε 涵蓋的範圍（報告中請註明）**
+- 受保護的只有 client 上傳的**模型參數**。DP 模式下 client 仍回報未加雜訊的 `train-loss`、
+  訓練／測試樣本數與測試 MAE，這些是研究用診斷資訊，**不在 (ε, δ) 保證內**；
+  實際部署若要完整保證，應拿掉或另行加噪並計入預算。
+- 為了可重現，取樣與雜訊使用固定 seed 的亂數產生器（未開 Opacus `secure_mode`）；
+  形式上的 DP 假設雜訊不可預測，這是研究用設定。
+
+以預設 14 天資料估算（每 client 約 3,200 個訓練視窗、批次 64 → q≈1/50、每輪 1 個 local epoch、δ=1e-5），約為：
 
 | σ | 1 輪 | 5 輪 | 10 輪 | 20 輪 |
 |---|---|---|---|---|
-| 0.8 | 2.83 | 4.16 | 5.31 | 7.12 |
-| 1.1 | 1.26 | 1.91 | 2.55 | 3.55 |
-| 1.5 | 0.61 | 1.07 | 1.50 | 2.13 |
+| 0.8 | 2.85 | 4.20 | 5.37 | 7.20 |
+| 1.1 | 1.27 | 1.93 | 2.58 | 3.59 |
+| 1.5 | 0.62 | 1.08 | 1.51 | 2.16 |
 
 （實際值會隨資料量而變，以 `metrics.csv` 為準。）
 

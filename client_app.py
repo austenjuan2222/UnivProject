@@ -72,12 +72,14 @@ def train_fn(msg: Message, context: Context) -> Message:
     if cfg["use_dp"]:
         from opacus import PrivacyEngine
 
-        sample_rate = 1.0 / len(loader)  # 與 Opacus make_private 內部使用的 q 相同
         engine = PrivacyEngine(accountant="rdp")
         model, optimizer, loader = engine.make_private(
             module=model, optimizer=optimizer, data_loader=loader,
             noise_multiplier=cfg["sigma"], max_grad_norm=cfg["clip"], poisson_sampling=True,
         )
+        # Poisson 取樣的真實機率（= 1/批次數）；Opacus 內部 accountant 用 1/len(loader)，
+        # 少數 n 下會略大（較保守），這裡用真實值。
+        sample_rate = float(loader.sample_rate)
         loss, steps = train(model, loader, optimizer, cfg["epochs"])
 
         prev = context.state[DP_STATE_KEY] if DP_STATE_KEY in context.state else None
@@ -85,6 +87,8 @@ def train_fn(msg: Message, context: Context) -> Message:
         hist = append_history(prev, cfg["sigma"], sample_rate, steps)
         context.state[DP_STATE_KEY] = MetricRecord(hist)
         metrics["epsilon"] = compute_epsilon(history_tuples(hist), cfg["delta"])
+        metrics["dp-steps"] = int(steps)
+        metrics["sample-rate"] = sample_rate
     else:
         loss, steps = train(model, loader, optimizer, cfg["epochs"])
 

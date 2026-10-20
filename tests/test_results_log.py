@@ -9,7 +9,8 @@ from results_log import RunLogger, aggregate_eval, aggregate_train, make_run_nam
 
 
 def _rows(path):
-    return list(csv.DictReader(Path(path).open(encoding="utf-8")))
+    with Path(path).open(encoding="utf-8") as f:
+        return list(csv.DictReader(f))
 
 
 class AggregateTest(unittest.TestCase):
@@ -66,6 +67,20 @@ class RunLoggerTest(unittest.TestCase):
             cfg = json.loads(Path(d, "run1", "config.json").read_text(encoding="utf-8"))
             self.assertEqual(cfg["run_config"]["noise-multiplier"], 1.1)
             self.assertIn("started_at", cfg)
+
+    def test_partial_replies_warn_and_are_counted(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = RunLogger(Path(d), config={}, expected_clients=3)
+            with self.assertWarnsRegex(UserWarning, "2/3"):
+                log.on_train([
+                    {"round": 1, "partition-id": 0, "num-examples": 1, "train-loss": 1.0,
+                     "epsilon": 0.5, "dp-steps": 4, "sample-rate": 0.25},
+                    {"round": 1, "partition-id": 1, "num-examples": 1, "train-loss": 1.0,
+                     "epsilon": 0.5, "dp-steps": 4, "sample-rate": 0.25},
+                ])
+            self.assertEqual(_rows(Path(d, "metrics.csv"))[0]["n_train_clients"], "2")
+            c = _rows(Path(d, "clients.csv"))[0]
+            self.assertEqual((c["dp_steps"], c["sample_rate"]), ("4", "0.25"))
 
     def test_make_run_name(self):
         self.assertTrue(make_run_name({"use-dp": True, "noise-multiplier": 1.1}).startswith("dp_sigma1.1_"))

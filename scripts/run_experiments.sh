@@ -17,7 +17,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PY="${PYTHON:-python}"
+PY="${PYTHON:-$(command -v python3 || command -v python)}"
 DATA_DIR="$(cd "${DATA_DIR:-$ROOT/data/processed}" && pwd)"
 RESULTS_DIR="${RESULTS_DIR:-$ROOT/results}"
 ROUNDS="${ROUNDS:-20}"
