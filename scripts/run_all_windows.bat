@@ -26,6 +26,7 @@ set VPY=%CD%\.venv\Scripts\python.exe
 "%VPY%" -m pip install -e ".[dev]" >> "%LOG%" 2>&1 || (echo FAIL install >> "%STATUS%" & exit /b 1)
 "%VPY%" -m pip list >> "%LOG%" 2>&1
 echo OK install >> "%STATUS%"
+"%VPY%" scripts\fix_torch_windows.py >> "%LOG%" 2>&1 && (echo OK torch >> "%STATUS%") || (echo FAIL torch-need-vc_redist >> "%STATUS%" & exit /b 1)
 
 "%VPY%" -m pytest -v >> "%LOG%" 2>&1 && (echo OK pytest >> "%STATUS%") || (echo FAIL pytest >> "%STATUS%")
 
