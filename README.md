@@ -16,7 +16,12 @@
 
 ## 1. 安裝
 
-需要 Python 3.11+。`.sh` 腳本在 Windows 請用 Git Bash 或 WSL 執行。
+需要 Python 3.11+。Windows 可直接用跨平台的 `python scripts/run_experiments.py`（不需 bash），
+或點兩下 `scripts/run_all_windows.bat` 一次跑完安裝、測試、煙霧測試、下載、前處理與實驗
+（進度寫在 `status.txt`、完整輸出在 `run_log.txt`）。
+
+**Windows 注意**：PyTorch 需要 Microsoft Visual C++ Redistributable（x64）。若出現
+`WinError 126 ... torch\lib\shm.dll`，請安裝 https://aka.ms/vs/17/release/vc_redist.x64.exe 後重開終端機。
 
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
