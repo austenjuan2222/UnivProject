@@ -6,6 +6,7 @@ setlocal
 cd /d "%~dp0\.."
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
+set PYTHONUNBUFFERED=1
 set LOG=%CD%\run_log.txt
 set STATUS=%CD%\status.txt
 echo started %DATE% %TIME% > "%STATUS%"
@@ -33,7 +34,7 @@ echo OK install >> "%STATUS%"
 "%VPY%" scripts\run_experiments.py --smoke >> "%LOG%" 2>&1 && (echo OK smoke >> "%STATUS%") || (echo FAIL smoke >> "%STATUS%" & exit /b 1)
 
 if /i "%1"=="skipdownload" goto preprocess
-"%VPY%" scripts\download_vd.py --start 2024-03-04 --days 14 --vd-pattern "N1" --workers 8 >> "%LOG%" 2>&1 && (echo OK download >> "%STATUS%") || (echo WARN download >> "%STATUS%")
+"%VPY%" scripts\download_vd.py --start 2024-03-04 --days 14 --vd-pattern "N1" --workers 2 >> "%LOG%" 2>&1 && (echo OK download >> "%STATUS%") || (echo WARN download >> "%STATUS%")
 
 :preprocess
 "%VPY%" scripts\preprocess_vd.py --num-clients 8 --vd-pattern "N1" >> "%LOG%" 2>&1 || (echo FAIL preprocess >> "%STATUS%" & exit /b 1)
