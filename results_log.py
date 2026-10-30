@@ -9,10 +9,10 @@ import warnings
 from pathlib import Path
 
 ROUND_FIELDS = ["round", "n_train_clients", "n_eval_clients", "train_loss", "eval_loss",
-                "mae_kmh", "rmse_kmh", "epsilon_max", "epsilon_mean"]
+                "mae_kmh", "rmse_kmh", "epsilon_max", "epsilon_mean", "naive_mae_kmh"]
 CLIENT_FIELDS = ["round", "partition", "vdid", "num_train", "train_loss", "epsilon",
                  "dp_steps", "sample_rate",
-                 "num_test", "eval_loss", "mae_kmh", "rmse_kmh"]
+                 "num_test", "eval_loss", "mae_kmh", "rmse_kmh", "naive_mae_kmh"]
 
 
 def _wmean(replies, key):
@@ -30,11 +30,14 @@ def aggregate_train(replies: list[dict]) -> dict:
 
 
 def aggregate_eval(replies: list[dict]) -> dict:
-    return {
+    out = {
         "eval_loss": _wmean(replies, "eval-loss"),
         "mae_kmh": _wmean(replies, "mae-kmh"),
         "rmse_kmh": math.sqrt(_wmean(replies, "mse-kmh")),
     }
+    if replies and all("naive-mae-kmh" in r for r in replies):
+        out["naive_mae_kmh"] = _wmean(replies, "naive-mae-kmh")
+    return out
 
 
 def make_run_name(cfg: dict) -> str:
@@ -106,7 +109,8 @@ class RunLogger:
         for r in replies:
             row = self._client(r)
             row.update(num_test=int(r["num-examples"]), eval_loss=float(r["eval-loss"]),
-                       mae_kmh=float(r["mae-kmh"]), rmse_kmh=math.sqrt(float(r["mse-kmh"])))
+                       mae_kmh=float(r["mae-kmh"]), rmse_kmh=math.sqrt(float(r["mse-kmh"])),
+                       naive_mae_kmh=float(r["naive-mae-kmh"]) if "naive-mae-kmh" in r else None)
         self._flush()
         return agg
 

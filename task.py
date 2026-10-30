@@ -69,10 +69,15 @@ def train(model, loader, optimizer, epochs: int, device="cpu") -> tuple[float, i
 
 @torch.no_grad()
 def evaluate(model, X, y, mean: float, std: float, device="cpu") -> dict:
-    """回傳標準化尺度的 MSE，以及還原成 km/h 的 MAE、MSE。"""
+    """回傳標準化尺度的 MSE，以及還原成 km/h 的 MAE、MSE。
+
+    naive_mae_kmh 是「下一筆 = 最後一筆」（persistence）的 MAE，作為模型是否有學到東西的基準。
+    """
     model = unwrap(model).to(device).eval()
     Xt, yt = torch.from_numpy(X).to(device), torch.from_numpy(y).to(device)
     pred = model(Xt)
     loss = F.mse_loss(pred, yt).item()
     err = (pred - yt) * std
-    return {"loss": loss, "mae_kmh": err.abs().mean().item(), "mse_kmh": (err**2).mean().item()}
+    naive = ((Xt[:, -1] - yt) * std).abs().mean().item()
+    return {"loss": loss, "mae_kmh": err.abs().mean().item(), "mse_kmh": (err**2).mean().item(),
+            "naive_mae_kmh": naive}

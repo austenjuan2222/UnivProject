@@ -61,6 +61,9 @@ python scripts/preprocess_vd.py --num-clients 8 --vd-pattern "^VD-N1-[NS]-[0-9.]
 bash scripts/run_experiments.sh                          # 20 輪；無 DP + DP σ=1.1
 ROUNDS=30 SIGMAS="0.8 1.1 1.5" bash scripts/run_experiments.sh   # 多個隱私等級
 EXTRA="learning-rate=0.02 local-epochs=2" bash scripts/run_experiments.sh
+SIGMAS="0.8 1.1 1.5" SEEDS="1 2 3" bash scripts/run_experiments.sh   # 每個設定重複 3 個 seed
+# Windows / 不用 bash：
+python scripts/run_experiments.py --sigmas 0.8 1.1 1.5 --seeds 1 2 3
 ```
 
 腳本會：
@@ -85,11 +88,13 @@ flwr run . local --run-config "num-clients=8 use-dp=false data-dir='/abs/path/da
 results/<批次時間>/
 ├── nodp/            metrics.csv  clients.csv  config.json  final_model.pt
 ├── dp_sigma1.1/     （同上）
-├── comparison.png   左：各 run 每輪測試 MAE；右：DP run 累計 ε
-└── summary.csv      各 run 最終／最佳 MAE、RMSE、最終 ε
+├── comparison.png         左：各設定每輪測試 MAE（多 seed 時畫平均）；右：DP 累計 ε
+├── summary.csv            各 run 最終／最佳 MAE、RMSE、最終 ε、naive 基準與改善幅度
+└── summary_by_config.csv  同設定跨 seed 的最終 MAE 平均 ± 標準差
 ```
 
-- `metrics.csv`：每輪實際回覆的 client 數（不足時會發出警告）、train_loss、eval_loss、mae_kmh、rmse_kmh、epsilon_max、epsilon_mean
+- `metrics.csv`：每輪實際回覆的 client 數（不足時會發出警告）、train_loss、eval_loss、mae_kmh、rmse_kmh、epsilon_max、epsilon_mean、
+  naive_mae_kmh（「下一筆 = 最後一筆」的 MAE，模型至少要贏過它才算有學到東西）
 - `clients.csv`：每輪每個 client（含 VDID）的樣本數、loss、MAE、RMSE、累計 ε、DP 步數與 q
 - `config.json`：本次完整 run config、套件版本、資料期間與 client 清單
 
@@ -120,6 +125,21 @@ q 取自 Opacus `DPDataLoader.sample_rate`（Poisson 取樣的真實機率 = 1/�
 | 1.5 | 0.62 | 1.08 | 1.51 | 2.16 |
 
 （實際值會隨資料量而變，以 `metrics.csv` 為準。）
+
+### 解讀：為什麼不同 σ 的 MAE 幾乎一樣？
+
+雜訊確實有加上（ε 隨 σ 明顯不同就是證據），只是在這個設定下影響很小：DP-SGD 每步加在平均梯度上的
+雜訊標準差是 σ·C / 批次大小 ≈ 1.1 × 1.0 / 64 ≈ 0.017，再經 8 個 client 平均。
+以下是合成資料（8 個 client、20 輪、2026-10-30）的觀察，**真實資料需另外確認**：
+- σ=0.8/1.1/1.5 之間的最終 MAE 差約 0.0005～0.002 km/h，小於換 seed 造成的差異（約 0.03 km/h）。
+- 只裁剪、不加雜訊（σ=0）的結果與加雜訊幾乎相同 → DP 與無 DP 的差距主要來自**逐樣本梯度裁剪**，而非雜訊。
+- 裁剪上限 C=10 明顯變差；C=3～5 與 C=1 沒有一致的優劣。
+- 學習率 0.05→0.2（各 3 個 seed）：DP σ=1.1 的 MAE 從 1.684±0.015 降到 1.652±0.010，
+  反而略優於無 DP（lr=0.05 為 1.668±0.014）；無 DP 用 lr=0.2 則變差且不穩定（1.725±0.069）。
+  裁剪把步長限住，所以 DP 能承受較大的學習率；兩組最好各自調學習率再比較。
+
+因此報告比較 σ 時請用 `--seeds` 跑多個 seed、看 `summary_by_config.csv` 的平均 ± 標準差，
+並在真實資料上用相同學習率比較 DP 與無 DP。
 
 ## 5. 測試
 

@@ -47,6 +47,15 @@ class TaskTorchTest(unittest.TestCase):
         self.assertAlmostEqual(r["mae_kmh"], 10.0, places=5)
         self.assertAlmostEqual(r["mse_kmh"], 100.0, places=4)
 
+    def test_evaluate_reports_naive_last_value_baseline(self):
+        from task import TrafficModel, evaluate
+        X = np.zeros((2, 12), np.float32)
+        X[:, -1] = [0.5, -1.0]                     # 最後一筆（標準化）
+        y = np.array([1.0, -1.0], np.float32)
+        r = evaluate(TrafficModel(12), X, y, mean=80.0, std=10.0)
+        # 「下一筆 = 最後一筆」的誤差：|0.5-1|*10=5、|-1-(-1)|*10=0 → 平均 2.5
+        self.assertAlmostEqual(r["naive_mae_kmh"], 2.5, places=5)
+
     @unittest.skipUnless(HAVE_OPACUS, "需要 opacus")
     def test_dp_training_steps_and_unwrapped_state_dict(self):
         import torch

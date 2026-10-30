@@ -115,5 +115,6 @@ def evaluate_fn(msg: Message, context: Context) -> Message:
         "eval-loss": r["loss"],
         "mae-kmh": r["mae_kmh"],
         "mse-kmh": r["mse_kmh"],
+        "naive-mae-kmh": r["naive_mae_kmh"],
     }
     return Message(content=RecordDict({"metrics": MetricRecord(metrics)}), reply_to=msg)

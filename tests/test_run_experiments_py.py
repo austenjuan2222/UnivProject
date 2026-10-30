@@ -21,6 +21,18 @@ class BuildRunsTest(unittest.TestCase):
         self.assertIn("use-dp=false", runs[0][1])
         self.assertIn("use-dp=true noise-multiplier=0.8", runs[2][1])
 
+    def test_multiple_seeds_repeat_every_config_with_suffix(self):
+        runs = build_runs(3, 2, "/d", "/r", ["1.1"], False, "", seeds=[1, 2])
+        self.assertEqual([r[0] for r in runs],
+                         ["nodp_seed1", "dp_sigma1.1_seed1", "nodp_seed2", "dp_sigma1.1_seed2"])
+        self.assertIn("seed=2", runs[3][1])
+        self.assertIn("run-name='dp_sigma1.1_seed2'", runs[3][1])
+
+    def test_single_seed_keeps_plain_names(self):
+        runs = build_runs(3, 2, "/d", "/r", ["1.1"], False, "", seeds=[7])
+        self.assertEqual([r[0] for r in runs], ["nodp", "dp_sigma1.1"])
+        self.assertIn("seed=7", runs[1][1])
+
     def test_windows_backslashes_become_forward_slashes(self):
         runs = build_runs(3, 2, r"C:\Users\x\data", r"C:\Users\x\res", ["1.1"], True, "")
         self.assertEqual(len(runs), 1)
