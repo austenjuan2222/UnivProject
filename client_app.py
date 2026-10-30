@@ -95,6 +95,11 @@ def train_fn(msg: Message, context: Context) -> Message:
         loss, steps = train(model, loader, optimizer, cfg["epochs"], loss=cfg["loss"])
 
     metrics["train-loss"] = float(loss)
+    # 個人化參考：本輪剛在本地訓練完、尚未聚合的模型在本地測試集的 MAE。
+    # 這個模型本來就是 DP 訓練的輸出，不會多花隱私預算；它只留在本地，不影響聚合。
+    r = evaluate(unwrap(model), d["X_test"], d["y_test"], d["mean"], d["std"])
+    metrics["local-mae-kmh"] = r["mae_kmh"]
+    metrics["num-test"] = len(d["y_test"])
     return Message(
         content=RecordDict({
             "arrays": ArrayRecord(unwrap(model).state_dict()),

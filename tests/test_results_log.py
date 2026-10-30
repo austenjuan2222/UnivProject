@@ -23,6 +23,14 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual(out["epsilon_max"], 4.0)
         self.assertEqual(out["epsilon_mean"], 3.0)
 
+    def test_train_pools_local_model_mae_by_test_size(self):
+        out = aggregate_train([
+            {"num-examples": 100, "train-loss": 1.0, "local-mae-kmh": 2.0, "num-test": 1},
+            {"num-examples": 100, "train-loss": 1.0, "local-mae-kmh": 6.0, "num-test": 3},
+        ])
+        self.assertAlmostEqual(out["local_mae_kmh"], 5.0)
+        self.assertNotIn("local_mae_kmh", aggregate_train([{"num-examples": 1, "train-loss": 1.0}]))
+
     def test_train_without_dp_has_no_epsilon(self):
         out = aggregate_train([{"num-examples": 1, "train-loss": 1.0}])
         self.assertNotIn("epsilon_max", out)

@@ -47,6 +47,7 @@ def collect_runs(root: Path) -> list[dict]:
             "rmse": [_f(r.get("rmse_kmh")) for r in rows],
             "eps": [_f(r.get("epsilon_max")) for r in rows],
             "naive": [_f(r.get("naive_mae_kmh")) for r in rows],
+            "local": [_f(r.get("local_mae_kmh")) for r in rows],
         })
     runs.sort(key=lambda r: (r["use_dp"], -(r["sigma"] or 0), r["name"]))
     return runs
@@ -124,7 +125,8 @@ def write_summary(runs: list[dict], out: Path) -> None:
     with out.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["run", "label", "use_dp", "sigma", "rounds", "final_mae_kmh", "final_rmse_kmh",
-                    "best_mae_kmh", "final_epsilon", "naive_mae_kmh", "improve_vs_naive_pct"])
+                    "best_mae_kmh", "final_epsilon", "naive_mae_kmh", "improve_vs_naive_pct",
+                    "final_local_mae_kmh"])
         for r in runs:
             maes = [m for m in r["mae"] if m is not None]
             last = lambda xs: xs[-1] if xs and xs[-1] is not None else ""  # noqa: E731
@@ -133,7 +135,7 @@ def write_summary(runs: list[dict], out: Path) -> None:
             w.writerow([r["name"], r["label"], r["use_dp"], r["sigma"] if r["use_dp"] else "",
                         len(r["round"]), mae, last(r["rmse"]),
                         min(maes) if maes else "", last(r["eps"]) if r["use_dp"] else "",
-                        naive, improve])
+                        naive, improve, last(r.get("local", []))])
 
 
 def write_group_summary(runs: list[dict], out: Path) -> None:

@@ -45,6 +45,7 @@ class PlotResultsTest(unittest.TestCase):
             self.assertEqual(rows[1]["naive_mae_kmh"], "")
             # 相對 naive 基準改善多少（%）：(4.5-3)/4.5
             self.assertAlmostEqual(float(rows[0]["improve_vs_naive_pct"]), 100 / 3, places=4)
+            self.assertEqual(rows[0]["final_local_mae_kmh"], "")      # 舊 metrics.csv 沒有此欄
 
     def test_seed_runs_are_grouped_with_mean_and_std(self):
         with tempfile.TemporaryDirectory() as d:
