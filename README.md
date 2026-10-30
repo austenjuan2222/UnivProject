@@ -95,7 +95,7 @@ results/<批次時間>/
 
 - `metrics.csv`：每輪實際回覆的 client 數（不足時會發出警告）、train_loss、eval_loss、mae_kmh、rmse_kmh、epsilon_max、epsilon_mean、
   naive_mae_kmh（「下一筆 = 最後一筆」的 MAE，模型至少要贏過它才算有學到東西）、
-  local_mae_kmh（各 client 本輪本地訓練完、聚合前的模型在自己測試集的 MAE，即「個人化」模型的參考值；
+  local_mae_kmh（各 client 本輪本地訓練完、聚合前的模型在自己測試集的 MAE，相當於全域模型再多 1 輪本地訓練，可作為個人化的粗略參考；
   它就是 DP 訓練的輸出，不多花隱私預算）
 - `summary.csv` 的 `best_mae_kmh` 是在測試集上挑最好的一輪，只供參考；報告請用 `final_mae_kmh`
 - `clients.csv`：每輪每個 client（含 VDID）的樣本數、loss、MAE、RMSE、累計 ε、DP 步數與 q
@@ -146,7 +146,7 @@ q 取自 Opacus `DPDataLoader.sample_rate`（Poisson 取樣的真實機率 = 1/�
   加時間特徵（時段、假日）或流量／佔有率特徵、回看 24 筆，都沒有比新預設更好。
 - 回看 6 筆（30 分鐘）在 5 個 seed 下：DP 2.703 ± 0.013（與 12 筆的 2.708 相當），無 DP 2.707 ± 0.014
   （12 筆為 2.752 ± 0.038）。若想讓無 DP 對照組更強，可用 `--extra "lookback=6"`。
-- 個人化參考（各 client 最後一輪本地模型）：DP 2.696、無 DP 2.711，比全域模型再好約 0.02～0.03。
+- 本地模型參考（各 client 最後一輪聚合前的模型，`local_mae_kmh`，Flower 實跑 3 seed）：DP σ=1.1 2.690、無 DP 2.710，比全域模型再好約 0.02～0.03。
 - 不同 VD 差異大：國道 1 號北向 10 公里附近的 3 個 VD，模型與 naive 幾乎一樣（約 3.5～3.8），其他 VD 都明顯較好。
 - 新預設已用 Flower 端到端重跑（3 seed）：無 DP 2.744 ± 0.036；DP σ=0.8/1.1/1.5 為 2.711/2.712/2.719（± 0.01），
   ε=7.20/3.59/2.16；無 DP 改用 L1 損失 2.720 ± 0.026。RMSE 方面無 DP（4.45）略優於 DP（4.47），
