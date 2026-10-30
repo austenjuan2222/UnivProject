@@ -86,7 +86,8 @@ def main(grid: Grid, context: Context) -> None:
         evaluate_metrics_aggr_fn=lambda replies, _key: MetricRecord(
             logger.on_eval([dict(r["metrics"]) for r in replies])),
     )
-    init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"])).state_dict())
+    init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
+                                    bool(cfg.get("residual", False))).state_dict())
     result = strategy.start(grid=grid, initial_arrays=init, num_rounds=num_rounds,
                             train_config=ConfigRecord({}), evaluate_config=ConfigRecord({}))
 

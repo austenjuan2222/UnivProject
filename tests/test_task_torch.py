@@ -23,6 +23,15 @@ class TaskTorchTest(unittest.TestCase):
         out = TrafficModel(12)(torch.zeros(5, 12))
         self.assertEqual(tuple(out.shape), (5,))
 
+    def test_residual_model_starts_from_last_value(self):
+        import torch
+        from task import TrafficModel
+        m = TrafficModel(12, residual=True)
+        for p in m.parameters():
+            torch.nn.init.zeros_(p)
+        x = torch.randn(4, 12)
+        self.assertTrue(torch.allclose(m(x), x[:, -1]))   # MLP 修正量為 0 時 = naive
+
     def test_training_reduces_loss_without_dp(self):
         import torch
         from task import TrafficModel, evaluate, make_loader, set_seed, train
@@ -34,6 +43,20 @@ class TaskTorchTest(unittest.TestCase):
         _, steps = train(m, make_loader(X, y, 64, True), opt, epochs=5)
         self.assertEqual(steps, 5 * 8)
         self.assertLess(evaluate(m, X, y, 0.0, 1.0)["loss"], before)
+
+    def test_robust_losses_train_and_unknown_loss_fails(self):
+        import torch
+        from task import TrafficModel, make_loader, train
+        X, y = _toy()
+        for name in ("huber", "l1"):
+            m = TrafficModel(12)
+            opt = torch.optim.SGD(m.parameters(), lr=0.05)
+            loss, steps = train(m, make_loader(X, y, 64, True), opt, epochs=1, loss=name)
+            self.assertEqual(steps, 8)
+            self.assertTrue(loss == loss)   # 不是 NaN
+        with self.assertRaises(KeyError):
+            train(TrafficModel(12), make_loader(X, y, 64, True),
+                  torch.optim.SGD(TrafficModel(12).parameters(), lr=0.1), epochs=1, loss="nope")
 
     def test_evaluate_reports_kmh(self):
         import torch

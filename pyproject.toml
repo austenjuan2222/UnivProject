@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "its-trusted-fl"
-version = "1.1.0"
+version = "1.2.0"
 description = "智慧交通可信任聯邦式學習實驗（高公局 VD 車速預測 + DP-SGD）"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
@@ -41,9 +41,11 @@ num-server-rounds = 20
 num-clients = 8            # 必須等於 Flower 設定檔的 options.num-supernodes 與 manifest 的 VD 數
 local-epochs = 1
 batch-size = 64
-learning-rate = 0.05
+learning-rate = 0.2        # 真實資料 3 seed 調參：殘差模型下 DP 最佳約 0.2～0.3（見 README）
 lookback = 12              # 過去 12 筆 5 分鐘車速 → 預測下一筆
 hidden-size = 32
+loss = "mse"               # 訓練損失：mse / huber / l1（評估一律用 MAE、RMSE）
+residual = true            # true = 預測相對最後一筆的變化量（輸出 = 最後一筆 + MLP），false = 直接預測車速
 train-frac = 0.8
 use-dp = true              # false = 無 DP 對照組
 noise-multiplier = 1.1

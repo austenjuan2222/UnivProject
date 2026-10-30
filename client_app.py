@@ -30,6 +30,8 @@ def _cfg(context: Context) -> dict:
         "data_dir": str(c["data-dir"]),
         "lookback": int(c["lookback"]),
         "hidden": int(c["hidden-size"]),
+        "residual": bool(c.get("residual", False)),
+        "loss": str(c.get("loss", "mse")),
         "train_frac": float(c["train-frac"]),
         "batch_size": int(c["batch-size"]),
         "lr": float(c["learning-rate"]),
@@ -49,7 +51,7 @@ def _client_data(context: Context, cfg: dict):
 
 
 def _model(cfg: dict, msg: Message) -> TrafficModel:
-    model = TrafficModel(cfg["lookback"], cfg["hidden"])
+    model = TrafficModel(cfg["lookback"], cfg["hidden"], cfg["residual"])
     model.load_state_dict(msg.content["arrays"].to_torch_state_dict(), strict=True)
     return model
 
@@ -80,7 +82,7 @@ def train_fn(msg: Message, context: Context) -> Message:
         # Poisson 取樣的真實機率（= 1/批次數）；Opacus 內部 accountant 用 1/len(loader)，
         # 少數 n 下會略大（較保守），這裡用真實值。
         sample_rate = float(loader.sample_rate)
-        loss, steps = train(model, loader, optimizer, cfg["epochs"])
+        loss, steps = train(model, loader, optimizer, cfg["epochs"], loss=cfg["loss"])
 
         prev = context.state[DP_STATE_KEY] if DP_STATE_KEY in context.state else None
         prev = {k: list(prev[k]) for k in ("sigma", "q", "steps")} if prev is not None else None
@@ -90,7 +92,7 @@ def train_fn(msg: Message, context: Context) -> Message:
         metrics["dp-steps"] = int(steps)
         metrics["sample-rate"] = sample_rate
     else:
-        loss, steps = train(model, loader, optimizer, cfg["epochs"])
+        loss, steps = train(model, loader, optimizer, cfg["epochs"], loss=cfg["loss"])
 
     metrics["train-loss"] = float(loss)
     return Message(
