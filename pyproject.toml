@@ -51,6 +51,8 @@ use-dp = true              # false = 無 DP 對照組
 noise-multiplier = 1.1
 max-grad-norm = 1.0
 target-delta = 1e-5
+client-dp-noise = 0.0      # > 0 啟用 client-level DP（伺服器端裁剪＋加噪，保護整個 VD）；0 = 關閉
+client-dp-clip = 0.1       # client-level DP 的更新量裁剪上限（更新量 L2 範數中位數約 0.24）
 seed = 42
 data-dir = "data/processed"
 results-dir = "results"

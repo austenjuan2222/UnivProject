@@ -33,6 +33,11 @@ class BuildRunsTest(unittest.TestCase):
         self.assertEqual([r[0] for r in runs], ["nodp", "dp_sigma1.1"])
         self.assertIn("seed=7", runs[1][1])
 
+    def test_client_level_dp_runs(self):
+        runs = build_runs(3, 2, "/d", "/r", [], True, "", client_sigmas=["2.0"])
+        self.assertEqual([r[0] for r in runs], ["cldp_sigma2.0"])
+        self.assertIn("use-dp=false client-dp-noise=2.0", runs[0][1])
+
     def test_windows_backslashes_become_forward_slashes(self):
         runs = build_runs(3, 2, r"C:\Users\x\data", r"C:\Users\x\res", ["1.1"], True, "")
         self.assertEqual(len(runs), 1)

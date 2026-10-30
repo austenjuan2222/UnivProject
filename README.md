@@ -154,6 +154,26 @@ q 取自 Opacus `DPDataLoader.sample_rate`（Poisson 取樣的真實機率 = 1/�
   ε=7.20/3.59/2.16；無 DP 改用 L1 損失 2.720 ± 0.026。RMSE 方面無 DP（4.45）略優於 DP（4.47），
   表示 DP 的裁剪讓大誤差稍多、平均誤差稍少。
 
+### 選用：client-level DP（保護整個 VD）
+
+```bash
+python scripts/run_experiments.py --sigmas --skip-nodp --client-sigmas 2 4 --extra "client-dp-clip=0.05"
+```
+
+以 Flower 內建的 `DifferentialPrivacyServerSideFixedClipping` 包住 FedAvg：伺服器把每個 client 的更新量
+裁剪到 `client-dp-clip`，平均後加高斯雜訊（倍率 `client-dp-noise`），ε 以每輪 q=1 的高斯機制累計，
+寫在 `config.json` 的 `client_level_dp` 與 `summary.csv` 的 `final_epsilon`。
+注意威脅模型不同：伺服器必須可信（它看得到未裁剪的更新），保護的是對外發布的全域模型。
+只有 8 個 client 時代價很大（真實資料、Flower 實跑、C=0.05、20 輪 × 3 seed）：
+
+| client-level σ | ε（整個 VD） | MAE |
+|---|---|---|
+| 1 | 30.1 | 2.872 ± 0.021 |
+| 2 | 12.3 | 2.908 ± 0.044（≈ naive 2.916） |
+| 4 | 5.4 | 3.231 ± 0.312（輸給 naive） |
+
+要實用需要更多 VD 參與（雜訊依參與的 client 數平均掉）。
+
 ### 解讀：為什麼不同 σ 的 MAE 幾乎一樣？
 
 雜訊確實有加上（ε 隨 σ 明顯不同就是證據），只是在這個設定下影響很小：DP-SGD 每步加在平均梯度上的
@@ -199,6 +219,6 @@ docs/superpowers/  設計文件與實作計畫
 
 ## 限制與後續
 
-- 目前是 record-level DP（保護單筆 5 分鐘紀錄），不是 client-level DP；相鄰時間視窗高度相關，
-  報告中解讀 ε 時應註明。
+- 預設是 record-level DP（保護單筆 5 分鐘紀錄）；相鄰時間視窗高度相關，報告中解讀 ε 時應註明。
+  client-level DP 已可選用，但 8 個 client 時代價很大（見上）。
 - 模型為小型 MLP；可再比較 GRU 或加入上下游 VD 特徵（需注意 Opacus 對 RNN 的支援方式）。

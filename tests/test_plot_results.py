@@ -47,6 +47,22 @@ class PlotResultsTest(unittest.TestCase):
             self.assertAlmostEqual(float(rows[0]["improve_vs_naive_pct"]), 100 / 3, places=4)
             self.assertEqual(rows[0]["final_local_mae_kmh"], "")      # 舊 metrics.csv 沒有此欄
 
+    def test_client_level_dp_run_gets_its_own_label(self):
+        with tempfile.TemporaryDirectory() as d:
+            _run(d, "cldp_sigma2.0", False, 1.1, [4, 3], ["", ""])
+            cfg = Path(d, "cldp_sigma2.0", "config.json")
+            cfg.write_text(json.dumps({"run_config": {"use-dp": False, "client-dp-noise": 2.0},
+                                       "client_level_dp": {"epsilon": 12.3}}))
+            r = collect_runs(Path(d))[0]
+            self.assertEqual(r["label"], "Client-level DP σ=2")
+            self.assertAlmostEqual(r["client_eps"], 12.3)
+            _run(d, "nodp", False, 1.1, [4, 3], ["", ""])
+            self.assertEqual([x["name"] for x in collect_runs(Path(d))], ["nodp", "cldp_sigma2.0"])
+            main([d])
+            with Path(d, "summary.csv").open(encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+            self.assertEqual(rows[1]["final_epsilon"], "12.3")
+
     def test_seed_runs_are_grouped_with_mean_and_std(self):
         with tempfile.TemporaryDirectory() as d:
             _run(d, "nodp_seed1", False, 1.1, [4, 3], ["", ""])

@@ -55,3 +55,13 @@ def history_tuples(history: Optional[dict]) -> list[tuple[float, float, int]]:
     if history is None:
         return []
     return list(zip(history["sigma"], history["q"], history["steps"]))
+
+
+def client_level_epsilon(noise_multiplier: float, rounds: int, delta: float) -> float:
+    """client-level DP-FedAvg（每輪全部 client 參與、更新量裁剪後在伺服器加噪）的累計 ε。
+
+    每輪是一次取樣率 q=1 的高斯機制，共 rounds 次；noise_multiplier<=0 時沒有保證（∞）。
+    """
+    if noise_multiplier <= 0:
+        return float("inf")
+    return compute_epsilon([(noise_multiplier, 1.0, rounds)], delta)

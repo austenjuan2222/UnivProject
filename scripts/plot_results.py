@@ -34,14 +34,23 @@ def _f(x):
 def collect_runs(root: Path) -> list[dict]:
     runs = []
     for d in sorted(p for p in root.iterdir() if (p / "metrics.csv").exists()):
-        cfg = json.loads((d / "config.json").read_text(encoding="utf-8")).get("run_config", {})
+        meta = json.loads((d / "config.json").read_text(encoding="utf-8"))
+        cfg = meta.get("run_config", {})
         with (d / "metrics.csv").open(encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
         use_dp = bool(cfg.get("use-dp"))
         sigma = _f(cfg.get("noise-multiplier"))
+        cl_sigma = _f(cfg.get("client-dp-noise")) or 0.0
+        if use_dp:
+            label = f"DP σ={sigma:g}"
+        elif cl_sigma > 0:
+            label = f"Client-level DP σ={cl_sigma:g}"
+        else:
+            label = "No DP (baseline)"
         runs.append({
             "name": d.name, "use_dp": use_dp, "sigma": sigma,
-            "label": f"DP σ={sigma:g}" if use_dp else "No DP (baseline)",
+            "label": label,
+            "client_eps": _f((meta.get("client_level_dp") or {}).get("epsilon")),
             "round": [int(r["round"]) for r in rows],
             "mae": [_f(r.get("mae_kmh")) for r in rows],
             "rmse": [_f(r.get("rmse_kmh")) for r in rows],
@@ -49,7 +58,9 @@ def collect_runs(root: Path) -> list[dict]:
             "naive": [_f(r.get("naive_mae_kmh")) for r in rows],
             "local": [_f(r.get("local_mae_kmh")) for r in rows],
         })
-    runs.sort(key=lambda r: (r["use_dp"], -(r["sigma"] or 0), r["name"]))
+    # 對照組 → record-level DP（σ 由大到小）→ client-level DP
+    runs.sort(key=lambda r: (1 if r["use_dp"] else (2 if r["client_eps"] else 0),
+                             -(r["sigma"] or 0) if r["use_dp"] else 0, r["name"]))
     return runs
 
 
@@ -134,7 +145,8 @@ def write_summary(runs: list[dict], out: Path) -> None:
             improve = 100 * (naive - mae) / naive if naive != "" and mae != "" and naive else ""
             w.writerow([r["name"], r["label"], r["use_dp"], r["sigma"] if r["use_dp"] else "",
                         len(r["round"]), mae, last(r["rmse"]),
-                        min(maes) if maes else "", last(r["eps"]) if r["use_dp"] else "",
+                        min(maes) if maes else "",
+                        last(r["eps"]) if r["use_dp"] else (r.get("client_eps") or ""),
                         naive, improve, last(r.get("local", []))])
 
 
@@ -156,7 +168,8 @@ def write_group_summary(runs: list[dict], out: Path) -> None:
             eps_mean, _ = stats([m["eps"][-1] if m["eps"] else None for m in g["members"]])
             naive_mean, _ = stats([m["naive"][-1] if m.get("naive") else None for m in g["members"]])
             w.writerow([g["label"], g["use_dp"], g["sigma"] if g["use_dp"] else "", g["n"],
-                        mae_mean, mae_std, rmse_mean, eps_mean if g["use_dp"] else "", naive_mean])
+                        mae_mean, mae_std, rmse_mean,
+                        eps_mean if g["use_dp"] else (g["members"][0].get("client_eps") or ""), naive_mean])
 
 
 def main(argv=None):

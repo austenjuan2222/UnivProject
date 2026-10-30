@@ -26,7 +26,8 @@ def _p(path) -> str:
     return str(path).replace("\\", "/")
 
 
-def build_runs(n_clients, rounds, data_dir, batch_dir, sigmas, skip_nodp, extra, seeds=None):
+def build_runs(n_clients, rounds, data_dir, batch_dir, sigmas, skip_nodp, extra, seeds=None,
+               client_sigmas=()):
     """回傳 [(run 名稱, --run-config 字串)]。
 
     seeds 多於 1 個時，每個設定都用每個 seed 重跑一次（名稱加 _seed<N>），
@@ -36,6 +37,7 @@ def build_runs(n_clients, rounds, data_dir, batch_dir, sigmas, skip_nodp, extra,
               f"data-dir='{_p(data_dir)}' results-dir='{_p(batch_dir)}' {extra}").strip()
     configs = [] if skip_nodp else [("nodp", "use-dp=false")]
     configs += [(f"dp_sigma{s}", f"use-dp=true noise-multiplier={s}") for s in sigmas]
+    configs += [(f"cldp_sigma{z}", f"use-dp=false client-dp-noise={z}") for z in client_sigmas]
     seeds = list(seeds or [None])
     runs = []
     for seed in seeds:
@@ -60,7 +62,7 @@ def _flwr_exe() -> str:
 
 
 def run_batch(data_dir: Path, results_dir: Path, rounds: int, sigmas, skip_nodp=False,
-              extra="", num_cpus=1.0, seeds=None) -> Path:
+              extra="", num_cpus=1.0, seeds=None, client_sigmas=()) -> Path:
     from setup_flwr_home import main as setup_home
 
     flwr_home = ROOT / ".flwr_home"
@@ -74,7 +76,8 @@ def run_batch(data_dir: Path, results_dir: Path, rounds: int, sigmas, skip_nodp=
     # 讓 flwr 啟動的 flower-simulation 也找得到同一個 venv
     env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
     flwr = _flwr_exe()
-    for name, cfg in build_runs(n, rounds, data_dir, batch, sigmas, skip_nodp, extra, seeds):
+    for name, cfg in build_runs(n, rounds, data_dir, batch, sigmas, skip_nodp, extra, seeds,
+                                client_sigmas):
         print(f"=== {name} ===", flush=True)
         subprocess.run([flwr, "run", str(ROOT), "local", "--run-config", cfg], check=True, env=env)
 
@@ -122,6 +125,8 @@ def main(argv=None):
     p.add_argument("--sigmas", nargs="*", default=["1.1"])
     p.add_argument("--seeds", nargs="*", type=int, default=None,
                    help="每個設定重複跑的 seed（例如 1 2 3）；不給則用 pyproject 的 seed")
+    p.add_argument("--client-sigmas", nargs="*", default=[],
+                   help="client-level DP（保護整個 VD）的雜訊倍率，例如 2 4；裁剪上限用 --extra client-dp-clip=…")
     p.add_argument("--skip-nodp", action="store_true")
     p.add_argument("--num-cpus", type=float, default=1.0)
     p.add_argument("--extra", default="", help='例如 "learning-rate=0.02 local-epochs=2"')
@@ -131,7 +136,7 @@ def main(argv=None):
         smoke()
         return
     run_batch(Path(a.data_dir).resolve(), Path(a.results_dir).resolve(), a.rounds, a.sigmas,
-              a.skip_nodp, a.extra, a.num_cpus, a.seeds)
+              a.skip_nodp, a.extra, a.num_cpus, a.seeds, a.client_sigmas)
 
 
 if __name__ == "__main__":
