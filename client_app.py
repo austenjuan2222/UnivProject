@@ -29,6 +29,7 @@ def _cfg(context: Context) -> dict:
     return {
         "data_dir": str(c["data-dir"]),
         "lookback": int(c["lookback"]),
+        "horizon": int(c.get("horizon", 1)),
         "hidden": int(c["hidden-size"]),
         "residual": bool(c.get("residual", False)),
         "loss": str(c.get("loss", "mse")),
@@ -47,7 +48,8 @@ def _cfg(context: Context) -> dict:
 def _client_data(context: Context, cfg: dict):
     pid = int(context.node_config["partition-id"])
     n = int(context.node_config["num-partitions"])
-    return pid, load_client_arrays(cfg["data_dir"], pid, n, cfg["lookback"], cfg["train_frac"])
+    return pid, load_client_arrays(cfg["data_dir"], pid, n, cfg["lookback"], cfg["train_frac"],
+                                cfg["horizon"])
 
 
 def _model(cfg: dict, msg: Message) -> TrafficModel:

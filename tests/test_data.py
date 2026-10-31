@@ -25,6 +25,14 @@ class MakeWindowsTest(unittest.TestCase):
         # 含索引 5 的視窗（目標 12..17）以及目標本身為 NaN 的都要去掉
         self.assertEqual(list(y), [18.0, 19.0])
 
+    def test_horizon_targets_later_step(self):
+        x = np.arange(20, dtype=float)
+        X, y = make_windows(x, lookback=12, horizon=3)
+        # 最後一筆輸入是 X[:, -1]，目標是它往後第 3 筆
+        self.assertEqual(X.shape, (6, 12))
+        np.testing.assert_array_equal(y - X[:, -1], np.full(6, 3.0))
+        self.assertEqual(y[-1], 19)
+
     def test_too_short_series_gives_empty(self):
         X, y = make_windows(np.arange(5, dtype=float), lookback=12)
         self.assertEqual(X.shape, (0, 12))

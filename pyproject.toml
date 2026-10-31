@@ -43,6 +43,7 @@ local-epochs = 1
 batch-size = 64
 learning-rate = 0.2        # 真實資料 3 seed 調參：殘差模型下 DP 最佳約 0.2～0.3（見 README）
 lookback = 12              # 過去 12 筆 5 分鐘車速 → 預測下一筆
+horizon = 1                # 預測幾步後：1 = 5 分鐘後、3 = 15 分鐘後、6 = 30 分鐘後
 hidden-size = 32
 loss = "mse"               # 訓練損失：mse / huber / l1（評估一律用 MAE、RMSE）
 residual = true            # true = 預測相對最後一筆的變化量（輸出 = 最後一筆 + MLP），false = 直接預測車速
