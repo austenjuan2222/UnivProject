@@ -42,6 +42,13 @@ class QuickAblationTest(unittest.TestCase):
         auc = r["mia"][0]["auc"]
         self.assertTrue(0.0 <= auc <= 1.0)
 
+    def test_validation_split_and_finetune(self):
+        full = self.run_main("--sigma", "-1")
+        val = self.run_main("--sigma", "-1", "--val", "--finetune", "1")
+        # --val 只用訓練期間，所以 naive 基準是在不同的（驗證）資料上算的
+        self.assertNotAlmostEqual(full["naive"], val["naive"])
+        self.assertGreater(val["mae"], 0)
+
     def test_neighbour_features(self):
         r = self.run_main("--neigh", "both")
         self.assertGreater(r["mae"], 0)
