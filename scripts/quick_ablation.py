@@ -18,9 +18,12 @@ from privacy import compute_epsilon  # noqa: E402
 warnings.filterwarnings("ignore")
 torch.set_num_threads(1)
 
-def load(data_dir, lb, h, frac=0.8, neigh="", mia=False):
+def load(data_dir, lb, h, frac=0.8, neigh="", mia=False, val=False):
     man = json.loads((Path(data_dir) / "manifest.json").read_text(encoding="utf-8"))
     raw = [pd.read_csv(Path(data_dir) / c["file"])["speed"].to_numpy(float) for c in man["clients"]]
+    if val:
+        # 調參用：完全不碰測試期間，只用訓練期間，再切出後段當驗證集
+        raw = [r[:int(len(r) * frac)] for r in raw]
     sp = int(len(raw[0]) * frac)
     z = [(s - np.nanmean(s[:sp])) / (np.nanstd(s[:sp]) or 1.0) for s in raw]
     out = []
@@ -183,12 +186,13 @@ def main(argv=None):
     p.add_argument("--cosine", action="store_true")
     p.add_argument("--neigh", default="", choices=["", "down", "up", "both"])
     p.add_argument("--mia", action="store_true")
+    p.add_argument("--val", action="store_true", help="只用訓練期間，後 20%% 當驗證集（調參時不看測試集）")
     p.add_argument("--finetune", type=int, default=0, help="最終模型在各 client 本地再訓練幾個 epoch（個人化）")
     p.add_argument("--ft-lr", type=float, default=0.0, help="個人化的學習率；0 = 同 --lr")
     p.add_argument("--noresid", action="store_true")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     a = p.parse_args(argv)
-    data = load(a.data_dir, a.lookback, a.horizon, neigh=a.neigh, mia=a.mia)
+    data = load(a.data_dir, a.lookback, a.horizon, neigh=a.neigh, mia=a.mia, val=a.val)
     rs = [run(a, s, data) for s in a.seeds]
     maes = [r["mae"] for r in rs]
     out = dict(name=a.name, args=vars(a), mae=float(np.mean(maes)), std=float(np.std(maes, ddof=1)) if len(maes) > 1 else 0,
