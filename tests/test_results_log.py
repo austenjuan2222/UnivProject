@@ -23,9 +23,39 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual(out["epsilon_max"], 4.0)
         self.assertEqual(out["epsilon_mean"], 3.0)
 
+    def test_train_pools_local_model_mae_by_test_size(self):
+        out = aggregate_train([
+            {"num-examples": 100, "train-loss": 1.0, "local-mae-kmh": 2.0, "num-test": 1},
+            {"num-examples": 100, "train-loss": 1.0, "local-mae-kmh": 6.0, "num-test": 3},
+        ])
+        self.assertAlmostEqual(out["local_mae_kmh"], 5.0)
+        self.assertNotIn("local_mae_kmh", aggregate_train([{"num-examples": 1, "train-loss": 1.0}]))
+
     def test_train_without_dp_has_no_epsilon(self):
         out = aggregate_train([{"num-examples": 1, "train-loss": 1.0}])
         self.assertNotIn("epsilon_max", out)
+
+    def test_eval_pools_naive_baseline_when_present(self):
+        out = aggregate_eval([
+            {"num-examples": 1, "eval-loss": 0.1, "mae-kmh": 2.0, "mse-kmh": 4.0, "naive-mae-kmh": 3.0},
+            {"num-examples": 3, "eval-loss": 0.3, "mae-kmh": 6.0, "mse-kmh": 36.0, "naive-mae-kmh": 7.0},
+        ])
+        self.assertAlmostEqual(out["naive_mae_kmh"], 6.0)
+        self.assertNotIn("naive_mae_kmh", aggregate_eval([
+            {"num-examples": 1, "eval-loss": 0.1, "mae-kmh": 2.0, "mse-kmh": 4.0}]))
+
+    def test_eval_pools_finetuned_mae_and_max_epsilon(self):
+        out = aggregate_eval([
+            {"num-examples": 1, "eval-loss": 0.1, "mae-kmh": 2.0, "mse-kmh": 4.0,
+             "ft-mae-kmh": 1.0, "ft-epsilon": 3.7},
+            {"num-examples": 3, "eval-loss": 0.3, "mae-kmh": 6.0, "mse-kmh": 36.0,
+             "ft-mae-kmh": 5.0, "ft-epsilon": 3.9},
+        ])
+        self.assertAlmostEqual(out["ft_mae_kmh"], 4.0)
+        self.assertEqual(out["ft_epsilon_max"], 3.9)
+        plain = aggregate_eval([{"num-examples": 1, "eval-loss": 0.1, "mae-kmh": 2.0, "mse-kmh": 4.0}])
+        self.assertNotIn("ft_mae_kmh", plain)
+        self.assertNotIn("ft_epsilon_max", plain)
 
     def test_eval_rmse_is_sqrt_of_pooled_mse(self):
         out = aggregate_eval([

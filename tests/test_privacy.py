@@ -75,5 +75,17 @@ class ComputeEpsilonTest(unittest.TestCase):
                         compute_epsilon([(1.0, 0.1, 100)], 1e-5))
 
 
+class ClientLevelEpsilonTest(unittest.TestCase):
+    def test_full_participation_equals_q1_history(self):
+        from privacy import client_level_epsilon, compute_epsilon
+        self.assertAlmostEqual(client_level_epsilon(2.0, 20, 1e-5),
+                               compute_epsilon([(2.0, 1.0, 20)], 1e-5))
+
+    def test_more_noise_less_epsilon_and_zero_noise_is_inf(self):
+        from privacy import client_level_epsilon
+        self.assertLess(client_level_epsilon(4.0, 20, 1e-5), client_level_epsilon(2.0, 20, 1e-5))
+        self.assertEqual(client_level_epsilon(0.0, 20, 1e-5), float("inf"))
+
+
 if __name__ == "__main__":
     unittest.main()

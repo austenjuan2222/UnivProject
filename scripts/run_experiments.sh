@@ -11,6 +11,7 @@
 #   RESULTS_DIR 結果根目錄（預設 results）；本批次寫在 $RESULTS_DIR/<時間>/
 #   ROUNDS      聯邦輪數（預設 20）
 #   SIGMAS      DP 的 noise multiplier 清單（預設 "1.1"）
+#   SEEDS       每個設定重複跑的 seed 清單，例如 "1 2 3"（預設不重複，用 pyproject 的 seed）
 #   SKIP_NODP   設為 1 則不跑無 DP 對照組
 #   NUM_CPUS    每個模擬 client 使用的 CPU 數（預設 1）
 #   EXTRA       其他要覆寫的 run config，例如 "learning-rate=0.02 batch-size=128"
@@ -38,14 +39,20 @@ mkdir -p "$BATCH_DIR"
 
 common="num-clients=$N num-server-rounds=$ROUNDS data-dir='$DATA_DIR' results-dir='$BATCH_DIR' $EXTRA"
 
-if [[ "${SKIP_NODP:-0}" != "1" ]]; then
-  echo "=== 無 DP 對照組 ==="
-  flwr run "$ROOT" local --run-config "$common use-dp=false run-name='nodp'"
-fi
-
-for s in $SIGMAS; do
-  echo "=== DP σ=$s ==="
-  flwr run "$ROOT" local --run-config "$common use-dp=true noise-multiplier=$s run-name='dp_sigma$s'"
+read -r -a seeds <<< "${SEEDS:-}"
+[[ ${#seeds[@]} -eq 0 ]] && seeds=("")
+for seed in "${seeds[@]}"; do
+  sfx=""; sopt=""
+  [[ -n "$seed" ]] && sopt="seed=$seed"
+  [[ ${#seeds[@]} -gt 1 ]] && sfx="_seed$seed"
+  if [[ "${SKIP_NODP:-0}" != "1" ]]; then
+    echo "=== 無 DP 對照組 $sopt ==="
+    flwr run "$ROOT" local --run-config "$common use-dp=false $sopt run-name='nodp$sfx'"
+  fi
+  for s in $SIGMAS; do
+    echo "=== DP σ=$s $sopt ==="
+    flwr run "$ROOT" local --run-config "$common use-dp=true noise-multiplier=$s $sopt run-name='dp_sigma$s$sfx'"
+  done
 done
 
 "$PY" "$ROOT/scripts/plot_results.py" "$BATCH_DIR"

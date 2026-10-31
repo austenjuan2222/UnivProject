@@ -23,6 +23,15 @@ class TaskTorchTest(unittest.TestCase):
         out = TrafficModel(12)(torch.zeros(5, 12))
         self.assertEqual(tuple(out.shape), (5,))
 
+    def test_residual_model_starts_from_last_value(self):
+        import torch
+        from task import TrafficModel
+        m = TrafficModel(12, residual=True)
+        for p in m.parameters():
+            torch.nn.init.zeros_(p)
+        x = torch.randn(4, 12)
+        self.assertTrue(torch.allclose(m(x), x[:, -1]))   # MLP 修正量為 0 時 = naive
+
     def test_training_reduces_loss_without_dp(self):
         import torch
         from task import TrafficModel, evaluate, make_loader, set_seed, train
@@ -35,6 +44,20 @@ class TaskTorchTest(unittest.TestCase):
         self.assertEqual(steps, 5 * 8)
         self.assertLess(evaluate(m, X, y, 0.0, 1.0)["loss"], before)
 
+    def test_robust_losses_train_and_unknown_loss_fails(self):
+        import torch
+        from task import TrafficModel, make_loader, train
+        X, y = _toy()
+        for name in ("huber", "l1"):
+            m = TrafficModel(12)
+            opt = torch.optim.SGD(m.parameters(), lr=0.05)
+            loss, steps = train(m, make_loader(X, y, 64, True), opt, epochs=1, loss=name)
+            self.assertEqual(steps, 8)
+            self.assertTrue(loss == loss)   # 不是 NaN
+        with self.assertRaises(KeyError):
+            train(TrafficModel(12), make_loader(X, y, 64, True),
+                  torch.optim.SGD(TrafficModel(12).parameters(), lr=0.1), epochs=1, loss="nope")
+
     def test_evaluate_reports_kmh(self):
         import torch
         from task import TrafficModel, evaluate
@@ -46,6 +69,15 @@ class TaskTorchTest(unittest.TestCase):
         r = evaluate(m, X, y, mean=80.0, std=10.0)
         self.assertAlmostEqual(r["mae_kmh"], 10.0, places=5)
         self.assertAlmostEqual(r["mse_kmh"], 100.0, places=4)
+
+    def test_evaluate_reports_naive_last_value_baseline(self):
+        from task import TrafficModel, evaluate
+        X = np.zeros((2, 12), np.float32)
+        X[:, -1] = [0.5, -1.0]                     # 最後一筆（標準化）
+        y = np.array([1.0, -1.0], np.float32)
+        r = evaluate(TrafficModel(12), X, y, mean=80.0, std=10.0)
+        # 「下一筆 = 最後一筆」的誤差：|0.5-1|*10=5、|-1-(-1)|*10=0 → 平均 2.5
+        self.assertAlmostEqual(r["naive_mae_kmh"], 2.5, places=5)
 
     @unittest.skipUnless(HAVE_OPACUS, "需要 opacus")
     def test_dp_training_steps_and_unwrapped_state_dict(self):
