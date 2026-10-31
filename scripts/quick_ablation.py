@@ -117,8 +117,29 @@ def run(a, seed, data):
         W = np.array(ws) / sum(ws)
         g.load_state_dict({k: sum(w * s[k] for w, s in zip(W, states)) for k in states[0]})
     tot = np.zeros(4); per = []
-    for d in data:
-        r = ev(g, d); tot += r; per.append(r[0] / r[3])
+    for i, d in enumerate(data):
+        m = g
+        if a.finetune > 0:
+            # 個人化：拿最終全域模型在本地再訓練 finetune 個 epoch（同樣 DP），只在本地使用
+            set_seed(seed + 1000 * i + 999)
+            m = copy.deepcopy(g).train()
+            opt = torch.optim.SGD(m.parameters(), lr=a.ft_lr or a.lr)
+            ld = make_loader(d["Xtr"], d["ytr"], a.bs, True, seed + 1000 * i + 999)
+            if a.sigma >= 0:
+                from opacus import PrivacyEngine
+                m, opt, ld = PrivacyEngine(accountant="rdp").make_private(
+                    module=m, optimizer=opt, data_loader=ld, noise_multiplier=a.sigma,
+                    max_grad_norm=a.clip, poisson_sampling=True)
+                q = float(ld.sample_rate)
+            steps = 0
+            for _ in range(a.finetune):
+                for X, y in ld:
+                    opt.zero_grad()
+                    l = m(X).sum() * 0 if len(X) == 0 else LOSSES[a.loss](m(X), y)
+                    l.backward(); opt.step(); steps += 1
+            if a.sigma >= 0: hist[i].append((a.sigma, q, steps))
+            m = unwrap(m)
+        r = ev(m, d); tot += r; per.append(r[0] / r[3])
     mia = None
     if "Xnon" in data[0]:
         def roc_auc_score(y, sc):
@@ -162,6 +183,8 @@ def main(argv=None):
     p.add_argument("--cosine", action="store_true")
     p.add_argument("--neigh", default="", choices=["", "down", "up", "both"])
     p.add_argument("--mia", action="store_true")
+    p.add_argument("--finetune", type=int, default=0, help="最終模型在各 client 本地再訓練幾個 epoch（個人化）")
+    p.add_argument("--ft-lr", type=float, default=0.0, help="個人化的學習率；0 = 同 --lr")
     p.add_argument("--noresid", action="store_true")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     a = p.parse_args(argv)

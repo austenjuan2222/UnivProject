@@ -46,6 +46,7 @@ class PlotResultsTest(unittest.TestCase):
             # 相對 naive 基準改善多少（%）：(4.5-3)/4.5
             self.assertAlmostEqual(float(rows[0]["improve_vs_naive_pct"]), 100 / 3, places=4)
             self.assertEqual(rows[0]["final_local_mae_kmh"], "")      # 舊 metrics.csv 沒有此欄
+            self.assertEqual(rows[0]["finetuned_mae_kmh"], "")        # 沒開個人化微調時留空
 
     def test_client_level_dp_run_gets_its_own_label(self):
         with tempfile.TemporaryDirectory() as d:

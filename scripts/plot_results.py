@@ -57,6 +57,8 @@ def collect_runs(root: Path) -> list[dict]:
             "eps": [_f(r.get("epsilon_max")) for r in rows],
             "naive": [_f(r.get("naive_mae_kmh")) for r in rows],
             "local": [_f(r.get("local_mae_kmh")) for r in rows],
+            "ft": [_f(r.get("ft_mae_kmh")) for r in rows],
+            "ft_eps": [_f(r.get("ft_epsilon_max")) for r in rows],
         })
     # 對照組 → record-level DP（σ 由大到小）→ client-level DP
     runs.sort(key=lambda r: (1 if r["use_dp"] else (2 if r["client_eps"] else 0),
@@ -137,7 +139,7 @@ def write_summary(runs: list[dict], out: Path) -> None:
         w = csv.writer(f)
         w.writerow(["run", "label", "use_dp", "sigma", "rounds", "final_mae_kmh", "final_rmse_kmh",
                     "best_mae_kmh", "final_epsilon", "naive_mae_kmh", "improve_vs_naive_pct",
-                    "final_local_mae_kmh"])
+                    "final_local_mae_kmh", "finetuned_mae_kmh", "finetuned_epsilon"])
         for r in runs:
             maes = [m for m in r["mae"] if m is not None]
             last = lambda xs: xs[-1] if xs and xs[-1] is not None else ""  # noqa: E731
@@ -147,7 +149,8 @@ def write_summary(runs: list[dict], out: Path) -> None:
                         len(r["round"]), mae, last(r["rmse"]),
                         min(maes) if maes else "",
                         last(r["eps"]) if r["use_dp"] else (r.get("client_eps") or ""),
-                        naive, improve, last(r.get("local", []))])
+                        naive, improve, last(r.get("local", [])), last(r.get("ft", [])),
+                        last(r.get("ft_eps", []))])
 
 
 def write_group_summary(runs: list[dict], out: Path) -> None:
@@ -160,16 +163,20 @@ def write_group_summary(runs: list[dict], out: Path) -> None:
     with out.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["label", "use_dp", "sigma", "n_seeds", "final_mae_mean", "final_mae_std",
-                    "final_rmse_mean", "final_epsilon_mean", "naive_mae_mean"])
+                    "final_rmse_mean", "final_epsilon_mean", "naive_mae_mean",
+                    "finetuned_mae_mean", "finetuned_mae_std", "finetuned_epsilon_mean"])
         for g in group_runs(runs):
             last = [m["mae"][-1] if m["mae"] else None for m in g["members"]]
             mae_mean, mae_std = stats(last)
             rmse_mean, _ = stats([m["rmse"][-1] if m["rmse"] else None for m in g["members"]])
             eps_mean, _ = stats([m["eps"][-1] if m["eps"] else None for m in g["members"]])
             naive_mean, _ = stats([m["naive"][-1] if m.get("naive") else None for m in g["members"]])
+            ft_mean, ft_std = stats([m["ft"][-1] if m.get("ft") else None for m in g["members"]])
+            ft_eps, _ = stats([m["ft_eps"][-1] if m.get("ft_eps") else None for m in g["members"]])
             w.writerow([g["label"], g["use_dp"], g["sigma"] if g["use_dp"] else "", g["n"],
                         mae_mean, mae_std, rmse_mean,
-                        eps_mean if g["use_dp"] else (g["members"][0].get("client_eps") or ""), naive_mean])
+                        eps_mean if g["use_dp"] else (g["members"][0].get("client_eps") or ""), naive_mean,
+                        ft_mean, ft_std, ft_eps])
 
 
 def main(argv=None):

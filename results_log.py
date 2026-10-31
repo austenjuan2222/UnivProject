@@ -9,10 +9,12 @@ import warnings
 from pathlib import Path
 
 ROUND_FIELDS = ["round", "n_train_clients", "n_eval_clients", "train_loss", "eval_loss",
-                "mae_kmh", "rmse_kmh", "epsilon_max", "epsilon_mean", "naive_mae_kmh", "local_mae_kmh"]
+                "mae_kmh", "rmse_kmh", "epsilon_max", "epsilon_mean", "naive_mae_kmh", "local_mae_kmh",
+                "ft_mae_kmh", "ft_epsilon_max"]
 CLIENT_FIELDS = ["round", "partition", "vdid", "num_train", "train_loss", "epsilon",
                  "dp_steps", "sample_rate", "local_mae_kmh",
-                 "num_test", "eval_loss", "mae_kmh", "rmse_kmh", "naive_mae_kmh"]
+                 "num_test", "eval_loss", "mae_kmh", "rmse_kmh", "naive_mae_kmh",
+                 "ft_mae_kmh", "ft_epsilon"]
 
 
 def _wmean(replies, key):
@@ -40,6 +42,11 @@ def aggregate_eval(replies: list[dict]) -> dict:
     }
     if replies and all("naive-mae-kmh" in r for r in replies):
         out["naive_mae_kmh"] = _wmean(replies, "naive-mae-kmh")
+    if replies and all("ft-mae-kmh" in r for r in replies):
+        out["ft_mae_kmh"] = _wmean(replies, "ft-mae-kmh")
+    ft_eps = [float(r["ft-epsilon"]) for r in replies if "ft-epsilon" in r]
+    if ft_eps:
+        out["ft_epsilon_max"] = max(ft_eps)
     return out
 
 
@@ -114,7 +121,9 @@ class RunLogger:
             row = self._client(r)
             row.update(num_test=int(r["num-examples"]), eval_loss=float(r["eval-loss"]),
                        mae_kmh=float(r["mae-kmh"]), rmse_kmh=math.sqrt(float(r["mse-kmh"])),
-                       naive_mae_kmh=float(r["naive-mae-kmh"]) if "naive-mae-kmh" in r else None)
+                       naive_mae_kmh=float(r["naive-mae-kmh"]) if "naive-mae-kmh" in r else None,
+                       ft_mae_kmh=float(r["ft-mae-kmh"]) if "ft-mae-kmh" in r else None,
+                       ft_epsilon=float(r["ft-epsilon"]) if "ft-epsilon" in r else None)
         self._flush()
         return agg
 

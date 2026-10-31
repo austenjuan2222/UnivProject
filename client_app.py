@@ -42,6 +42,9 @@ def _cfg(context: Context) -> dict:
         "clip": float(c["max-grad-norm"]),
         "delta": float(c["target-delta"]),
         "seed": int(c["seed"]),
+        "rounds": int(c["num-server-rounds"]),
+        "ft_epochs": int(c.get("finetune-epochs", 0)),
+        "ft_lr": float(c.get("finetune-lr", 0.05)),
     }
 
 
@@ -58,10 +61,32 @@ def _model(cfg: dict, msg: Message) -> TrafficModel:
     return model
 
 
-@app.train()
-def train_fn(msg: Message, context: Context) -> Message:
+def _dp_history(context: Context):
+    prev = context.state[DP_STATE_KEY] if DP_STATE_KEY in context.state else None
+    return {k: list(prev[k]) for k in ("sigma", "q", "steps")} if prev is not None else None
+
+
+def _dp_train(model, optimizer, loader, cfg: dict, prev, epochs: int):
+    """DP-SGD 訓練 epochs 個 epoch；回傳（模型, loss, 新歷史, 累計 ε, 步數, 取樣率）。"""
+    from opacus import PrivacyEngine
+
     from privacy import append_history, compute_epsilon, history_tuples
 
+    engine = PrivacyEngine(accountant="rdp")
+    model, optimizer, loader = engine.make_private(
+        module=model, optimizer=optimizer, data_loader=loader,
+        noise_multiplier=cfg["sigma"], max_grad_norm=cfg["clip"], poisson_sampling=True,
+    )
+    # Poisson 取樣的真實機率（= 1/批次數）；Opacus 內部 accountant 用 1/len(loader)，
+    # 少數 n 下會略大（較保守），這裡用真實值。
+    sample_rate = float(loader.sample_rate)
+    loss, steps = train(model, loader, optimizer, epochs, loss=cfg["loss"])
+    hist = append_history(prev, cfg["sigma"], sample_rate, steps)
+    return model, loss, hist, compute_epsilon(history_tuples(hist), cfg["delta"]), steps, sample_rate
+
+
+@app.train()
+def train_fn(msg: Message, context: Context) -> Message:
     cfg = _cfg(context)
     pid, d = _client_data(context, cfg)
     rnd = int(msg.content["config"]["server-round"])
@@ -74,23 +99,10 @@ def train_fn(msg: Message, context: Context) -> Message:
     metrics = {"num-examples": len(d["y_train"]), "round": rnd, "partition-id": pid}
 
     if cfg["use_dp"]:
-        from opacus import PrivacyEngine
-
-        engine = PrivacyEngine(accountant="rdp")
-        model, optimizer, loader = engine.make_private(
-            module=model, optimizer=optimizer, data_loader=loader,
-            noise_multiplier=cfg["sigma"], max_grad_norm=cfg["clip"], poisson_sampling=True,
-        )
-        # Poisson 取樣的真實機率（= 1/批次數）；Opacus 內部 accountant 用 1/len(loader)，
-        # 少數 n 下會略大（較保守），這裡用真實值。
-        sample_rate = float(loader.sample_rate)
-        loss, steps = train(model, loader, optimizer, cfg["epochs"], loss=cfg["loss"])
-
-        prev = context.state[DP_STATE_KEY] if DP_STATE_KEY in context.state else None
-        prev = {k: list(prev[k]) for k in ("sigma", "q", "steps")} if prev is not None else None
-        hist = append_history(prev, cfg["sigma"], sample_rate, steps)
+        model, loss, hist, eps, steps, sample_rate = _dp_train(
+            model, optimizer, loader, cfg, _dp_history(context), cfg["epochs"])
         context.state[DP_STATE_KEY] = MetricRecord(hist)
-        metrics["epsilon"] = compute_epsilon(history_tuples(hist), cfg["delta"])
+        metrics["epsilon"] = eps
         metrics["dp-steps"] = int(steps)
         metrics["sample-rate"] = sample_rate
     else:
@@ -117,13 +129,37 @@ def evaluate_fn(msg: Message, context: Context) -> Message:
     pid, d = _client_data(context, cfg)
     model = _model(cfg, msg)
     r = evaluate(model, d["X_test"], d["y_test"], d["mean"], d["std"])
+    rnd = int(msg.content["config"]["server-round"])
     metrics = {
         "num-examples": len(d["y_test"]),
-        "round": int(msg.content["config"]["server-round"]),
+        "round": rnd,
         "partition-id": pid,
         "eval-loss": r["loss"],
         "mae-kmh": r["mae_kmh"],
         "mse-kmh": r["mse_kmh"],
         "naive-mae-kmh": r["naive_mae_kmh"],
     }
+    if cfg["ft_epochs"] > 0 and rnd == cfg["rounds"]:
+        metrics.update(_finetune(model, d, cfg, context, pid))
     return Message(content=RecordDict({"metrics": MetricRecord(metrics)}), reply_to=msg)
+
+
+def _finetune(model, d, cfg: dict, context: Context, pid: int) -> dict:
+    """個人化：最後一輪拿全域模型在本地再訓練 ft_epochs 個 epoch，只在本地使用、不上傳。
+
+    用的是同一份私有資料，DP 時這幾步也要算進 ε（回報 ft-epsilon = 聯邦訓練 + 微調的總和）。
+    """
+    set_seed(cfg["seed"] + 1000 * pid + 999)
+    model.train()  # 剛評估完是 eval 模式；Opacus 要求 train 模式
+    optimizer = torch.optim.SGD(model.parameters(), lr=cfg["ft_lr"])
+    loader = make_loader(d["X_train"], d["y_train"], cfg["batch_size"], shuffle=True,
+                         seed=cfg["seed"] + 1000 * pid + 999)
+    out = {}
+    if cfg["use_dp"]:
+        model, _, _, eps, _, _ = _dp_train(model, optimizer, loader, cfg, _dp_history(context),
+                                           cfg["ft_epochs"])
+        out["ft-epsilon"] = eps
+    else:
+        train(model, loader, optimizer, cfg["ft_epochs"], loss=cfg["loss"])
+    out["ft-mae-kmh"] = evaluate(unwrap(model), d["X_test"], d["y_test"], d["mean"], d["std"])["mae_kmh"]
+    return out
