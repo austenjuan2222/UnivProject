@@ -363,7 +363,9 @@ DP 為 2 seed 平均：record σ1.1 全域 3.079（10.7%）、微調後 2.977（
 只比 σ1.1 差 0.015，ε 小 4 倍。
 兩層一起保護（record σ3＋整個 VD σ6、每輪抽 25%、client 裁剪 0.2，2 seed）：全域 2.912，輸給 naive；
 微調後 2.319（7.9%）。client 裁剪放大反而更差（1 seed：0.5 → 全域 3.328／微調 2.406；1.0 → 5.709／3.087），
-因為 client 雜訊和裁剪值成正比，每輪只有 64 個 VD 平均，雜訊壓過訊號。接著改試 record σ1.1＋client 裁剪 0.1／0.2。
+因為 client 雜訊和裁剪值成正比，每輪只有 64 個 VD 平均，雜訊壓過訊號。改用 record σ1.1（含微調 ε1.99）＋整個 VD ε0.79（1 seed）：client 裁剪 0.1 → 全域 2.640（仍輸 naive）、
+微調後 2.237；裁剪 0.2 → 2.871／2.211（12.2%）。結論：每輪只抽 25% 時兩層一起保護的全域模型贏不了 naive，
+但各 VD 微調後仍比 naive 好 11～12%。接著試全部 VD 參與（client σ8、ε2.45）＋record σ1.1。
 （每輪只抽 25% 的 VD，所以每個 VD 實際訓練的輪數少，record-level ε 含微調只有 0.48～0.50。）
 
 **隱私與準確度取捨圖（256 個 VD）**：`python scripts/plot_privacy_tradeoff.py results docs/figures/privacy_tradeoff_256.png`
