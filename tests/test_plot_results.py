@@ -34,6 +34,7 @@ class PlotResultsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             _run(d, "nodp_seed1", False, 1.1, [4, 3], ["", ""])
             _run(d, "nodp_seed2", False, 1.1, [4, float("nan")], ["", ""])
+            _run(d, "nodp_seed3", False, 1.1, [4, float("inf")], ["", ""])
             self.assertEqual(main([d]), 0)
 
     def test_writes_png_and_summary(self):

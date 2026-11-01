@@ -164,7 +164,8 @@ def write_summary(runs: list[dict], out: Path) -> None:
 
 def write_group_summary(runs: list[dict], out: Path) -> None:
     def stats(xs):
-        xs = [x for x in xs if x is not None]
+        # 發散的 run（MAE 為 inf）不納入平均與標準差
+        xs = [x for x in xs if x is not None and math.isfinite(x)]
         if not xs:
             return "", ""
         return statistics.fmean(xs), (statistics.stdev(xs) if len(xs) > 1 else "")
