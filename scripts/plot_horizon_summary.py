@@ -45,7 +45,7 @@ SOURCES = {
     },
     "Both: record σ=1.1 + whole-VD ε=2.45": {
         5: [("d256_bothfull", "cldp_sigma8"), ("d256_bothfull_s23", "cldp_sigma8")],
-        30: [("d256_h6_both", "cldp_sigma8"), ("d256_h6_both_s2", "cldp_sigma8")],
+        30: [("d256_h6_both", "cldp_sigma8"), ("d256_h6_both_s2", "cldp_sigma8"), ("d256_h6_both_s3", "cldp_sigma8")],
     },
 }
 STYLE = {  # Okabe-Ito
