@@ -80,6 +80,11 @@ def train(model, loader, optimizer, epochs: int, device="cpu", loss: str = "mse"
     return (total / n if n else float("nan")), steps
 
 
+def all_finite(model: nn.Module) -> bool:
+    """模型參數是否都是有限值（沒有 NaN／inf）。"""
+    return all(torch.isfinite(p).all().item() for p in unwrap(model).parameters())
+
+
 @torch.no_grad()
 def evaluate(model, X, y, mean: float, std: float, device="cpu") -> dict:
     """回傳標準化尺度的 MSE，以及還原成 km/h 的 MAE、MSE。

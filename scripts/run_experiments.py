@@ -37,7 +37,10 @@ def build_runs(n_clients, rounds, data_dir, batch_dir, sigmas, skip_nodp, extra,
               f"data-dir='{_p(data_dir)}' results-dir='{_p(batch_dir)}' {extra}").strip()
     configs = [] if skip_nodp else [("nodp", "use-dp=false")]
     configs += [(f"dp_sigma{s}", f"use-dp=true noise-multiplier={s}") for s in sigmas]
-    configs += [(f"cldp_sigma{z}", f"use-dp=false client-dp-noise={z}") for z in client_sigmas]
+    # client-level DP 預設不開 record-level DP；extra 帶 use-dp=true 時保留（例如 noise-multiplier=0
+    # 只做逐樣本裁剪，避免沒有裁剪時本地訓練發散）
+    cl_rec = "" if "use-dp=true" in extra else "use-dp=false "
+    configs += [(f"cldp_sigma{z}", f"{cl_rec}client-dp-noise={z}") for z in client_sigmas]
     seeds = list(seeds or [None])
     runs = []
     for seed in seeds:

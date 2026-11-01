@@ -14,7 +14,7 @@ from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
 from data import load_client_arrays, n_calendar
-from task import TrafficModel, evaluate, make_loader, set_seed, train, unwrap
+from task import TrafficModel, all_finite, evaluate, make_loader, set_seed, train, unwrap
 
 warnings.filterwarnings("ignore", category=UserWarning, module="opacus")
 logging.getLogger("flwr").setLevel(logging.INFO)
@@ -111,6 +111,12 @@ def train_fn(msg: Message, context: Context) -> Message:
     else:
         loss, steps = train(model, loader, optimizer, cfg["epochs"], loss=cfg["loss"])
 
+    if not all_finite(model):
+        # 本地訓練發散（例如沒有逐樣本裁剪時，標準差很小的 VD 遇到壅塞，標準化後輸入達 −20 以上，
+        # 梯度爆掉）：回傳收到的全域模型（更新量 = 0），避免一個 client 的 NaN 汙染整個聯邦。
+        # 判斷只看訓練結果本身（DP 時屬於後處理），不額外使用資料。
+        model = _model(cfg, msg)
+        metrics["diverged"] = 1
     metrics["train-loss"] = float(loss)
     # 個人化參考：本輪剛在本地訓練完、尚未聚合的模型在本地測試集的 MAE。
     # 這個模型本來就是 DP 訓練的輸出，不會多花隱私預算；它只留在本地，不影響聚合。

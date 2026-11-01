@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import statistics
 import sys
 from pathlib import Path
@@ -31,6 +32,12 @@ def _f(x):
         return None
 
 
+def _eps(x):
+    """ε 欄位：σ=0（只裁剪不加噪）時是 inf，沒有隱私保證，當作缺值。"""
+    v = _f(x)
+    return v if v is not None and math.isfinite(v) else None
+
+
 def collect_runs(root: Path) -> list[dict]:
     runs = []
     for d in sorted(p for p in root.iterdir() if (p / "metrics.csv").exists()):
@@ -41,10 +48,11 @@ def collect_runs(root: Path) -> list[dict]:
         use_dp = bool(cfg.get("use-dp"))
         sigma = _f(cfg.get("noise-multiplier"))
         cl_sigma = _f(cfg.get("client-dp-noise")) or 0.0
-        if use_dp:
+        if cl_sigma > 0:
+            # use-dp=true 且 σ=0 時只做逐樣本裁剪（穩定訓練），隱私保證以 client-level ε 為準
+            label = f"Client-level DP σ={cl_sigma:g}" + (" + clip" if use_dp and not sigma else "")
+        elif use_dp:
             label = f"DP σ={sigma:g}"
-        elif cl_sigma > 0:
-            label = f"Client-level DP σ={cl_sigma:g}"
         else:
             label = "No DP (baseline)"
         runs.append({
@@ -54,11 +62,11 @@ def collect_runs(root: Path) -> list[dict]:
             "round": [int(r["round"]) for r in rows],
             "mae": [_f(r.get("mae_kmh")) for r in rows],
             "rmse": [_f(r.get("rmse_kmh")) for r in rows],
-            "eps": [_f(r.get("epsilon_max")) for r in rows],
+            "eps": [_eps(r.get("epsilon_max")) for r in rows],
             "naive": [_f(r.get("naive_mae_kmh")) for r in rows],
             "local": [_f(r.get("local_mae_kmh")) for r in rows],
             "ft": [_f(r.get("ft_mae_kmh")) for r in rows],
-            "ft_eps": [_f(r.get("ft_epsilon_max")) for r in rows],
+            "ft_eps": [_eps(r.get("ft_epsilon_max")) for r in rows],
         })
     # 對照組 → record-level DP（σ 由大到小）→ client-level DP
     runs.sort(key=lambda r: (1 if r["use_dp"] else (2 if r["client_eps"] else 0),
@@ -148,7 +156,7 @@ def write_summary(runs: list[dict], out: Path) -> None:
             w.writerow([r["name"], r["label"], r["use_dp"], r["sigma"] if r["use_dp"] else "",
                         len(r["round"]), mae, last(r["rmse"]),
                         min(maes) if maes else "",
-                        last(r["eps"]) if r["use_dp"] else (r.get("client_eps") or ""),
+                        (r.get("client_eps") or "") if r["client_eps"] else (last(r["eps"]) if r["use_dp"] else ""),
                         naive, improve, last(r.get("local", [])), last(r.get("ft", [])),
                         last(r.get("ft_eps", []))])
 
@@ -175,7 +183,8 @@ def write_group_summary(runs: list[dict], out: Path) -> None:
             ft_eps, _ = stats([m["ft_eps"][-1] if m.get("ft_eps") else None for m in g["members"]])
             w.writerow([g["label"], g["use_dp"], g["sigma"] if g["use_dp"] else "", g["n"],
                         mae_mean, mae_std, rmse_mean,
-                        eps_mean if g["use_dp"] else (g["members"][0].get("client_eps") or ""), naive_mean,
+                        (g["members"][0].get("client_eps") or "") if g["members"][0].get("client_eps")
+                        else (eps_mean if g["use_dp"] else ""), naive_mean,
                         ft_mean, ft_std, ft_eps])
 
 

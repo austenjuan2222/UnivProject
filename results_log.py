@@ -10,11 +10,11 @@ from pathlib import Path
 
 ROUND_FIELDS = ["round", "n_train_clients", "n_eval_clients", "train_loss", "eval_loss",
                 "mae_kmh", "rmse_kmh", "epsilon_max", "epsilon_mean", "naive_mae_kmh", "local_mae_kmh",
-                "ft_mae_kmh", "ft_epsilon_max"]
+                "ft_mae_kmh", "ft_epsilon_max", "n_diverged"]
 CLIENT_FIELDS = ["round", "partition", "vdid", "num_train", "train_loss", "epsilon",
                  "dp_steps", "sample_rate", "local_mae_kmh",
                  "num_test", "eval_loss", "mae_kmh", "rmse_kmh", "naive_mae_kmh",
-                 "ft_mae_kmh", "ft_epsilon"]
+                 "ft_mae_kmh", "ft_epsilon", "diverged"]
 
 
 def _wmean(replies, key):
@@ -23,7 +23,9 @@ def _wmean(replies, key):
 
 
 def aggregate_train(replies: list[dict]) -> dict:
-    out = {"train_loss": _wmean(replies, "train-loss")}
+    out = {"train_loss": _wmean(replies, "train-loss"),
+           # 本地訓練發散、改回傳全域模型的 client 數（見 client_app.train_fn）
+           "n_diverged": sum(int(r.get("diverged", 0)) for r in replies)}
     if replies and all("local-mae-kmh" in r and "num-test" in r for r in replies):
         tot = sum(float(r["num-test"]) for r in replies)
         out["local_mae_kmh"] = sum(float(r["num-test"]) * float(r["local-mae-kmh"]) for r in replies) / tot
@@ -108,7 +110,8 @@ class RunLogger:
                        epsilon=float(r["epsilon"]) if "epsilon" in r else None,
                        dp_steps=int(r["dp-steps"]) if "dp-steps" in r else None,
                        sample_rate=float(r["sample-rate"]) if "sample-rate" in r else None,
-                       local_mae_kmh=float(r["local-mae-kmh"]) if "local-mae-kmh" in r else None)
+                       local_mae_kmh=float(r["local-mae-kmh"]) if "local-mae-kmh" in r else None,
+                       diverged=int(r.get("diverged", 0)))
         self._flush()
         return agg
 

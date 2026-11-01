@@ -41,6 +41,15 @@ class TaskTorchTest(unittest.TestCase):
         x = torch.randn(4, 14)
         self.assertTrue(torch.allclose(m(x), x[:, -1]))   # 日曆特徵在前，殘差仍接最後一筆車速
 
+    def test_all_finite_detects_nan(self):
+        import torch
+        from task import TrafficModel, all_finite
+        m = TrafficModel(12)
+        self.assertTrue(all_finite(m))
+        with torch.no_grad():
+            m.net[0].weight[0, 0] = float("nan")
+        self.assertFalse(all_finite(m))
+
     def test_training_reduces_loss_without_dp(self):
         import torch
         from task import TrafficModel, evaluate, make_loader, set_seed, train
