@@ -362,7 +362,8 @@ DP 為 2 seed 平均：record σ1.1 全域 3.079（10.7%）、微調後 2.977（
 256 個 VD record-level σ3（單筆量測 ε0.60，含微調 0.65；2 seed）：全域 2.218（11.9%）、微調後 2.170（13.9%），
 只比 σ1.1 差 0.015，ε 小 4 倍。
 兩層一起保護（record σ3＋整個 VD σ6、每輪抽 25%、client 裁剪 0.2，2 seed）：全域 2.912，輸給 naive；
-微調後 2.319（7.9%）。record 雜訊讓更新量變大，0.2 的 client 裁剪不夠，正在試 0.5／1.0。
+微調後 2.319（7.9%）。client 裁剪放大反而更差（1 seed：0.5 → 全域 3.328／微調 2.406；1.0 → 5.709／3.087），
+因為 client 雜訊和裁剪值成正比，每輪只有 64 個 VD 平均，雜訊壓過訊號。接著改試 record σ1.1＋client 裁剪 0.1／0.2。
 （每輪只抽 25% 的 VD，所以每個 VD 實際訓練的輪數少，record-level ε 含微調只有 0.48～0.50。）
 
 **隱私與準確度取捨圖（256 個 VD）**：`python scripts/plot_privacy_tradeoff.py results docs/figures/privacy_tradeoff_256.png`
