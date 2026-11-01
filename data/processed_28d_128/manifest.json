@@ -1,0 +1,783 @@
+{
+  "freq_minutes": 5,
+  "start": "2024-03-03 23:55:00",
+  "end": "2024-03-31 23:55:00",
+  "num_steps": 8065,
+  "selection": {
+    "vd_ids": null,
+    "pattern": "N1-[NS]-.*-M-",
+    "min_valid_ratio": 0.8,
+    "max_gap_steps": 3,
+    "min_valid_minutes": 3
+  },
+  "clients": [
+    {
+      "partition": 0,
+      "vdid": "VD-N1-N-0.590-M-RS",
+      "file": "VD-N1-N-0.590-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 1,
+      "vdid": "VD-N1-N-10.060-M-RS",
+      "file": "VD-N1-N-10.060-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 2,
+      "vdid": "VD-N1-N-103.880-M-RS",
+      "file": "VD-N1-N-103.880-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 3,
+      "vdid": "VD-N1-N-105.160-M-LOOP",
+      "file": "VD-N1-N-105.160-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 4,
+      "vdid": "VD-N1-N-107.505-M-RS",
+      "file": "VD-N1-N-107.505-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 5,
+      "vdid": "VD-N1-N-109.470-M-RS",
+      "file": "VD-N1-N-109.470-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 6,
+      "vdid": "VD-N1-N-112.280-M-LOOP",
+      "file": "VD-N1-N-112.280-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 7,
+      "vdid": "VD-N1-N-114.610-M-RS",
+      "file": "VD-N1-N-114.610-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 8,
+      "vdid": "VD-N1-N-118.250-M-RS",
+      "file": "VD-N1-N-118.250-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 9,
+      "vdid": "VD-N1-N-120.230-M-RS",
+      "file": "VD-N1-N-120.230-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 10,
+      "vdid": "VD-N1-N-122.260-M-RS",
+      "file": "VD-N1-N-122.260-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 11,
+      "vdid": "VD-N1-N-123.880-M-RS",
+      "file": "VD-N1-N-123.880-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 12,
+      "vdid": "VD-N1-N-128.179-M-RS",
+      "file": "VD-N1-N-128.179-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 13,
+      "vdid": "VD-N1-N-13.400-M-RS",
+      "file": "VD-N1-N-13.400-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 14,
+      "vdid": "VD-N1-N-131.410-M-RS",
+      "file": "VD-N1-N-131.410-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 15,
+      "vdid": "VD-N1-N-132.150-M-RS",
+      "file": "VD-N1-N-132.150-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 16,
+      "vdid": "VD-N1-N-135.835-M-RS",
+      "file": "VD-N1-N-135.835-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 17,
+      "vdid": "VD-N1-N-137.425-M-RS",
+      "file": "VD-N1-N-137.425-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 18,
+      "vdid": "VD-N1-N-138.990-M-RS",
+      "file": "VD-N1-N-138.990-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 19,
+      "vdid": "VD-N1-N-142.200-M-RS",
+      "file": "VD-N1-N-142.200-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 20,
+      "vdid": "VD-N1-N-143.720-M-RS",
+      "file": "VD-N1-N-143.720-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 21,
+      "vdid": "VD-N1-N-146.740-M-RS",
+      "file": "VD-N1-N-146.740-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 22,
+      "vdid": "VD-N1-N-151.990-M-RS",
+      "file": "VD-N1-N-151.990-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 23,
+      "vdid": "VD-N1-N-154.980-M-RS",
+      "file": "VD-N1-N-154.980-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 24,
+      "vdid": "VD-N1-N-160.410-M-LOOP",
+      "file": "VD-N1-N-160.410-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 25,
+      "vdid": "VD-N1-N-163.450-M-RS",
+      "file": "VD-N1-N-163.450-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 26,
+      "vdid": "VD-N1-N-164.517-M-RS",
+      "file": "VD-N1-N-164.517-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 27,
+      "vdid": "VD-N1-N-166.520-M-LOOP",
+      "file": "VD-N1-N-166.520-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 28,
+      "vdid": "VD-N1-N-167.250-M-RS",
+      "file": "VD-N1-N-167.250-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 29,
+      "vdid": "VD-N1-N-169.120-M-LOOP",
+      "file": "VD-N1-N-169.120-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 30,
+      "vdid": "VD-N1-N-171.010-M-RS",
+      "file": "VD-N1-N-171.010-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 31,
+      "vdid": "VD-N1-N-175.040-M-LOOP",
+      "file": "VD-N1-N-175.040-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 32,
+      "vdid": "VD-N1-N-176.090-M-LOOP",
+      "file": "VD-N1-N-176.090-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 33,
+      "vdid": "VD-N1-N-177.060-M-RS",
+      "file": "VD-N1-N-177.060-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 34,
+      "vdid": "VD-N1-N-177.990-M-LOOP",
+      "file": "VD-N1-N-177.990-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 35,
+      "vdid": "VD-N1-N-179.605-M-LOOP",
+      "file": "VD-N1-N-179.605-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 36,
+      "vdid": "VD-N1-N-180.025-M-RS",
+      "file": "VD-N1-N-180.025-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 37,
+      "vdid": "VD-N1-N-183.740-M-LOOP",
+      "file": "VD-N1-N-183.740-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 38,
+      "vdid": "VD-N1-N-185.530-M-LOOP",
+      "file": "VD-N1-N-185.530-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 39,
+      "vdid": "VD-N1-N-186.150-M-RS",
+      "file": "VD-N1-N-186.150-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 40,
+      "vdid": "VD-N1-N-187.340-M-RS",
+      "file": "VD-N1-N-187.340-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 41,
+      "vdid": "VD-N1-N-194.550-M-RS",
+      "file": "VD-N1-N-194.550-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 42,
+      "vdid": "VD-N1-N-195.570-M-RS",
+      "file": "VD-N1-N-195.570-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 43,
+      "vdid": "VD-N1-N-196.630-M-RS",
+      "file": "VD-N1-N-196.630-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 44,
+      "vdid": "VD-N1-N-197.470-M-RS",
+      "file": "VD-N1-N-197.470-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 45,
+      "vdid": "VD-N1-N-199.120-M-LOOP",
+      "file": "VD-N1-N-199.120-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 46,
+      "vdid": "VD-N1-N-200.120-M-LOOP",
+      "file": "VD-N1-N-200.120-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 47,
+      "vdid": "VD-N1-N-201.050-M-LOOP",
+      "file": "VD-N1-N-201.050-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 48,
+      "vdid": "VD-N1-N-201.970-M-RS",
+      "file": "VD-N1-N-201.970-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 49,
+      "vdid": "VD-N1-N-202.800-M-LOOP",
+      "file": "VD-N1-N-202.800-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 50,
+      "vdid": "VD-N1-N-203.650-M-RS",
+      "file": "VD-N1-N-203.650-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 51,
+      "vdid": "VD-N1-N-204.530-M-LOOP",
+      "file": "VD-N1-N-204.530-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 52,
+      "vdid": "VD-N1-N-205.480-M-LOOP",
+      "file": "VD-N1-N-205.480-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 53,
+      "vdid": "VD-N1-N-206.410-M-LOOP",
+      "file": "VD-N1-N-206.410-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 54,
+      "vdid": "VD-N1-N-208.260-M-LOOP",
+      "file": "VD-N1-N-208.260-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 55,
+      "vdid": "VD-N1-N-211.640-M-LOOP",
+      "file": "VD-N1-N-211.640-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 56,
+      "vdid": "VD-N1-N-212.590-M-LOOP",
+      "file": "VD-N1-N-212.590-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 57,
+      "vdid": "VD-N1-N-216.600-M-RS",
+      "file": "VD-N1-N-216.600-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 58,
+      "vdid": "VD-N1-N-217.650-M-LOOP",
+      "file": "VD-N1-N-217.650-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 59,
+      "vdid": "VD-N1-N-218.790-M-RS",
+      "file": "VD-N1-N-218.790-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 60,
+      "vdid": "VD-N1-N-231.850-M-LOOP",
+      "file": "VD-N1-N-231.850-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 61,
+      "vdid": "VD-N1-N-233.200-M-RS",
+      "file": "VD-N1-N-233.200-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 62,
+      "vdid": "VD-N1-N-234.550-M-LOOP",
+      "file": "VD-N1-N-234.550-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 63,
+      "vdid": "VD-N1-N-238.500-M-RS",
+      "file": "VD-N1-N-238.500-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 64,
+      "vdid": "VD-N1-N-239.500-M-RS",
+      "file": "VD-N1-N-239.500-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 65,
+      "vdid": "VD-N1-N-241.377-M-RS",
+      "file": "VD-N1-N-241.377-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 66,
+      "vdid": "VD-N1-N-242.300-M-RS",
+      "file": "VD-N1-N-242.300-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 67,
+      "vdid": "VD-N1-N-246.350-M-RS",
+      "file": "VD-N1-N-246.350-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 68,
+      "vdid": "VD-N1-N-247.700-M-RS",
+      "file": "VD-N1-N-247.700-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 69,
+      "vdid": "VD-N1-N-249.250-M-RS",
+      "file": "VD-N1-N-249.250-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 70,
+      "vdid": "VD-N1-N-26.780-M-RS",
+      "file": "VD-N1-N-26.780-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 71,
+      "vdid": "VD-N1-N-27.970-M-LOOP",
+      "file": "VD-N1-N-27.970-M-LOOP.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 72,
+      "vdid": "VD-N1-N-28.670-M-LOOP",
+      "file": "VD-N1-N-28.670-M-LOOP.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 73,
+      "vdid": "VD-N1-N-34.010-M-RS",
+      "file": "VD-N1-N-34.010-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 74,
+      "vdid": "VD-N1-N-39.000-M-RS",
+      "file": "VD-N1-N-39.000-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 75,
+      "vdid": "VD-N1-N-89.990-M-RS",
+      "file": "VD-N1-N-89.990-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 76,
+      "vdid": "VD-N1-N-91.800-M-LOOP",
+      "file": "VD-N1-N-91.800-M-LOOP.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 77,
+      "vdid": "VD-N1-S-101.510-M-RS",
+      "file": "VD-N1-S-101.510-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 78,
+      "vdid": "VD-N1-S-102.600-M-RS",
+      "file": "VD-N1-S-102.600-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 79,
+      "vdid": "VD-N1-S-103.670-M-RS",
+      "file": "VD-N1-S-103.670-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 80,
+      "vdid": "VD-N1-S-104.890-M-RS",
+      "file": "VD-N1-S-104.890-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 81,
+      "vdid": "VD-N1-S-105.985-M-RS",
+      "file": "VD-N1-S-105.985-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 82,
+      "vdid": "VD-N1-S-107.220-M-RS",
+      "file": "VD-N1-S-107.220-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 83,
+      "vdid": "VD-N1-S-109.250-M-LOOP",
+      "file": "VD-N1-S-109.250-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 84,
+      "vdid": "VD-N1-S-113.460-M-RS",
+      "file": "VD-N1-S-113.460-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 85,
+      "vdid": "VD-N1-S-120.300-M-RS",
+      "file": "VD-N1-S-120.300-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 86,
+      "vdid": "VD-N1-S-122.090-M-RS",
+      "file": "VD-N1-S-122.090-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 87,
+      "vdid": "VD-N1-S-123.530-M-RS",
+      "file": "VD-N1-S-123.530-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 88,
+      "vdid": "VD-N1-S-126.540-M-RS",
+      "file": "VD-N1-S-126.540-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 89,
+      "vdid": "VD-N1-S-128.310-M-RS",
+      "file": "VD-N1-S-128.310-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 90,
+      "vdid": "VD-N1-S-130.009-M-RS",
+      "file": "VD-N1-S-130.009-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 91,
+      "vdid": "VD-N1-S-134.360-M-RS",
+      "file": "VD-N1-S-134.360-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 92,
+      "vdid": "VD-N1-S-135.835-M-RS",
+      "file": "VD-N1-S-135.835-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 93,
+      "vdid": "VD-N1-S-139.010-M-LOOP",
+      "file": "VD-N1-S-139.010-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 94,
+      "vdid": "VD-N1-S-141.260-M-RS",
+      "file": "VD-N1-S-141.260-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 95,
+      "vdid": "VD-N1-S-141.980-M-RS",
+      "file": "VD-N1-S-141.980-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 96,
+      "vdid": "VD-N1-S-143.535-M-RS",
+      "file": "VD-N1-S-143.535-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 97,
+      "vdid": "VD-N1-S-144.970-M-RS",
+      "file": "VD-N1-S-144.970-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 98,
+      "vdid": "VD-N1-S-148.010-M-RS",
+      "file": "VD-N1-S-148.010-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 99,
+      "vdid": "VD-N1-S-150.990-M-RS",
+      "file": "VD-N1-S-150.990-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 100,
+      "vdid": "VD-N1-S-151.735-M-RS",
+      "file": "VD-N1-S-151.735-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 101,
+      "vdid": "VD-N1-S-153.250-M-RS",
+      "file": "VD-N1-S-153.250-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 102,
+      "vdid": "VD-N1-S-154.825-M-RS",
+      "file": "VD-N1-S-154.825-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 103,
+      "vdid": "VD-N1-S-159.701-M-LOOP",
+      "file": "VD-N1-S-159.701-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 104,
+      "vdid": "VD-N1-S-166.360-M-RS",
+      "file": "VD-N1-S-166.360-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 105,
+      "vdid": "VD-N1-S-169.990-M-RS",
+      "file": "VD-N1-S-169.990-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 106,
+      "vdid": "VD-N1-S-170.990-M-LOOP",
+      "file": "VD-N1-S-170.990-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 107,
+      "vdid": "VD-N1-S-173.055-M-LOOP",
+      "file": "VD-N1-S-173.055-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 108,
+      "vdid": "VD-N1-S-175.010-M-RS",
+      "file": "VD-N1-S-175.010-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 109,
+      "vdid": "VD-N1-S-177.980-M-LOOP",
+      "file": "VD-N1-S-177.980-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 110,
+      "vdid": "VD-N1-S-179.000-M-LOOP",
+      "file": "VD-N1-S-179.000-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 111,
+      "vdid": "VD-N1-S-179.575-M-RS",
+      "file": "VD-N1-S-179.575-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 112,
+      "vdid": "VD-N1-S-182.420-M-RS",
+      "file": "VD-N1-S-182.420-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 113,
+      "vdid": "VD-N1-S-183.350-M-RS",
+      "file": "VD-N1-S-183.350-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 114,
+      "vdid": "VD-N1-S-185.330-M-RS",
+      "file": "VD-N1-S-185.330-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 115,
+      "vdid": "VD-N1-S-186.375-M-LOOP",
+      "file": "VD-N1-S-186.375-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 116,
+      "vdid": "VD-N1-S-187.399-M-LOOP",
+      "file": "VD-N1-S-187.399-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 117,
+      "vdid": "VD-N1-S-188.380-M-LOOP",
+      "file": "VD-N1-S-188.380-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 118,
+      "vdid": "VD-N1-S-189.390-M-RS",
+      "file": "VD-N1-S-189.390-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 119,
+      "vdid": "VD-N1-S-191.001-M-LOOP",
+      "file": "VD-N1-S-191.001-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 120,
+      "vdid": "VD-N1-S-193.600-M-RS",
+      "file": "VD-N1-S-193.600-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 121,
+      "vdid": "VD-N1-S-194.560-M-LOOP",
+      "file": "VD-N1-S-194.560-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 122,
+      "vdid": "VD-N1-S-195.720-M-RS",
+      "file": "VD-N1-S-195.720-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 123,
+      "vdid": "VD-N1-S-196.520-M-LOOP",
+      "file": "VD-N1-S-196.520-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 124,
+      "vdid": "VD-N1-S-24.400-M-RS",
+      "file": "VD-N1-S-24.400-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 125,
+      "vdid": "VD-N1-S-28.840-M-RS",
+      "file": "VD-N1-S-28.840-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 126,
+      "vdid": "VD-N1-S-30.540-M-LOOP",
+      "file": "VD-N1-S-30.540-M-LOOP.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 127,
+      "vdid": "VD-N1-S-34.000-M-RS",
+      "file": "VD-N1-S-34.000-M-RS.csv",
+      "valid_ratio": 0.9954
+    }
+  ]
+}
