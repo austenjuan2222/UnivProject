@@ -386,6 +386,11 @@ record σ3（ε0.65）2.650（10.9%）／2.591（12.9%）；整個 VD ε0.79（�
 
 空心點是每個 seed，實心點是平均；顏色加形狀區分 record-level（藍圓）、client-level（橘方）和兩層一起（綠菱形，x 軸為整個 VD 的 ε 2.45，record ε 2.54）。
 
+**各預測距離總覽（256 個 VD）**：`python scripts/plot_horizon_summary.py results docs/figures/horizon_summary_256.png`
+（y 軸是比各自 naive 好多少 %；無 DP 用一般梯度裁剪版，因為不裁剪的無 DP 在 30 分鐘會發散；缺的組合留空不內插）
+
+![256 VD horizon summary](docs/figures/horizon_summary_256.png)
+
 **seed 配對檢定**（`scripts/seed_stats.py`：配對 t 檢定＋Wilcoxon 精確檢定、效果量 d_z、平均差的 95% CI；
 抽樣單位是 seed，n 很小，僅供參考）。28 天、8 個 VD、5 seed，微調後 MAE，加入時段特徵前→後：
 
