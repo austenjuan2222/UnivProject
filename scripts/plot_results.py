@@ -27,9 +27,10 @@ INK, MUTED, GRID = "#1f1f1e", "#6b6a64", "#e6e5e0"
 
 def _f(x):
     try:
-        return float(x)
+        v = float(x)
     except (TypeError, ValueError):
         return None
+    return None if math.isnan(v) else v
 
 
 def _eps(x):

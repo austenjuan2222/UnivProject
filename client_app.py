@@ -160,6 +160,8 @@ def _finetune(model, d, cfg: dict, context: Context, pid: int) -> dict:
     用的是同一份私有資料，DP 時這幾步也要算進 ε（回報 ft-epsilon = 聯邦訓練 + 微調的總和）。
     """
     set_seed(cfg["seed"] + 1000 * pid + 999)
+    import copy
+    base = copy.deepcopy(model)
     model.train()  # 剛評估完是 eval 模式；Opacus 要求 train 模式
     optimizer = torch.optim.SGD(model.parameters(), lr=cfg["ft_lr"])
     loader = make_loader(d["X_train"], d["y_train"], cfg["batch_size"], shuffle=True,
@@ -171,5 +173,10 @@ def _finetune(model, d, cfg: dict, context: Context, pid: int) -> dict:
         out["ft-epsilon"] = eps
     else:
         train(model, loader, optimizer, cfg["ft_epochs"], loss=cfg["loss"])
+    out["ft-diverged"] = 0
+    if not all_finite(model):
+        # 微調發散（無 DP、沒有逐樣本裁剪時可能發生）：保留全域模型，等於不微調
+        model = base
+        out["ft-diverged"] = 1
     out["ft-mae-kmh"] = evaluate(unwrap(model), d["X_test"], d["y_test"], d["mean"], d["std"])["mae_kmh"]
     return out

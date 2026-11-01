@@ -30,6 +30,12 @@ class PlotResultsTest(unittest.TestCase):
             runs = collect_runs(Path(d))
             self.assertEqual([r["label"] for r in runs], ["No DP (baseline)", "DP σ=1.1", "DP σ=0.8"])
 
+    def test_nan_metrics_do_not_break_summary(self):
+        with tempfile.TemporaryDirectory() as d:
+            _run(d, "nodp_seed1", False, 1.1, [4, 3], ["", ""])
+            _run(d, "nodp_seed2", False, 1.1, [4, float("nan")], ["", ""])
+            self.assertEqual(main([d]), 0)
+
     def test_writes_png_and_summary(self):
         with tempfile.TemporaryDirectory() as d:
             _run(d, "nodp", False, 1.1, [4, 3], ["", ""], naive=4.5)

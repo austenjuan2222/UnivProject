@@ -57,6 +57,13 @@ class AggregateTest(unittest.TestCase):
         self.assertNotIn("ft_mae_kmh", plain)
         self.assertNotIn("ft_epsilon_max", plain)
 
+    def test_eval_counts_finetune_divergence(self):
+        out = aggregate_eval([
+            {"num-examples": 1, "eval-loss": 0.1, "mae-kmh": 2.0, "mse-kmh": 4.0, "ft-mae-kmh": 2.0, "ft-diverged": 1},
+            {"num-examples": 1, "eval-loss": 0.1, "mae-kmh": 2.0, "mse-kmh": 4.0, "ft-mae-kmh": 1.0, "ft-diverged": 0},
+        ])
+        self.assertEqual(out["n_ft_diverged"], 1)
+
     def test_eval_rmse_is_sqrt_of_pooled_mse(self):
         out = aggregate_eval([
             {"num-examples": 1, "eval-loss": 0.1, "mae-kmh": 2.0, "mse-kmh": 4.0},
