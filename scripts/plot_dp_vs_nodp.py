@@ -42,11 +42,19 @@ PAIRS = {
     (256, 5): [(1, ("d256_nodpclip", "nodp_seed1"), ("d256", "dp_sigma1.1")),
                (2, ("d256_nodpclip", "nodp_seed2"), ("d256s", "dp_sigma1.1_seed2")),
                (3, ("d256_s3more", "nodp"), ("d256s", "dp_sigma1.1_seed3"))],
+    (8, 15): _within("d8_h3_fair", (1, 2, 3)),
+    (32, 15): _within("d32_h3_fair", (1, 2, 3)),
+    (64, 15): _within("d64_h3_fair", (1, 2, 3)),
+    (128, 15): _within("d128_h3_fair", (1, 2, 3)),
+    (256, 15): [(1, ("d256_h3_nodpclip", "nodp"), ("d256_h3", "dp_sigma1.1")),
+                (2, ("d256_h3_s2", "nodp"), ("d256_h3_s2", "dp_sigma1.1")),
+                (3, ("d256_h3_s3", "nodp"), ("d256_h3_s3", "dp_sigma1.1"))],
     (256, 30): [(1, ("d256_h6_nodpclip", "nodp_seed1"), ("d256_h6", "dp_sigma1.1")),
                 (2, ("d256_h6_nodpclip", "nodp_seed2"), ("d256_h6s2", "dp_sigma1.1")),
                 (3, ("d256_h6_s3", "nodp"), ("d256_h6_s3", "dp_sigma1.1"))],
 }
-STYLE = {5: ("#0072B2", "o", "5-min horizon"), 30: ("#D55E00", "s", "30-min horizon")}  # Okabe-Ito
+STYLE = {5: ("#0072B2", "o", "5-min horizon"), 15: ("#009E73", "^", "15-min horizon"),
+         30: ("#D55E00", "s", "30-min horizon")}  # Okabe-Ito
 
 
 def _table(root: Path, batch: str) -> dict:
@@ -90,7 +98,7 @@ def plot(root: Path, out: Path) -> dict:
             keys = sorted(k for k in data if k[1] == h)
             if not keys:
                 continue
-            shift = 0.94 if h == 5 else 1.06  # 只為避免重疊（對數軸上的小位移）
+            shift = {5: 0.92, 15: 1.0, 30: 1.08}[h]  # 只為避免重疊（對數軸上的小位移）
             xs = [k[0] * shift for k in keys]
             cis = [_ci(data[k]) for k in keys]
             means = [c[0] for c in cis]
