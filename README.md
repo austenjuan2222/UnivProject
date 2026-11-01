@@ -367,13 +367,14 @@ DP 為 2 seed 平均：record σ1.1 全域 3.079（10.7%）、微調後 2.977（
 微調後 2.237；裁剪 0.2 → 2.871／2.211（12.2%）。結論：每輪只抽 25% 時兩層一起保護的全域模型贏不了 naive，
 但各 VD 微調後仍比 naive 好 11～12%。全部 VD 參與（client σ8，整個 VD ε2.45）＋record σ1.1（含微調 ε2.54）、client 裁剪 0.2（3 seed）：
 全域 2.323 ± 0.046（7.8%）、微調後 2.192 ± 0.004（13.0%），兩層保護都在時全域模型仍贏 naive（128 個 VD 時是 2.263，好 7.1%）。
+同設定預測 30 分鐘後（1 seed，naive 3.447）：全域 3.195（7.3%）、微調後 3.024（12.3%）。
 （每輪只抽 25% 的 VD，所以每個 VD 實際訓練的輪數少，record-level ε 含微調只有 0.48～0.50。）
 
 **隱私與準確度取捨圖（256 個 VD）**：`python scripts/plot_privacy_tradeoff.py results docs/figures/privacy_tradeoff_256.png`
 
 ![256 VD privacy vs accuracy](docs/figures/privacy_tradeoff_256.png)
 
-空心點是每個 seed，實心點是平均；顏色加形狀區分 record-level（藍圓）和 client-level（橘方）。
+空心點是每個 seed，實心點是平均；顏色加形狀區分 record-level（藍圓）、client-level（橘方）和兩層一起（綠菱形，x 軸為整個 VD 的 ε 2.45，record ε 2.54）。
 
 **seed 配對檢定**（`scripts/seed_stats.py`：配對 t 檢定＋Wilcoxon 精確檢定、效果量 d_z、平均差的 95% CI；
 抽樣單位是 seed，n 很小，僅供參考）。28 天、8 個 VD、5 seed，微調後 MAE，加入時段特徵前→後：
