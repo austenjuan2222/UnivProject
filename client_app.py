@@ -33,6 +33,7 @@ def _cfg(context: Context) -> dict:
         "hidden": int(c["hidden-size"]),
         "residual": bool(c.get("residual", False)),
         "calendar": str(c.get("calendar", "")),
+        "lag_day": bool(c.get("lag-day", False)),
         "loss": str(c.get("loss", "mse")),
         "train_frac": float(c["train-frac"]),
         "batch_size": int(c["batch-size"]),
@@ -53,11 +54,12 @@ def _client_data(context: Context, cfg: dict):
     pid = int(context.node_config["partition-id"])
     n = int(context.node_config["num-partitions"])
     return pid, load_client_arrays(cfg["data_dir"], pid, n, cfg["lookback"], cfg["train_frac"],
-                                cfg["horizon"], cfg["calendar"])
+                                cfg["horizon"], cfg["calendar"], cfg["lag_day"])
 
 
 def _model(cfg: dict, msg: Message) -> TrafficModel:
-    model = TrafficModel(cfg["lookback"], cfg["hidden"], cfg["residual"], n_calendar(cfg["calendar"]))
+    n_extra = n_calendar(cfg["calendar"]) + int(cfg["lag_day"])
+    model = TrafficModel(cfg["lookback"], cfg["hidden"], cfg["residual"], n_extra)
     model.load_state_dict(msg.content["arrays"].to_torch_state_dict(), strict=True)
     return model
 

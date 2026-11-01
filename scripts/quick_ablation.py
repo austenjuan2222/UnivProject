@@ -22,7 +22,7 @@ torch.set_num_threads(1)
 def time_feats(t, kinds):
     return calendar_features(t, ",".join(kinds))
 
-def load(data_dir, lb, h, frac=0.8, neigh="", mia=False, val=False, cal="", feats=""):
+def load(data_dir, lb, h, frac=0.8, neigh="", mia=False, val=False, cal="", feats="", lagday=False):
     man = json.loads((Path(data_dir) / "manifest.json").read_text(encoding="utf-8"))
     dfs = [pd.read_csv(Path(data_dir) / c["file"]) for c in man["clients"]]
     raw = [d["speed"].to_numpy(float) for d in dfs]
@@ -49,7 +49,12 @@ def load(data_dir, lb, h, frac=0.8, neigh="", mia=False, val=False, cal="", feat
             series = [zi[lo:hi]] + [z[j][lo:hi] for j in nb.get(neigh, [])] + [e[lo:hi] for e in zext[i]]
             n = hi - lo - lb - h + 1
             idx = np.arange(lb)[None] + np.arange(n)[:, None]
-            X = np.concatenate([q[idx] for q in series] + [cal_all[i][lo + lb + h - 1: lo + lb + h - 1 + n]], 1)
+            parts = [q[idx] for q in series] + [cal_all[i][lo + lb + h - 1: lo + lb + h - 1 + n]]
+            if lagday:
+                # 昨天同一時刻（目標時間 − 288 筆）的車速：本 VD 的歷史值，週期性基準
+                tgt = lo + lb + h - 1 + np.arange(n) - 288
+                parts.append(np.where(tgt >= 0, zi[np.clip(tgt, 0, None)], np.nan)[:, None])
+            X = np.concatenate(parts, 1)
             y = zi[lo:hi][lb + h - 1: lb + h - 1 + n]
             ok = ~np.isnan(X).any(1) & ~np.isnan(y)
             return X[ok], y[ok]
@@ -91,7 +96,7 @@ def build(a):
     if a.model == "gru": return GRU(a.lookback, a.hidden)
     k = {"": 1, "down": 2, "up": 2, "both": 3}[a.neigh] + len([f for f in a.feats.split(",") if f])
     ncal = 2 * ("tod" in a.cal) + ("dow" in a.cal)
-    return MLP(a.lookback, a.hidden, not a.noresid, a.depth, a.lookback * k + ncal)
+    return MLP(a.lookback, a.hidden, not a.noresid, a.depth, a.lookback * k + ncal + a.lag_day)
 
 @torch.no_grad()
 def ev(model, d):
@@ -216,6 +221,7 @@ def main(argv=None):
     p.add_argument("--neigh", default="", choices=["", "down", "up", "both"])
     p.add_argument("--cal", default="", help="日曆特徵：tod（時段 sin/cos）、dow（週末），逗號分隔")
     p.add_argument("--feats", default="", help="本 VD 額外輸入序列：volume、occupancy，逗號分隔")
+    p.add_argument("--lag-day", type=int, default=0, choices=[0, 1], help="1 = 加入昨天同一時刻的車速")
     p.add_argument("--avg-last", type=int, default=0, help="最後 k 輪全域模型取平均（後處理）")
     p.add_argument("--mia", action="store_true")
     p.add_argument("--val", action="store_true", help="只用訓練期間，後 20%% 當驗證集（調參時不看測試集）")
@@ -227,7 +233,7 @@ def main(argv=None):
     p.add_argument("--noresid", action="store_true")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     a = p.parse_args(argv)
-    data = load(a.data_dir, a.lookback, a.horizon, neigh=a.neigh, mia=a.mia, val=a.val, cal=a.cal, feats=a.feats)
+    data = load(a.data_dir, a.lookback, a.horizon, neigh=a.neigh, mia=a.mia, val=a.val, cal=a.cal, feats=a.feats, lagday=bool(a.lag_day))
     rs = [run(a, s, data) for s in a.seeds]
     maes = [r["mae"] for r in rs]
     out = dict(name=a.name, args=vars(a), mae=float(np.mean(maes)), std=float(np.std(maes, ddof=1)) if len(maes) > 1 else 0,

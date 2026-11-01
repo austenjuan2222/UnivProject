@@ -31,6 +31,19 @@ class CalendarTest(unittest.TestCase):
         np.testing.assert_array_equal(X[:, -1] + 3, y)  # 最後一欄仍是最後一筆車速
 
 
+class LagDayTest(unittest.TestCase):
+    def test_lag_day_is_yesterday_same_time(self):
+        x = np.arange(2000, dtype=float)
+        d = split_series(x, lookback=12, train_frac=0.8, horizon=1, lag_day=True)
+        for X, y in ((d["X_train"], d["y_train"]), (d["X_test"], d["y_test"])):
+            self.assertEqual(X.shape[1], 13)
+            # 標準化是線性的：昨天同一時刻 = 目標 − 288 筆
+            np.testing.assert_allclose((y - X[:, 0]) * d["std"], 288.0, rtol=1e-4)
+        # 訓練段第一天沒有昨天值，視窗被捨棄
+        self.assertEqual(len(d["y_train"]), 1600 - 288)
+        self.assertEqual(len(d["y_test"]), 400 - 12)
+
+
 class MakeWindowsTest(unittest.TestCase):
     def test_shapes_and_alignment(self):
         x = np.arange(20, dtype=float)

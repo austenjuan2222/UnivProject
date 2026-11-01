@@ -106,7 +106,8 @@ def main(grid: Grid, context: Context) -> None:
             strategy, noise_multiplier=cl_sigma, clipping_norm=cl_clip, num_sampled_clients=num_clients)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
-                                    n_calendar(str(cfg.get("calendar", "")))).state_dict())
+                                    n_calendar(str(cfg.get("calendar", "")))
+                                    + int(bool(cfg.get("lag-day", False)))).state_dict())
     result = strategy.start(grid=grid, initial_arrays=init, num_rounds=num_rounds,
                             train_config=ConfigRecord({}), evaluate_config=ConfigRecord({}))
 
