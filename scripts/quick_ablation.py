@@ -144,12 +144,17 @@ def run(a, seed, data):
             # 個人化：拿最終全域模型在本地再訓練 finetune 個 epoch（同樣 DP），只在本地使用
             set_seed(seed + 1000 * i + 999)
             m = copy.deepcopy(g).train()
-            opt = torch.optim.SGD(m.parameters(), lr=a.ft_lr or a.lr)
+            if a.ft_head:
+                # 只微調最後一層：要加噪的參數少，雜訊對每個參數的相對影響較小
+                for k, prm in m.named_parameters():
+                    prm.requires_grad = k.startswith(f"net.{len(m.net) - 1}.")
+            opt = torch.optim.SGD([q for q in m.parameters() if q.requires_grad], lr=a.ft_lr or a.lr)
             ld = make_loader(d["Xtr"], d["ytr"], a.bs, True, seed + 1000 * i + 999)
             if a.sigma >= 0:
                 from opacus import PrivacyEngine
+                fs = a.ft_sigma if a.ft_sigma > 0 else a.sigma
                 m, opt, ld = PrivacyEngine(accountant="rdp").make_private(
-                    module=m, optimizer=opt, data_loader=ld, noise_multiplier=a.sigma,
+                    module=m, optimizer=opt, data_loader=ld, noise_multiplier=fs,
                     max_grad_norm=a.clip, poisson_sampling=True)
                 q = float(ld.sample_rate)
             steps = 0
@@ -158,8 +163,14 @@ def run(a, seed, data):
                     opt.zero_grad()
                     l = m(X).sum() * 0 if len(X) == 0 else LOSSES[a.loss](m(X), y)
                     l.backward(); opt.step(); steps += 1
-            if a.sigma >= 0: hist[i].append((a.sigma, q, steps))
+            if a.sigma >= 0: hist[i].append((fs, q, steps))
             m = unwrap(m)
+            if a.ft_blend < 1:
+                # 後處理：預測 = α·微調模型 + (1-α)·全域模型（不碰資料，不多花 ε）
+                fm, gm, al = m, copy.deepcopy(g), a.ft_blend
+                class Blend(nn.Module):
+                    def forward(s, x): return al * fm(x) + (1 - al) * gm(x)
+                m = Blend()
         r = ev(m, d); tot += r; per.append(r[0] / r[3])
     mia = None
     if "Xnon" in data[0]:
@@ -210,6 +221,9 @@ def main(argv=None):
     p.add_argument("--val", action="store_true", help="只用訓練期間，後 20%% 當驗證集（調參時不看測試集）")
     p.add_argument("--finetune", type=int, default=0, help="最終模型在各 client 本地再訓練幾個 epoch（個人化）")
     p.add_argument("--ft-lr", type=float, default=0.0, help="個人化的學習率；0 = 同 --lr")
+    p.add_argument("--ft-sigma", type=float, default=0.0, help="微調階段的 σ；0 = 同 --sigma（分配隱私預算用）")
+    p.add_argument("--ft-head", action="store_true", help="個人化只微調最後一層")
+    p.add_argument("--ft-blend", type=float, default=1.0, help="微調模型與全域模型預測的混合比例 α")
     p.add_argument("--noresid", action="store_true")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     a = p.parse_args(argv)
