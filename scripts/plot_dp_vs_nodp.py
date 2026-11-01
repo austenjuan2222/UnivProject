@@ -33,7 +33,7 @@ PAIRS = {
     (32, 5): _within("d32_fair", (1, 2, 3)),
     (32, 30): _within("d32_h6_fair", (1, 2, 3)),
     (64, 5): _within("d64_fair", (1, 2, 3)),
-    (64, 30): _within("d64_h6_fair", (1, 2, 3)),
+    (64, 30): _within("d64_h6_fair", (1, 2, 3)) + _within("d64_h6_fair_s45", (4, 5)),
     (128, 5): [(1, ("d128_nodpclip", "nodp_seed1"), ("d128_rec", "dp_sigma1.1_seed1")),
                (2, ("d128_nodpclip", "nodp_seed2"), ("d128_rec", "dp_sigma1.1_seed2")),
                (3, ("d128_nodpclip", "nodp_seed3"), ("m128_rec", "dp_sigma1.1_seed3")),
