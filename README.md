@@ -324,6 +324,17 @@ client-level DP 再加上**逐樣本裁剪**（`--extra "use-dp=true noise-multi
 可能讓本地訓練梯度爆掉：現在 client 偵測到參數出現 NaN／inf 會改回傳收到的全域模型（更新量 0），並記在 `clients.csv` 的
 `diverged` 與 `metrics.csv` 的 `n_diverged`。σ=8（ε 2.45、未裁剪）全域 2.548 ± 0.112，輸給 naive。
 注意：Flower 模擬中 client 回覆的順序不固定，浮點加總順序會變，同一個 seed 重跑結果略有不同（client-level 雜訊大時差異會被放大）。
+32 個 VD、client-level DP＋逐樣本裁剪（client 更新量裁剪 0.05）的隱私–準確度曲線，5 seed（naive 2.429、無 DP 全域 2.265／微調 2.153）：
+
+| client-level σ | ε（整個 VD） | 全域模型 MAE | 本地微調後 MAE |
+|---|---|---|---|
+| 2 | 12.3 | 2.281 ± 0.020 | 2.163 ± 0.012 |
+| 4 | 5.4 | 2.309 ± 0.029 | 2.166 ± 0.009 |
+| 8 | 2.45 | 2.423 ± 0.116（≈ naive） | 2.173 ± 0.008 |
+
+ε 越小全域模型越差，σ=8 時已接近 naive；但各 VD 本地微調後都回到 2.16～2.17，接近無 DP 的 2.153。
+微調只在本地使用、不上傳，不影響全域模型的 client-level ε；這組沒有 record-level 雜訊，所以微調本身沒有 record-level 保證。
+
 32 個 VD 上時段特徵同樣有效（record-level DP σ=1.1、3 seed 都較好，微調後）：5 分鐘 2.130 → 2.116、
 30 分鐘 3.323 → 3.231（naive 2.429／3.661）。
 
