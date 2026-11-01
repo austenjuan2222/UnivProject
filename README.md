@@ -323,7 +323,7 @@ client-level DP 再加上**逐樣本裁剪**（`--extra "use-dp=true noise-multi
 本地微調後 2.164／2.130。沒有逐樣本裁剪時，標準差很小的 VD（例如 142.2 km，車速標準差 3.2 km/h，壅塞時標準化後輸入到 −22）
 可能讓本地訓練梯度爆掉：現在 client 偵測到參數出現 NaN／inf 會改回傳收到的全域模型（更新量 0），並記在 `clients.csv` 的
 `diverged` 與 `metrics.csv` 的 `n_diverged`。σ=8（ε 2.45、未裁剪）全域 2.548 ± 0.112，輸給 naive。
-注意 Flower 伺服器端加的 client-level 雜訊沒有固定亂數種子，同一個 seed 重跑結果會不同。
+注意：Flower 模擬中 client 回覆的順序不固定，浮點加總順序會變，同一個 seed 重跑結果略有不同（client-level 雜訊大時差異會被放大）。
 32 個 VD 上時段特徵同樣有效（record-level DP σ=1.1、3 seed 都較好，微調後）：5 分鐘 2.130 → 2.116、
 30 分鐘 3.323 → 3.231（naive 2.429／3.661）。
 
