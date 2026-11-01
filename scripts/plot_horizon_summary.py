@@ -25,22 +25,22 @@ from plot_privacy_tradeoff import _num, _rows  # noqa: E402
 SOURCES = {
     "No DP + grad clip (not private)": {
         5: [("d256_nodpclip", "nodp"), ("d256_s3more", "nodp")],
-        15: [("d256_h3_nodpclip", "nodp"), ("d256_h3_s2", "nodp")],
+        15: [("d256_h3_nodpclip", "nodp"), ("d256_h3_s2", "nodp"), ("d256_h3_s3", "nodp")],
         30: [("d256_h6_nodpclip", "nodp"), ("d256_h6_s3", "nodp")],
     },
     "Record σ=1.1 (ε≈2.5)": {
         5: [("d256", "dp_sigma1.1"), ("d256s", "dp_sigma1.1_seed")],
-        15: [("d256_h3", "dp_sigma1.1"), ("d256_h3_s2", "dp_sigma1.1")],
+        15: [("d256_h3", "dp_sigma1.1"), ("d256_h3_s2", "dp_sigma1.1"), ("d256_h3_s3", "dp_sigma1.1")],
         30: [("d256_h6", "dp_sigma1.1"), ("d256_h6s2", "dp_sigma1.1"), ("d256_h6_s3", "dp_sigma1.1")],
     },
     "Record σ=3 (ε≈0.65)": {
         5: [("d256_rec3", "dp_sigma3"), ("d256_s3more", "dp_sigma3")],
-        15: [("d256_h3", "dp_sigma3"), ("d256_h3_s2", "dp_sigma3")],
+        15: [("d256_h3", "dp_sigma3"), ("d256_h3_s2", "dp_sigma3"), ("d256_h3_s3", "dp_sigma3")],
         30: [("d256_h6_rec3", "dp_sigma3"), ("d256_h6_s3", "dp_sigma3")],
     },
     "Whole-VD ε=0.79 (25% VDs/round)": {
         5: [("d256_samp6", "cldp_sigma6"), ("d256_samp6_s3", "cldp_sigma6")],
-        15: [("d256_h3cl", "cldp_sigma6"), ("d256_h3cl_s2", "cldp_sigma6")],
+        15: [("d256_h3cl", "cldp_sigma6"), ("d256_h3cl_s2", "cldp_sigma6"), ("d256_h3cl_s3", "cldp_sigma6")],
         30: [("d256_h6cl", "cldp_sigma6"), ("d256_h6cls2", "cldp_sigma6"), ("d256_h6cl_s3", "cldp_sigma6")],
     },
     "Both: record σ=1.1 + whole-VD ε=2.45": {
