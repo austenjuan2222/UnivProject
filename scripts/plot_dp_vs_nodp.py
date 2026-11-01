@@ -28,8 +28,8 @@ def _within(batch, seeds):
 
 # (VD 數, 預測分鐘) → [(seed, 無 DP 來源, DP 來源)]；來源 = (batch, run 名稱)
 PAIRS = {
-    (8, 5): _within("d8_fair", (1, 2, 3)),
-    (8, 30): _within("d8_h6_fair", (1, 2, 3)),
+    (8, 5): _within("d8_fair", (1, 2, 3)) + _within("d8_fair_s45", (4, 5)),
+    (8, 30): _within("d8_h6_fair", (1, 2, 3)) + _within("d8_h6_fair_s45", (4, 5)),
     (32, 5): _within("d32_fair", (1, 2, 3)),
     (32, 30): _within("d32_h6_fair", (1, 2, 3)),
     (64, 5): _within("d64_fair", (1, 2, 3)),
