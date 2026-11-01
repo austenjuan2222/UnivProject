@@ -38,7 +38,7 @@ PAIRS = {
                (2, ("d128_nodpclip", "nodp_seed2"), ("d128_rec", "dp_sigma1.1_seed2")),
                (3, ("d128_nodpclip", "nodp_seed3"), ("m128_rec", "dp_sigma1.1_seed3")),
                (4, ("d128_nodpclip", "nodp_seed4"), ("m128_rec", "dp_sigma1.1_seed4"))],
-    (128, 30): _within("d128_h6_nodpclip", (1, 2)),
+    (128, 30): _within("d128_h6_nodpclip", (1, 2)) + _within("d128_h6_nodpclip_s34", (3, 4)),
     (256, 5): [(1, ("d256_nodpclip", "nodp_seed1"), ("d256", "dp_sigma1.1")),
                (2, ("d256_nodpclip", "nodp_seed2"), ("d256s", "dp_sigma1.1_seed2")),
                (3, ("d256_s3more", "nodp"), ("d256s", "dp_sigma1.1_seed3"))],
