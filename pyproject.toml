@@ -58,6 +58,7 @@ finetune-epochs = 3        # > 0：最後一輪各 VD 拿全域模型在本地�
 finetune-lr = 0.05         # 個人化微調的學習率（比聯邦訓練小，避免把全域模型學到的東西洗掉）
 client-dp-noise = 0.0      # > 0 啟用 client-level DP（伺服器端裁剪＋加噪，保護整個 VD）；0 = 關閉
 client-fraction = 1.0       # 每輪參與訓練的 client 比例（< 1 時 client-level ε 有取樣放大；評估仍用全部 client）
+client-dp-adaptive = false  # true = client-level DP 用自適應裁剪（client-dp-clip 為初始值）
 client-dp-clip = 0.1       # client-level DP 的更新量裁剪上限（更新量 L2 範數中位數約 0.24）
 seed = 42
 data-dir = "data/processed"

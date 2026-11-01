@@ -13,7 +13,8 @@ from pathlib import Path
 import torch
 from flwr.app import ArrayRecord, ConfigRecord, Context, MetricRecord
 from flwr.serverapp import Grid, ServerApp
-from flwr.serverapp.strategy import DifferentialPrivacyServerSideFixedClipping, FedAvg
+from flwr.serverapp.strategy import (DifferentialPrivacyServerSideAdaptiveClipping,
+                                     DifferentialPrivacyServerSideFixedClipping, FedAvg)
 
 from data import n_calendar
 from privacy import client_level_epsilon
@@ -82,6 +83,7 @@ def main(grid: Grid, context: Context) -> None:
     if cl_sigma > 0:
         q = n_train / num_clients
         client_dp = {"noise_multiplier": cl_sigma, "clipping_norm": cl_clip, "sample_rate": q,
+                     "adaptive": bool(cfg.get("client-dp-adaptive", False)),
                      "epsilon": client_level_epsilon(cl_sigma, num_rounds, float(cfg["target-delta"]), q),
                      "delta": float(cfg["target-delta"])}
         print(f"client-level DP：σ={cl_sigma}、C={cl_clip}，{num_rounds} 輪後 ε={client_dp['epsilon']:.2f}")
@@ -107,7 +109,13 @@ def main(grid: Grid, context: Context) -> None:
         evaluate_metrics_aggr_fn=lambda replies, _key: MetricRecord(
             logger.on_eval([dict(r["metrics"]) for r in replies])),
     )
-    if client_dp:
+    if client_dp and client_dp["adaptive"]:
+        # 自適應裁剪（Andrew et al. 2021）：每輪依「被裁剪的 client 比例」調整裁剪值，目標中位數；
+        # 計數查詢也加噪，Flower 會調高更新量的雜訊讓總隱私等同 noise_multiplier，ε 計算不變。
+        strategy = DifferentialPrivacyServerSideAdaptiveClipping(
+            strategy, noise_multiplier=cl_sigma, num_sampled_clients=n_train,
+            initial_clipping_norm=cl_clip)
+    elif client_dp:
         strategy = DifferentialPrivacyServerSideFixedClipping(
             strategy, noise_multiplier=cl_sigma, clipping_norm=cl_clip, num_sampled_clients=n_train)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
