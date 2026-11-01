@@ -40,7 +40,7 @@ if /i "%1"=="skipdownload" goto preprocess
 "%VPY%" scripts\preprocess_vd.py --num-clients 8 --vd-pattern "^VD-N1-[NS]-[0-9.]+-M-" >> "%LOG%" 2>&1 || (echo FAIL preprocess >> "%STATUS%" & exit /b 1)
 echo OK preprocess >> "%STATUS%"
 
-"%VPY%" scripts\run_experiments.py --rounds 20 --sigmas 0.8 1.1 1.5 >> "%LOG%" 2>&1 || (echo FAIL experiments >> "%STATUS%" & exit /b 1)
+"%VPY%" scripts\run_experiments.py --rounds 20 --sigmas 0.8 1.1 1.5 3 --seeds 1 2 3 >> "%LOG%" 2>&1 || (echo FAIL experiments >> "%STATUS%" & exit /b 1)
 echo OK experiments >> "%STATUS%"
 echo DONE %DATE% %TIME% >> "%STATUS%"
 endlocal

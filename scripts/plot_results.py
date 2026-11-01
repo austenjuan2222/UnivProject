@@ -2,12 +2,14 @@
 """比較同一批實驗（一個資料夾底下多個 run）：輸出 comparison.png 與 summary.csv。
 
 範例：python scripts/plot_results.py results/20261020-0300
-左圖：各 run 每輪測試 MAE（km/h）；右圖：DP run 的累計 ε（最大 client）。
+左圖：各設定每輪測試 MAE（km/h）；右圖：DP 設定的累計 ε（最大 client）。
+同一設定跑了多個 seed（run 名稱 *_seed<N>）時，圖上畫平均，summary_by_config.csv 給平均 ± 標準差。
 """
 from __future__ import annotations
 
 import csv
 import json
+import statistics
 import sys
 from pathlib import Path
 
@@ -32,21 +34,62 @@ def _f(x):
 def collect_runs(root: Path) -> list[dict]:
     runs = []
     for d in sorted(p for p in root.iterdir() if (p / "metrics.csv").exists()):
-        cfg = json.loads((d / "config.json").read_text(encoding="utf-8")).get("run_config", {})
+        meta = json.loads((d / "config.json").read_text(encoding="utf-8"))
+        cfg = meta.get("run_config", {})
         with (d / "metrics.csv").open(encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
         use_dp = bool(cfg.get("use-dp"))
         sigma = _f(cfg.get("noise-multiplier"))
+        cl_sigma = _f(cfg.get("client-dp-noise")) or 0.0
+        if use_dp:
+            label = f"DP σ={sigma:g}"
+        elif cl_sigma > 0:
+            label = f"Client-level DP σ={cl_sigma:g}"
+        else:
+            label = "No DP (baseline)"
         runs.append({
             "name": d.name, "use_dp": use_dp, "sigma": sigma,
-            "label": f"DP σ={sigma:g}" if use_dp else "No DP (baseline)",
+            "label": label,
+            "client_eps": _f((meta.get("client_level_dp") or {}).get("epsilon")),
             "round": [int(r["round"]) for r in rows],
             "mae": [_f(r.get("mae_kmh")) for r in rows],
             "rmse": [_f(r.get("rmse_kmh")) for r in rows],
             "eps": [_f(r.get("epsilon_max")) for r in rows],
+            "naive": [_f(r.get("naive_mae_kmh")) for r in rows],
+            "local": [_f(r.get("local_mae_kmh")) for r in rows],
+            "ft": [_f(r.get("ft_mae_kmh")) for r in rows],
+            "ft_eps": [_f(r.get("ft_epsilon_max")) for r in rows],
         })
-    runs.sort(key=lambda r: (r["use_dp"], -(r["sigma"] or 0), r["name"]))
+    # 對照組 → record-level DP（σ 由大到小）→ client-level DP
+    runs.sort(key=lambda r: (1 if r["use_dp"] else (2 if r["client_eps"] else 0),
+                             -(r["sigma"] or 0) if r["use_dp"] else 0, r["name"]))
     return runs
+
+
+def _mean_curve(curves):
+    """逐輪平均（略過缺值）；各 run 輪數不同時取最短。"""
+    n = min(len(c) for c in curves)
+    out = []
+    for i in range(n):
+        vals = [c[i] for c in curves if c[i] is not None]
+        out.append(sum(vals) / len(vals) if vals else None)
+    return out
+
+
+def group_runs(runs: list[dict]) -> list[dict]:
+    """依 label（設定）合併多個 seed 的 run，保持 collect_runs 的順序。"""
+    groups: dict[str, dict] = {}
+    for r in runs:
+        g = groups.setdefault(r["label"], {"label": r["label"], "use_dp": r["use_dp"],
+                                           "sigma": r["sigma"], "members": []})
+        g["members"].append(r)
+    for g in groups.values():
+        m = g["members"]
+        g["n"] = len(m)
+        g["round"] = m[0]["round"][:min(len(x["round"]) for x in m)]
+        for k in ("mae", "rmse", "eps", "naive"):
+            g[k] = _mean_curve([x.get(k, []) for x in m])
+    return list(groups.values())
 
 
 def _style(ax, title, ylabel):
@@ -64,7 +107,9 @@ def _style(ax, title, ylabel):
 
 def plot(runs: list[dict], out: Path) -> None:
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 4), dpi=150)
-    for i, r in enumerate(runs):
+    for i, r in enumerate(group_runs(runs)):
+        if r["n"] > 1:
+            r = dict(r, label=f"{r['label']} (mean of {r['n']} seeds)")
         c = PALETTE[i % len(PALETTE)]
         pts = [(x, y) for x, y in zip(r["round"], r["mae"]) if y is not None]
         if pts:
@@ -74,6 +119,10 @@ def plot(runs: list[dict], out: Path) -> None:
             a2.plot(*zip(*pts), color=c, linewidth=2, marker="o", markersize=3, label=r["label"])
             a2.annotate(f"ε={pts[-1][1]:.2f}", pts[-1], textcoords="offset points",
                         xytext=(4, 0), color=INK, fontsize=8, va="center")
+    naive = next((g["naive"][-1] for g in group_runs(runs) if g["naive"] and g["naive"][-1]), None)
+    if naive is not None:
+        a1.axhline(naive, color=MUTED, linestyle="--", linewidth=1,
+                   label=f"Naive: next = last ({naive:.2f})")
     _style(a1, "Test MAE per round", "MAE (km/h)")
     _style(a2, "Cumulative privacy budget (max over clients)", "ε")
     a2.set_ylim(bottom=0)
@@ -89,13 +138,45 @@ def write_summary(runs: list[dict], out: Path) -> None:
     with out.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["run", "label", "use_dp", "sigma", "rounds", "final_mae_kmh", "final_rmse_kmh",
-                    "best_mae_kmh", "final_epsilon"])
+                    "best_mae_kmh", "final_epsilon", "naive_mae_kmh", "improve_vs_naive_pct",
+                    "final_local_mae_kmh", "finetuned_mae_kmh", "finetuned_epsilon"])
         for r in runs:
             maes = [m for m in r["mae"] if m is not None]
             last = lambda xs: xs[-1] if xs and xs[-1] is not None else ""  # noqa: E731
+            naive, mae = last(r.get("naive", [])), last(r["mae"])
+            improve = 100 * (naive - mae) / naive if naive != "" and mae != "" and naive else ""
             w.writerow([r["name"], r["label"], r["use_dp"], r["sigma"] if r["use_dp"] else "",
-                        len(r["round"]), last(r["mae"]), last(r["rmse"]),
-                        min(maes) if maes else "", last(r["eps"]) if r["use_dp"] else ""])
+                        len(r["round"]), mae, last(r["rmse"]),
+                        min(maes) if maes else "",
+                        last(r["eps"]) if r["use_dp"] else (r.get("client_eps") or ""),
+                        naive, improve, last(r.get("local", [])), last(r.get("ft", [])),
+                        last(r.get("ft_eps", []))])
+
+
+def write_group_summary(runs: list[dict], out: Path) -> None:
+    def stats(xs):
+        xs = [x for x in xs if x is not None]
+        if not xs:
+            return "", ""
+        return statistics.fmean(xs), (statistics.stdev(xs) if len(xs) > 1 else "")
+
+    with out.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["label", "use_dp", "sigma", "n_seeds", "final_mae_mean", "final_mae_std",
+                    "final_rmse_mean", "final_epsilon_mean", "naive_mae_mean",
+                    "finetuned_mae_mean", "finetuned_mae_std", "finetuned_epsilon_mean"])
+        for g in group_runs(runs):
+            last = [m["mae"][-1] if m["mae"] else None for m in g["members"]]
+            mae_mean, mae_std = stats(last)
+            rmse_mean, _ = stats([m["rmse"][-1] if m["rmse"] else None for m in g["members"]])
+            eps_mean, _ = stats([m["eps"][-1] if m["eps"] else None for m in g["members"]])
+            naive_mean, _ = stats([m["naive"][-1] if m.get("naive") else None for m in g["members"]])
+            ft_mean, ft_std = stats([m["ft"][-1] if m.get("ft") else None for m in g["members"]])
+            ft_eps, _ = stats([m["ft_eps"][-1] if m.get("ft_eps") else None for m in g["members"]])
+            w.writerow([g["label"], g["use_dp"], g["sigma"] if g["use_dp"] else "", g["n"],
+                        mae_mean, mae_std, rmse_mean,
+                        eps_mean if g["use_dp"] else (g["members"][0].get("client_eps") or ""), naive_mean,
+                        ft_mean, ft_std, ft_eps])
 
 
 def main(argv=None):
@@ -110,7 +191,8 @@ def main(argv=None):
         return 1
     plot(runs, root / "comparison.png")
     write_summary(runs, root / "summary.csv")
-    print(f"已輸出 {root / 'comparison.png'} 與 {root / 'summary.csv'}")
+    write_group_summary(runs, root / "summary_by_config.csv")
+    print(f"已輸出 {root / 'comparison.png'}、{root / 'summary.csv'} 與 {root / 'summary_by_config.csv'}")
     return 0
 
 
