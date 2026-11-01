@@ -15,6 +15,7 @@ from flwr.app import ArrayRecord, ConfigRecord, Context, MetricRecord
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import DifferentialPrivacyServerSideFixedClipping, FedAvg
 
+from data import n_calendar
 from privacy import client_level_epsilon
 from results_log import RunLogger, make_run_name
 from task import TrafficModel, set_seed
@@ -104,7 +105,8 @@ def main(grid: Grid, context: Context) -> None:
         strategy = DifferentialPrivacyServerSideFixedClipping(
             strategy, noise_multiplier=cl_sigma, clipping_norm=cl_clip, num_sampled_clients=num_clients)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
-                                    bool(cfg.get("residual", False))).state_dict())
+                                    bool(cfg.get("residual", False)),
+                                    n_calendar(str(cfg.get("calendar", "")))).state_dict())
     result = strategy.start(grid=grid, initial_arrays=init, num_rounds=num_rounds,
                             train_config=ConfigRecord({}), evaluate_config=ConfigRecord({}))
 

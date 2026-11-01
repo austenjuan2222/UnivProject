@@ -16,13 +16,14 @@ class TrafficModel(nn.Module):
     小型 MLP：只用 Linear/ReLU，Opacus 可直接計算 per-sample gradient。
     residual=True 時預測「相對最後一筆的變化量」：輸出 = x[:, -1] + MLP(x)，
     初始時就接近 naive（下一筆 = 最後一筆），模型只需學修正量。
+    n_extra：放在輸入最前面的額外特徵數（例如日曆特徵），x[:, -1] 仍是最後一筆車速。
     """
 
-    def __init__(self, lookback: int = 12, hidden: int = 32, residual: bool = False):
+    def __init__(self, lookback: int = 12, hidden: int = 32, residual: bool = False, n_extra: int = 0):
         super().__init__()
         self.residual = residual
         self.net = nn.Sequential(
-            nn.Linear(lookback, hidden), nn.ReLU(),
+            nn.Linear(lookback + n_extra, hidden), nn.ReLU(),
             nn.Linear(hidden, hidden), nn.ReLU(),
             nn.Linear(hidden, 1),
         )

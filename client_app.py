@@ -13,7 +13,7 @@ import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
-from data import load_client_arrays
+from data import load_client_arrays, n_calendar
 from task import TrafficModel, evaluate, make_loader, set_seed, train, unwrap
 
 warnings.filterwarnings("ignore", category=UserWarning, module="opacus")
@@ -32,6 +32,7 @@ def _cfg(context: Context) -> dict:
         "horizon": int(c.get("horizon", 1)),
         "hidden": int(c["hidden-size"]),
         "residual": bool(c.get("residual", False)),
+        "calendar": str(c.get("calendar", "")),
         "loss": str(c.get("loss", "mse")),
         "train_frac": float(c["train-frac"]),
         "batch_size": int(c["batch-size"]),
@@ -52,11 +53,11 @@ def _client_data(context: Context, cfg: dict):
     pid = int(context.node_config["partition-id"])
     n = int(context.node_config["num-partitions"])
     return pid, load_client_arrays(cfg["data_dir"], pid, n, cfg["lookback"], cfg["train_frac"],
-                                cfg["horizon"])
+                                cfg["horizon"], cfg["calendar"])
 
 
 def _model(cfg: dict, msg: Message) -> TrafficModel:
-    model = TrafficModel(cfg["lookback"], cfg["hidden"], cfg["residual"])
+    model = TrafficModel(cfg["lookback"], cfg["hidden"], cfg["residual"], n_calendar(cfg["calendar"]))
     model.load_state_dict(msg.content["arrays"].to_torch_state_dict(), strict=True)
     return model
 

@@ -9,28 +9,62 @@ import numpy as np
 import pandas as pd
 
 
-def make_windows(x: np.ndarray, lookback: int = 12, horizon: int = 1):
-    """x[t-lookback:t] → x[t+horizon-1]（horizon=1 為下一筆）；含 NaN 的視窗捨棄。"""
+def calendar_features(times, kinds: str = "tod") -> np.ndarray:
+    """時間點的日曆特徵（公開資訊，不是私有量測）。
+
+    tod：一天中的時段，以 sin/cos 編碼（23:55 與 00:00 相鄰）；dow：週末旗標。
+    回傳 (len(times), k)；kinds 為空字串時 k = 0。
+    """
+    kinds = [k for k in kinds.split(",") if k]
+    unknown = set(kinds) - {"tod", "dow"}
+    if unknown:
+        raise ValueError(f"未知的日曆特徵 {sorted(unknown)}；可用 tod、dow")
+    t = pd.to_datetime(pd.Series(times))
+    cols = []
+    if "tod" in kinds:
+        m = (t.dt.hour * 60 + t.dt.minute).to_numpy(float) / 1440 * 2 * np.pi
+        cols += [np.sin(m), np.cos(m)]
+    if "dow" in kinds:
+        cols.append((t.dt.dayofweek >= 5).to_numpy(float))
+    return np.stack(cols, 1) if cols else np.zeros((len(t), 0))
+
+
+def n_calendar(kinds: str) -> int:
+    kinds = [k for k in kinds.split(",") if k]
+    return 2 * ("tod" in kinds) + ("dow" in kinds)
+
+
+def make_windows(x: np.ndarray, lookback: int = 12, horizon: int = 1, cal: np.ndarray | None = None):
+    """x[t-lookback:t] → x[t+horizon-1]（horizon=1 為下一筆）；含 NaN 的視窗捨棄。
+
+    cal（與 x 等長的日曆特徵）不為 None 時，取「目標時間點」那一列放在視窗前面：
+    X = [日曆特徵, 車速視窗]，所以 X[:, -1] 仍是最後一筆車速（殘差模型與 naive 基準照用）。
+    """
     x = np.asarray(x, dtype=float)
+    k = 0 if cal is None else cal.shape[1]
     n = len(x) - lookback - horizon + 1
     if n <= 0:
-        return np.empty((0, lookback)), np.empty((0,))
+        return np.empty((0, lookback + k)), np.empty((0,))
     idx = np.arange(lookback)[None, :] + np.arange(n)[:, None]
     X, y = x[idx], x[lookback + horizon - 1:]
+    if k:
+        X = np.concatenate([cal[lookback + horizon - 1:], X], axis=1)
     ok = ~np.isnan(X).any(axis=1) & ~np.isnan(y)
     return X[ok], y[ok]
 
 
-def split_series(x: np.ndarray, lookback: int = 12, train_frac: float = 0.8, horizon: int = 1) -> dict:
-    """依時間切訓練/測試，兩邊視窗互不跨越切點；標準化參數只用訓練段。"""
+def split_series(x: np.ndarray, lookback: int = 12, train_frac: float = 0.8, horizon: int = 1,
+                 cal: np.ndarray | None = None) -> dict:
+    """依時間切訓練/測試，兩邊視窗互不跨越切點；標準化參數只用訓練段（日曆特徵不標準化）。"""
     x = np.asarray(x, dtype=float)
     split = int(len(x) * train_frac)
     train, test = x[:split], x[split:]
     mean = float(np.nanmean(train))
     std = float(np.nanstd(train))
     std = std if std > 1e-6 else 1.0
-    Xtr, ytr = make_windows((train - mean) / std, lookback, horizon)
-    Xte, yte = make_windows((test - mean) / std, lookback, horizon)
+    ctr, cte = (None, None) if cal is None else (cal[:split], cal[split:])
+    Xtr, ytr = make_windows((train - mean) / std, lookback, horizon, ctr)
+    Xte, yte = make_windows((test - mean) / std, lookback, horizon, cte)
     f32 = lambda a: a.astype(np.float32)  # noqa: E731
     return {"X_train": f32(Xtr), "y_train": f32(ytr), "X_test": f32(Xte), "y_test": f32(yte),
             "mean": mean, "std": std, "split_index": split}
@@ -59,10 +93,12 @@ def client_info(data_dir, partition_id: int, num_partitions: int) -> dict:
 
 @lru_cache(maxsize=None)
 def load_client_arrays(data_dir, partition_id: int, num_partitions: int,
-                       lookback: int = 12, train_frac: float = 0.8, horizon: int = 1) -> dict:
+                       lookback: int = 12, train_frac: float = 0.8, horizon: int = 1,
+                       calendar: str = "") -> dict:
     info = client_info(data_dir, partition_id, num_partitions)
     df = pd.read_csv(Path(data_dir) / info["file"])
-    d = split_series(df["speed"].to_numpy(dtype=float), lookback, train_frac, horizon)
+    cal = calendar_features(df["time"], calendar) if calendar else None
+    d = split_series(df["speed"].to_numpy(dtype=float), lookback, train_frac, horizon, cal)
     if len(d["y_train"]) == 0 or len(d["y_test"]) == 0:
         raise ValueError(f"{info['vdid']} 有效視窗不足（train={len(d['y_train'])}, test={len(d['y_test'])}）")
     d["vdid"] = info["vdid"]

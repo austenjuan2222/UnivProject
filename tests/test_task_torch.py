@@ -32,6 +32,15 @@ class TaskTorchTest(unittest.TestCase):
         x = torch.randn(4, 12)
         self.assertTrue(torch.allclose(m(x), x[:, -1]))   # MLP 修正量為 0 時 = naive
 
+    def test_extra_inputs_keep_residual_on_last_speed(self):
+        import torch
+        from task import TrafficModel
+        m = TrafficModel(12, residual=True, n_extra=2)
+        for p in m.net[-1].parameters():
+            torch.nn.init.zeros_(p)
+        x = torch.randn(4, 14)
+        self.assertTrue(torch.allclose(m(x), x[:, -1]))   # 日曆特徵在前，殘差仍接最後一筆車速
+
     def test_training_reduces_loss_without_dp(self):
         import torch
         from task import TrafficModel, evaluate, make_loader, set_seed, train

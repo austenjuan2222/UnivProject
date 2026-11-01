@@ -6,7 +6,29 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from data import client_info, load_client_arrays, make_windows, split_series
+from data import (calendar_features, client_info, load_client_arrays, make_windows, n_calendar,
+                  split_series)
+
+
+class CalendarTest(unittest.TestCase):
+    def test_tod_dow_values(self):
+        f = calendar_features(["2024-03-09 06:00:00", "2024-03-11 00:00:00"], "tod,dow")
+        self.assertEqual(f.shape, (2, 3))
+        np.testing.assert_allclose(f[0, :2], [1.0, 0.0], atol=1e-9)   # 06:00
+        np.testing.assert_allclose(f[1, :2], [0.0, 1.0], atol=1e-9)   # 00:00
+        self.assertEqual(list(f[:, 2]), [1.0, 0.0])                    # 週六、週一
+        self.assertEqual(n_calendar("tod,dow"), 3)
+        self.assertEqual(calendar_features(["2024-03-09"], "").shape, (1, 0))
+        with self.assertRaises(ValueError):
+            calendar_features(["2024-03-09"], "holiday")
+
+    def test_windows_prepend_target_time_features(self):
+        x = np.arange(20, dtype=float)
+        cal = np.stack([np.arange(20) * 10.0], 1)       # 每個時間點一個可辨識的值
+        X, y = make_windows(x, lookback=12, horizon=3, cal=cal)
+        self.assertEqual(X.shape, (6, 13))
+        np.testing.assert_array_equal(X[:, 0], y * 10)  # 日曆特徵對應目標時間點
+        np.testing.assert_array_equal(X[:, -1] + 3, y)  # 最後一欄仍是最後一筆車速
 
 
 class MakeWindowsTest(unittest.TestCase):
