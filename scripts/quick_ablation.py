@@ -22,7 +22,8 @@ torch.set_num_threads(1)
 def time_feats(t, kinds):
     return calendar_features(t, ",".join(kinds))
 
-def load(data_dir, lb, h, frac=0.8, neigh="", mia=False, val=False, cal="", feats="", lagday=False):
+def load(data_dir, lb, h, frac=0.8, neigh="", mia=False, val=False, cal="", feats="", lagday=False,
+         fold=-1, nfolds=5):
     man = json.loads((Path(data_dir) / "manifest.json").read_text(encoding="utf-8"))
     dfs = [pd.read_csv(Path(data_dir) / c["file"]) for c in man["clients"]]
     raw = [d["speed"].to_numpy(float) for d in dfs]
@@ -35,11 +36,19 @@ def load(data_dir, lb, h, frac=0.8, neigh="", mia=False, val=False, cal="", feat
         cal_all = [c[:int(len(c) * frac)] for c in cal_all]
         ext = [[e[:int(len(e) * frac)] for e in es] for es in ext]
     sp = int(len(raw[0]) * frac)
-    z = [(s - np.nanmean(s[:sp])) / (np.nanstd(s[:sp]) or 1.0) for s in raw]
-    zext = [[(e - np.nanmean(e[:sp])) / (np.nanstd(e[:sp]) or 1.0) for e in es] for es in ext]
+    # 區塊交叉驗證：整段切成 nfolds 個連續區塊，第 fold 塊當測試、其餘當訓練
+    # （訓練視窗不碰測試區塊；測試視窗的輸入可來自前一段，屬於預測當下已知的過去）
+    trmask = np.arange(len(raw[0])) < sp
+    if fold >= 0:
+        blk = np.array_split(np.arange(len(raw[0])), nfolds)[fold]
+        lo_t, hi_t = blk[0], blk[-1] + 1
+        trmask = np.ones(len(raw[0]), bool); trmask[lo_t:hi_t] = False
+    nz = lambda a: (a - np.nanmean(a[trmask])) / (np.nanstd(a[trmask]) or 1.0)  # noqa: E731
+    z = [nz(s) for s in raw]
+    zext = [[nz(e) for e in es] for es in ext]
     out = []
     for i, c in enumerate(man["clients"]):
-        s = raw[i]; tr, te = s[:sp], s[sp:]
+        s = raw[i]; tr = s[trmask]
         m, sd = np.nanmean(tr), np.nanstd(tr) or 1.0
         # 相鄰 VD（manifest 依里程排序）：北上車流往里程小的方向，i-1 是下游
         nb = {"down": [i - 1 if i > 0 else i], "up": [i + 1 if i + 1 < len(raw) else i]}
@@ -58,7 +67,13 @@ def load(data_dir, lb, h, frac=0.8, neigh="", mia=False, val=False, cal="", feat
             y = zi[lo:hi][lb + h - 1: lb + h - 1 + n]
             ok = ~np.isnan(X).any(1) & ~np.isnan(y)
             return X[ok], y[ok]
-        Xtr, ytr = win(0, sp); Xte, yte = win(sp, len(s))
+        if fold >= 0:
+            zm, zt = z[i].copy(), z[i].copy()
+            zm[~trmask] = np.nan
+            zt[:max(lo_t - lb - h + 1, 0)] = np.nan; zt[hi_t:] = np.nan
+            Xtr, ytr = win(0, len(s), zm); Xte, yte = win(0, len(s), zt)
+        else:
+            Xtr, ytr = win(0, sp); Xte, yte = win(sp, len(s))
         extra = {}
         if mia:
             # 成員推論：訓練期間每 4 天保留 1 天不訓練（非成員），比較模型在成員/非成員上的誤差
@@ -114,7 +129,7 @@ def run(a, seed, data):
         for i, d in enumerate(data):
             set_seed(seed + 1000 * i + rnd)
             m = copy.deepcopy(g).train()
-            opt = torch.optim.SGD(m.parameters(), lr=lr, momentum=a.momentum)
+            opt = torch.optim.SGD(m.parameters(), lr=lr, momentum=a.momentum, weight_decay=a.wd)
             ld = make_loader(d["Xtr"], d["ytr"], a.bs, True, seed + 1000 * i + rnd)
             if a.sigma >= 0:
                 from opacus import PrivacyEngine
@@ -217,12 +232,15 @@ def main(argv=None):
     p.add_argument("--loss", default="mse")
     p.add_argument("--mu", type=float, default=0.0)
     p.add_argument("--momentum", type=float, default=0.0)
+    p.add_argument("--wd", type=float, default=0.0, help="聯邦訓練的 weight decay")
     p.add_argument("--cosine", action="store_true")
     p.add_argument("--neigh", default="", choices=["", "down", "up", "both"])
     p.add_argument("--cal", default="", help="日曆特徵：tod（時段 sin/cos）、dow（週末），逗號分隔")
     p.add_argument("--feats", default="", help="本 VD 額外輸入序列：volume、occupancy，逗號分隔")
     p.add_argument("--lag-day", type=int, default=0, choices=[0, 1], help="1 = 加入昨天同一時刻的車速")
     p.add_argument("--avg-last", type=int, default=0, help="最後 k 輪全域模型取平均（後處理）")
+    p.add_argument("--fold", type=int, default=-1, help="區塊交叉驗證：第幾塊當測試（0..nfolds-1）；-1 = 原本的前 80%%/後 20%%")
+    p.add_argument("--nfolds", type=int, default=5)
     p.add_argument("--mia", action="store_true")
     p.add_argument("--val", action="store_true", help="只用訓練期間，後 20%% 當驗證集（調參時不看測試集）")
     p.add_argument("--finetune", type=int, default=0, help="最終模型在各 client 本地再訓練幾個 epoch（個人化）")
@@ -233,7 +251,8 @@ def main(argv=None):
     p.add_argument("--noresid", action="store_true")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     a = p.parse_args(argv)
-    data = load(a.data_dir, a.lookback, a.horizon, neigh=a.neigh, mia=a.mia, val=a.val, cal=a.cal, feats=a.feats, lagday=bool(a.lag_day))
+    data = load(a.data_dir, a.lookback, a.horizon, neigh=a.neigh, mia=a.mia, val=a.val, cal=a.cal, feats=a.feats, lagday=bool(a.lag_day),
+                fold=a.fold, nfolds=a.nfolds)
     rs = [run(a, s, data) for s in a.seeds]
     maes = [r["mae"] for r in rs]
     out = dict(name=a.name, args=vars(a), mae=float(np.mean(maes)), std=float(np.std(maes, ddof=1)) if len(maes) > 1 else 0,
