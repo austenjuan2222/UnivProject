@@ -24,7 +24,7 @@ from plot_privacy_tradeoff import _num, _rows  # noqa: E402
 # 設定 → 預測距離（分鐘）→ [(batch, run 名稱前綴)]
 SOURCES = {
     "No DP + grad clip (not private)": {
-        5: [("d256_nodpclip", "nodp")],
+        5: [("d256_nodpclip", "nodp"), ("d256_s3more", "nodp")],
         15: [("d256_h3_nodpclip", "nodp"), ("d256_h3_s2", "nodp")],
         30: [("d256_h6_nodpclip", "nodp")],
     },
@@ -34,12 +34,12 @@ SOURCES = {
         30: [("d256_h6", "dp_sigma1.1"), ("d256_h6s2", "dp_sigma1.1")],
     },
     "Record σ=3 (ε≈0.65)": {
-        5: [("d256_rec3", "dp_sigma3")],
+        5: [("d256_rec3", "dp_sigma3"), ("d256_s3more", "dp_sigma3")],
         15: [("d256_h3", "dp_sigma3"), ("d256_h3_s2", "dp_sigma3")],
         30: [("d256_h6_rec3", "dp_sigma3")],
     },
     "Whole-VD ε=0.79 (25% VDs/round)": {
-        5: [("d256_samp6", "cldp_sigma6")],
+        5: [("d256_samp6", "cldp_sigma6"), ("d256_samp6_s3", "cldp_sigma6")],
         15: [("d256_h3cl", "cldp_sigma6"), ("d256_h3cl_s2", "cldp_sigma6")],
         30: [("d256_h6cl", "cldp_sigma6"), ("d256_h6cls2", "cldp_sigma6"), ("d256_h6cl_s3", "cldp_sigma6")],
     },
