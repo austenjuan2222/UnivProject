@@ -42,6 +42,8 @@ def _cfg(context: Context) -> dict:
         "use_dp": bool(c["use-dp"]),
         "sigma": float(c["noise-multiplier"]),
         "clip": float(c["max-grad-norm"]),
+        # 無 DP 時的一般梯度裁剪（整批梯度範數；0 = 不裁剪），作為「穩定但不私密」的對照組
+        "nodp_grad_clip": float(c.get("nodp-grad-clip", 0.0)),
         "delta": float(c["target-delta"]),
         "seed": int(c["seed"]),
         "rounds": int(c["num-server-rounds"]),
@@ -110,7 +112,8 @@ def train_fn(msg: Message, context: Context) -> Message:
         metrics["dp-steps"] = int(steps)
         metrics["sample-rate"] = sample_rate
     else:
-        loss, steps = train(model, loader, optimizer, cfg["epochs"], loss=cfg["loss"])
+        loss, steps = train(model, loader, optimizer, cfg["epochs"], loss=cfg["loss"],
+                            grad_clip=cfg["nodp_grad_clip"])
 
     if not all_finite(model):
         # 本地訓練發散（例如沒有逐樣本裁剪時，標準差很小的 VD 遇到壅塞，標準化後輸入達 −20 以上，
@@ -172,7 +175,7 @@ def _finetune(model, d, cfg: dict, context: Context, pid: int) -> dict:
                                            cfg["ft_epochs"])
         out["ft-epsilon"] = eps
     else:
-        train(model, loader, optimizer, cfg["ft_epochs"], loss=cfg["loss"])
+        train(model, loader, optimizer, cfg["ft_epochs"], loss=cfg["loss"], grad_clip=cfg["nodp_grad_clip"])
     out["ft-diverged"] = 0
     if not all_finite(model):
         # 微調發散（無 DP、沒有逐樣本裁剪時可能發生）：保留全域模型，等於不微調
