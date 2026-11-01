@@ -1,0 +1,72 @@
+{
+  "freq_minutes": 5,
+  "start": "2024-03-03 23:55:00",
+  "end": "2024-03-31 23:55:00",
+  "num_steps": 8065,
+  "selection": {
+    "vd_ids": [
+      "VD-N1-N-0.000-M-LOOP",
+      "VD-N1-N-0.590-M-RS",
+      "VD-N1-N-1.600-M-RS",
+      "VD-N1-N-10.060-M-RS",
+      "VD-N1-N-10.630-M-LOOP",
+      "VD-N1-N-10.640-M-RS",
+      "VD-N1-N-11.800-M-LOOP",
+      "VD-N1-N-13.400-M-RS"
+    ],
+    "pattern": "N1",
+    "min_valid_ratio": 0.8,
+    "max_gap_steps": 3,
+    "min_valid_minutes": 3
+  },
+  "clients": [
+    {
+      "partition": 0,
+      "vdid": "VD-N1-N-0.000-M-LOOP",
+      "file": "VD-N1-N-0.000-M-LOOP.csv",
+      "valid_ratio": 0.9948
+    },
+    {
+      "partition": 1,
+      "vdid": "VD-N1-N-0.590-M-RS",
+      "file": "VD-N1-N-0.590-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 2,
+      "vdid": "VD-N1-N-1.600-M-RS",
+      "file": "VD-N1-N-1.600-M-RS.csv",
+      "valid_ratio": 0.9949
+    },
+    {
+      "partition": 3,
+      "vdid": "VD-N1-N-10.060-M-RS",
+      "file": "VD-N1-N-10.060-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 4,
+      "vdid": "VD-N1-N-10.630-M-LOOP",
+      "file": "VD-N1-N-10.630-M-LOOP.csv",
+      "valid_ratio": 0.9948
+    },
+    {
+      "partition": 5,
+      "vdid": "VD-N1-N-10.640-M-RS",
+      "file": "VD-N1-N-10.640-M-RS.csv",
+      "valid_ratio": 0.9949
+    },
+    {
+      "partition": 6,
+      "vdid": "VD-N1-N-11.800-M-LOOP",
+      "file": "VD-N1-N-11.800-M-LOOP.csv",
+      "valid_ratio": 0.9948
+    },
+    {
+      "partition": 7,
+      "vdid": "VD-N1-N-13.400-M-RS",
+      "file": "VD-N1-N-13.400-M-RS.csv",
+      "valid_ratio": 0.9954
+    }
+  ]
+}
