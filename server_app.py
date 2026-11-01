@@ -73,10 +73,16 @@ def main(grid: Grid, context: Context) -> None:
     # 雜訊量以「各 client 等權平均」計算；FedAvg 依樣本數加權，各 VD 樣本數相同時兩者一致。
     cl_sigma = float(cfg.get("client-dp-noise", 0.0))
     cl_clip = float(cfg.get("client-dp-clip", 0.1))
+    # 每輪抽多少比例的 client 參與訓練（評估仍用全部 client）；< 1 時 client-level ε 有取樣放大
+    frac = float(cfg.get("client-fraction", 1.0))
+    if not 0 < frac <= 1:
+        raise ValueError(f"client-fraction 必須在 (0, 1]，收到 {frac}")
+    n_train = max(1, round(frac * num_clients))
     client_dp = None
     if cl_sigma > 0:
-        client_dp = {"noise_multiplier": cl_sigma, "clipping_norm": cl_clip,
-                     "epsilon": client_level_epsilon(cl_sigma, num_rounds, float(cfg["target-delta"])),
+        q = n_train / num_clients
+        client_dp = {"noise_multiplier": cl_sigma, "clipping_norm": cl_clip, "sample_rate": q,
+                     "epsilon": client_level_epsilon(cl_sigma, num_rounds, float(cfg["target-delta"]), q),
                      "delta": float(cfg["target-delta"])}
         print(f"client-level DP：σ={cl_sigma}、C={cl_clip}，{num_rounds} 輪後 ε={client_dp['epsilon']:.2f}")
 
@@ -86,14 +92,14 @@ def main(grid: Grid, context: Context) -> None:
         "versions": _versions(),
         "data": {k: manifest.get(k) for k in ("start", "end", "num_steps", "selection")},
         "clients": manifest.get("clients", []),
-    }, vdid_map=vdids, expected_clients=num_clients)
+    }, vdid_map=vdids, expected_clients=num_clients, expected_train=n_train)
 
     _check_num_nodes(grid, num_clients)
 
     strategy = FedAvg(
-        fraction_train=1.0,
+        fraction_train=n_train / num_clients,
         fraction_evaluate=1.0,
-        min_train_nodes=num_clients,
+        min_train_nodes=n_train,
         min_evaluate_nodes=num_clients,
         min_available_nodes=num_clients,
         train_metrics_aggr_fn=lambda replies, _key: MetricRecord(
@@ -103,7 +109,7 @@ def main(grid: Grid, context: Context) -> None:
     )
     if client_dp:
         strategy = DifferentialPrivacyServerSideFixedClipping(
-            strategy, noise_multiplier=cl_sigma, clipping_norm=cl_clip, num_sampled_clients=num_clients)
+            strategy, noise_multiplier=cl_sigma, clipping_norm=cl_clip, num_sampled_clients=n_train)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))

@@ -57,11 +57,14 @@ def history_tuples(history: Optional[dict]) -> list[tuple[float, float, int]]:
     return list(zip(history["sigma"], history["q"], history["steps"]))
 
 
-def client_level_epsilon(noise_multiplier: float, rounds: int, delta: float) -> float:
-    """client-level DP-FedAvg（每輪全部 client 參與、更新量裁剪後在伺服器加噪）的累計 ε。
+def client_level_epsilon(noise_multiplier: float, rounds: int, delta: float,
+                         sample_rate: float = 1.0) -> float:
+    """client-level DP-FedAvg（更新量裁剪後在伺服器加噪）的累計 ε。
 
-    每輪是一次取樣率 q=1 的高斯機制，共 rounds 次；noise_multiplier<=0 時沒有保證（∞）。
+    每輪是一次取樣率 q 的高斯機制，共 rounds 次；q=1 為每輪全部 client 參與。
+    q<1 時以 Poisson 取樣的 RDP 公式計算（取樣放大）；Flower 實際是每輪固定抽 m 個 client，
+    這是文獻（McMahan et al. 2018）常用的近似。noise_multiplier<=0 時沒有保證（∞）。
     """
     if noise_multiplier <= 0:
         return float("inf")
-    return compute_epsilon([(noise_multiplier, 1.0, rounds)], delta)
+    return compute_epsilon([(noise_multiplier, sample_rate, rounds)], delta)

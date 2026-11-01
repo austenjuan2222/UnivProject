@@ -112,6 +112,14 @@ class RunLoggerTest(unittest.TestCase):
             c = _rows(Path(d, "clients.csv"))[0]
             self.assertEqual((c["dp_steps"], c["sample_rate"]), ("4", "0.25"))
 
+    def test_sampled_training_round_does_not_warn(self):
+        import warnings
+        with tempfile.TemporaryDirectory() as d:
+            log = RunLogger(Path(d), config={}, expected_clients=3, expected_train=1)
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                log.on_train([{"round": 1, "partition-id": 2, "num-examples": 1, "train-loss": 1.0}])
+
     def test_make_run_name(self):
         self.assertTrue(make_run_name({"use-dp": True, "noise-multiplier": 1.1}).startswith("dp_sigma1.1_"))
         self.assertTrue(make_run_name({"use-dp": False}).startswith("nodp_"))

@@ -75,10 +75,12 @@ class RunLogger:
     """每次收到彙整就重寫 CSV，即使中途中斷也留有紀錄。"""
 
     def __init__(self, out_dir, config: dict, extra: dict | None = None,
-                 vdid_map: dict | None = None, expected_clients: int | None = None):
+                 vdid_map: dict | None = None, expected_clients: int | None = None,
+                 expected_train: int | None = None):
         self.dir = Path(out_dir)
         self.vdid_map = {int(k): v for k, v in (vdid_map or {}).items()}
         self.expected = expected_clients
+        self.expected_train = expected_train if expected_train is not None else expected_clients
         self.dir.mkdir(parents=True, exist_ok=True)
         self.rounds: dict[int, dict] = {}
         self.clients: dict[tuple[int, int], dict] = {}
@@ -95,8 +97,9 @@ class RunLogger:
         return row
 
     def _check_count(self, rnd, n, phase):
-        if self.expected is not None and n != self.expected:
-            warnings.warn(f"第 {rnd} 輪 {phase} 只收到 {n}/{self.expected} 個 client 的回覆，"
+        expected = self.expected_train if phase == "train" else self.expected
+        if expected is not None and n != expected:
+            warnings.warn(f"第 {rnd} 輪 {phase} 只收到 {n}/{expected} 個 client 的回覆，"
                           "該輪指標只反映部分 client")
 
     def on_train(self, replies: list[dict]) -> dict:
