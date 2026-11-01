@@ -99,7 +99,8 @@ def train_fn(msg: Message, context: Context) -> Message:
     optimizer = torch.optim.SGD(model.parameters(), lr=cfg["lr"])
     loader = make_loader(d["X_train"], d["y_train"], cfg["batch_size"], shuffle=True,
                          seed=cfg["seed"] + 1000 * pid + rnd)
-    metrics = {"num-examples": len(d["y_train"]), "round": rnd, "partition-id": pid}
+    # 每個 client 都要有同一組 metric 鍵，Flower 才能彙整（diverged 只在發散時設成 1）
+    metrics = {"num-examples": len(d["y_train"]), "round": rnd, "partition-id": pid, "diverged": 0}
 
     if cfg["use_dp"]:
         model, loss, hist, eps, steps, sample_rate = _dp_train(
