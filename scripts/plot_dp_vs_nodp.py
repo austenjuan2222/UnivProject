@@ -42,7 +42,7 @@ PAIRS = {
     (256, 5): [(1, ("d256_nodpclip", "nodp_seed1"), ("d256", "dp_sigma1.1")),
                (2, ("d256_nodpclip", "nodp_seed2"), ("d256s", "dp_sigma1.1_seed2")),
                (3, ("d256_s3more", "nodp"), ("d256s", "dp_sigma1.1_seed3"))],
-    (8, 15): _within("d8_h3_fair", (1, 2, 3)),
+    (8, 15): _within("d8_h3_fair", (1, 2, 3)) + _within("d8_h3_fair_s45", (4, 5)),
     (32, 15): _within("d32_h3_fair", (1, 2, 3)),
     (64, 15): _within("d64_h3_fair", (1, 2, 3)),
     (128, 15): _within("d128_h3_fair", (1, 2, 3)),
