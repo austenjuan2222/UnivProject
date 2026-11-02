@@ -70,6 +70,7 @@ attack-clients = 0         # > 0：最後幾個 VD 被入侵，送出惡意更�
 attack-type = "flip"       # flip（反向並放大自己的更新）／noise（大幅隨機雜訊）
 attack-scale = 10.0        # 惡意更新的放大倍數
 tamper-rate = 0.0          # 模擬網路中間人：每個上傳更新被竄改的機率
+secure-agg = false         # true = 安全聚合（成對遮罩）：伺服器只看得到所有 VD 的加總（只能配 fedavg、全部參與）
 dropout-rate = 0.0         # 模擬 VD 斷線：每個 VD 每輪不回應的機率（可用性）
 seed = 42
 data-dir = "data/processed"

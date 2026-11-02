@@ -18,6 +18,7 @@ from flwr.serverapp.strategy import Strategy
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from secagg import unmask_sum
 from security import sign_model, sign_update, tamper, verify_update
 
 AUTH = "auth"
@@ -57,10 +58,20 @@ def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: 
     return keep, {"n_tampered": n_tampered, "n_rejected": n_rejected}
 
 
+def secure_average(contents: list[RecordDict], expected: int) -> ArrayRecord | None:
+    """安全聚合：加總遮罩後的更新再除以總樣本數。少了任何 VD，遮罩無法抵銷，回傳 None 放棄這一輪。"""
+    if len(contents) != expected or not contents:
+        return None
+    masked = [arrays_of(c["arrays"]) for c in contents]
+    total = sum(float(c["metrics"]["num-examples"]) for c in contents)
+    avg = unmask_sum(masked, total)
+    return _array_record({k: avg[k].astype(np.float32) for k in masked[0]})
+
+
 class GuardedStrategy(Strategy):
     def __init__(self, inner: Strategy, signing_key: Ed25519PrivateKey | None, vd_keys: dict | None,
                  tamper_rate: float = 0.0, seed: int = 0,
-                 on_round: Callable[[int, dict], None] | None = None):
+                 on_round: Callable[[int, dict], None] | None = None, secure_agg_clients: int = 0):
         """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。"""
         self.inner = inner
         self.vd_keys = vd_keys or {}
@@ -69,6 +80,8 @@ class GuardedStrategy(Strategy):
         self.rng = np.random.default_rng(seed + 7919)
         self.on_round = on_round
         self._priv = signing_key
+        # > 0：安全聚合，需要這麼多個 VD 全部回覆遮罩後的更新（基本版不容許斷線）
+        self.secure_agg_clients = secure_agg_clients
 
     def _sign(self, messages: Iterable[Message], arrays: ArrayRecord, rnd: int) -> list[Message]:
         messages = list(messages)
@@ -94,6 +107,14 @@ class GuardedStrategy(Strategy):
             self.on_round(server_round, stats)
         if not kept:
             return None, None  # 這一輪沒有可信的更新：維持原本的全域模型
+        if self.secure_agg_clients:
+            arrays = secure_average([m.content for m in kept], self.secure_agg_clients)
+            stats["secagg_failed"] = int(arrays is None)
+            if self.on_round:
+                self.on_round(server_round, stats)
+            # 內層只用來彙整指標（它對遮罩後參數的平均沒有意義，直接丟掉）
+            _, metrics = self.inner.aggregate_train(server_round, kept)
+            return arrays, metrics
         return self.inner.aggregate_train(server_round, kept)
 
     def configure_evaluate(self, server_round: int, arrays: ArrayRecord, config: ConfigRecord,

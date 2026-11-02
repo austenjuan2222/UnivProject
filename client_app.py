@@ -18,6 +18,7 @@ from flwr.clientapp import ClientApp
 
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
+from secagg import load_agreement_keys, mask_update
 from security import (drops_out, is_attacker, load_server_public_key, load_vd_key, poison_update,
                       verify_model)
 from task import TrafficModel, all_finite, evaluate, make_loader, set_seed, train, unwrap
@@ -63,6 +64,7 @@ def _cfg(context: Context) -> dict:
         "attack_type": str(c.get("attack-type", "flip")),
         "attack_scale": float(c.get("attack-scale", 10.0)),
         "dropout_rate": float(c.get("dropout-rate", 0.0)),
+        "secure_agg": bool(c.get("secure-agg", False)),
     }
 
 
@@ -163,6 +165,11 @@ def train_fn(msg: Message, context: Context) -> Message:
         bad = poison_update(g, arrays_of(arrays), cfg["attack_type"], cfg["attack_scale"],
                             np.random.default_rng([cfg["seed"], pid, rnd]))
         arrays = ArrayRecord({k: Array(v) for k, v in bad.items()})
+    if cfg["secure_agg"]:
+        # 安全聚合：上傳「樣本數 × 參數 ＋ 成對遮罩」，伺服器只能還原所有 VD 的加總
+        priv, pubs = load_agreement_keys(cfg["key_dir"], pid)
+        masked = mask_update(arrays_of(arrays), len(d["y_train"]), pid, range(n), priv, pubs, rnd)
+        arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
     # Edge 運算成本：上傳量（模型參數）vs. 若把原始訓練資料傳上雲的量
     metrics["upload-bytes"] = int(sum(a.numpy().nbytes for a in arrays.values()))
     # 原始資料量以「訓練期每 5 分鐘一筆車速」計（float32）；不含輸入視窗的重複

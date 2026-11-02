@@ -19,6 +19,7 @@ from flwr.serverapp.strategy import (DifferentialPrivacyServerSideAdaptiveClippi
 
 from data import n_calendar
 from guard import GuardedStrategy
+from secagg import provision_agreement_keys
 from security import load_server_secrets, provision_keys
 from privacy import client_level_epsilon
 from results_log import RunLogger, make_run_name
@@ -136,8 +137,16 @@ def main(grid: Grid, context: Context) -> None:
         key_dir = str(cfg.get("key-dir", "keys"))
         provision_keys(key_dir, num_clients)
         priv, vd_keys = load_server_secrets(key_dir)
+    secure_agg = bool(cfg.get("secure-agg", False))
+    if secure_agg:
+        # 伺服器看不到個別更新：不能做伺服器端裁剪（client-level DP）或中位數；基本版也不容許斷線、抽樣
+        if client_dp or agg_name != "fedavg" or frac < 1 or float(cfg.get("dropout-rate", 0.0)) > 0:
+            raise ValueError("secure-agg 只能搭配 aggregator='fedavg'、client-fraction=1、不開 client-level DP、"
+                             "dropout-rate=0（可以和 record-level DP 一起用）")
+        provision_agreement_keys(str(cfg.get("key-dir", "keys")), num_clients)
     strategy = GuardedStrategy(strategy, priv if sign else None, vd_keys if verify else None,
-                               float(cfg.get("tamper-rate", 0.0)), int(cfg["seed"]), logger.on_security)
+                               float(cfg.get("tamper-rate", 0.0)), int(cfg["seed"]), logger.on_security,
+                               secure_agg_clients=num_clients if secure_agg else 0)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))
