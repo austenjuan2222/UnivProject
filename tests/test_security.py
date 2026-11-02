@@ -3,8 +3,15 @@ import unittest
 
 import numpy as np
 
-from security import (drops_out, is_attacker, poison_update, server_private_key, server_public_key, sign_model, sign_update,
-                      tamper, verify_model, verify_update, vd_key)
+import os
+import tempfile
+from pathlib import Path
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from security import (drops_out, is_attacker, load_server_public_key, load_server_secrets, load_vd_key,
+                      poison_update, provision_keys, sign_model, sign_update, tamper, verify_model,
+                      verify_update)
 
 
 def _arrays(v=0.5):
@@ -12,9 +19,54 @@ def _arrays(v=0.5):
             "net.0.bias": np.arange(3, dtype=np.float32)}
 
 
+class KeyProvisioningTest(unittest.TestCase):
+    """每個 VD 只拿到自己的金鑰與伺服器公鑰；伺服器的私鑰與驗證表放在另一個資料夾。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name) / "keys"
+        provision_keys(self.dir, 4)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_each_vd_gets_a_distinct_random_key(self):
+        keys = [load_vd_key(self.dir, p) for p in range(4)]
+        self.assertEqual(len(set(keys)), 4)
+        self.assertTrue(all(len(k) == 32 for k in keys))
+
+    def test_vd_files_hold_no_server_secret(self):
+        vd_files = sorted(f.name for f in self.dir.iterdir() if f.is_file())
+        self.assertEqual(vd_files, ["server.pub", "vd-0.key", "vd-1.key", "vd-2.key", "vd-3.key"])
+        priv, table = load_server_secrets(self.dir)
+        self.assertEqual(set(table), {0, 1, 2, 3})
+        self.assertEqual(table[2], load_vd_key(self.dir, 2))
+
+    def test_server_signature_verifies_with_published_public_key(self):
+        priv, _ = load_server_secrets(self.dir)
+        sig = sign_model(priv, _arrays(), rnd=1)
+        self.assertTrue(verify_model(load_server_public_key(self.dir), _arrays(), 1, sig))
+
+    def test_provisioning_twice_keeps_existing_keys(self):
+        before = load_vd_key(self.dir, 1)
+        provision_keys(self.dir, 4)
+        self.assertEqual(load_vd_key(self.dir, 1), before)
+
+    def test_more_vds_adds_keys_without_changing_old_ones(self):
+        before = load_vd_key(self.dir, 0)
+        provision_keys(self.dir, 6)
+        self.assertEqual(load_vd_key(self.dir, 0), before)
+        self.assertEqual(set(load_server_secrets(self.dir)[1]), set(range(6)))
+
+    @unittest.skipIf(os.name == "nt", "POSIX 權限")
+    def test_secret_files_are_owner_only(self):
+        self.assertEqual((self.dir / "vd-0.key").stat().st_mode & 0o077, 0)
+        self.assertEqual((self.dir / "server" / "ed25519.key").stat().st_mode & 0o077, 0)
+
+
 class UpdateMacTest(unittest.TestCase):
     def setUp(self):
-        self.key = vd_key("lab-secret", 3)
+        self.key = os.urandom(32)
 
     def test_signed_update_verifies(self):
         tag = sign_update(self.key, _arrays(), rnd=5, pid=3)
@@ -31,12 +83,8 @@ class UpdateMacTest(unittest.TestCase):
         self.assertFalse(verify_update(self.key, _arrays(), 5, 3, tag))
 
     def test_other_vd_key_cannot_forge(self):
-        tag = sign_update(vd_key("lab-secret", 4), _arrays(), rnd=5, pid=3)
+        tag = sign_update(os.urandom(32), _arrays(), rnd=5, pid=3)
         self.assertFalse(verify_update(self.key, _arrays(), 5, 3, tag))
-
-    def test_keys_differ_per_vd_and_secret(self):
-        self.assertNotEqual(vd_key("lab-secret", 1), vd_key("lab-secret", 2))
-        self.assertNotEqual(vd_key("lab-secret", 1), vd_key("other", 1))
 
     def test_garbage_tag_is_rejected_not_raised(self):
         self.assertFalse(verify_update(self.key, _arrays(), 5, 3, "zz-not-hex"))
@@ -44,8 +92,8 @@ class UpdateMacTest(unittest.TestCase):
 
 class ModelSignatureTest(unittest.TestCase):
     def setUp(self):
-        self.priv = server_private_key("lab-secret")
-        self.pub = server_public_key("lab-secret")
+        self.priv = Ed25519PrivateKey.generate()
+        self.pub = self.priv.public_key()
 
     def test_global_model_signature_verifies(self):
         sig = sign_model(self.priv, _arrays(), rnd=2)
@@ -57,7 +105,7 @@ class ModelSignatureTest(unittest.TestCase):
         self.assertFalse(verify_model(self.pub, _arrays(), 3, sig))
 
     def test_signature_from_other_server_is_rejected(self):
-        sig = sign_model(server_private_key("attacker"), _arrays(), rnd=2)
+        sig = sign_model(Ed25519PrivateKey.generate(), _arrays(), rnd=2)
         self.assertFalse(verify_model(self.pub, _arrays(), 2, sig))
 
 

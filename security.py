@@ -6,23 +6,74 @@
   對應講義「更新未簽章、被騙安裝假更新」的案例（一對多下發用公鑰簽章，VD 不需要伺服器的私鑰）。
 - 攻擊模擬：被入侵的 VD（有合法金鑰，MAC 擋不住）送出惡意更新；網路上的中間人竄改更新（MAC 擋得住）。
 
-金鑰：模擬時由 run config 的 auth-secret 推導；實際部署應在 VD 安裝時個別配發（例如 PKI／TPM），
-不可共用同一把主金鑰。
+金鑰配發（provision_keys）：每個 VD 一把隨機 32 位元組金鑰（vd-<編號>.key），加上伺服器公鑰 server.pub；
+伺服器的 Ed25519 私鑰與「VD 編號 → 金鑰」驗證表放在 server/ 子資料夾，VD 端程式只讀自己的檔案。
+沒有共用的主密鑰，所以一台 VD 被入侵，也算不出別台 VD 的金鑰或伺服器的簽章私鑰。
+模擬時所有檔案在同一台電腦；實際部署時 vd-*.key 在 VD 安裝時寫入該 VD（例如 TPM），server/ 只留在伺服器。
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
+import json
+import os
+import secrets
 import struct
+from pathlib import Path
 
 import numpy as np
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
+_RAW = serialization.Encoding.Raw
 
-def vd_key(secret: str, pid: int) -> bytes:
-    """VD 專屬金鑰（由主密鑰推導；各 VD 不同，拿到一台 VD 的金鑰也偽造不了別台的更新）。"""
-    return hmac.new(secret.encode(), f"vd-key|{pid}".encode(), hashlib.sha256).digest()
+
+def _write_secret(path: Path, data: str) -> None:
+    """只有擁有者可讀寫（0600）；先建檔再寫入，避免短暫以預設權限存在。"""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(data)
+
+
+def provision_keys(key_dir, num_clients: int) -> None:
+    """產生（或補齊）金鑰；已存在的金鑰不會被換掉。"""
+    key_dir = Path(key_dir)
+    server = key_dir / "server"
+    server.mkdir(parents=True, exist_ok=True)
+    os.chmod(server, 0o700)
+    priv_path = server / "ed25519.key"
+    if not priv_path.exists():
+        _write_secret(priv_path, Ed25519PrivateKey.generate().private_bytes(
+            _RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption()).hex())
+    priv = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(priv_path.read_text().strip()))
+    (key_dir / "server.pub").write_text(priv.public_key().public_bytes(
+        _RAW, serialization.PublicFormat.Raw).hex(), encoding="utf-8")
+    table_path = server / "vd_keys.json"
+    table = json.loads(table_path.read_text(encoding="utf-8")) if table_path.exists() else {}
+    for pid in range(num_clients):
+        if str(pid) not in table:
+            table[str(pid)] = secrets.token_hex(32)
+        if not (key_dir / f"vd-{pid}.key").exists():
+            _write_secret(key_dir / f"vd-{pid}.key", table[str(pid)])
+    _write_secret(table_path, json.dumps(table))
+
+
+def load_vd_key(key_dir, pid: int) -> bytes:
+    """VD 端：只讀自己的金鑰。"""
+    return bytes.fromhex((Path(key_dir) / f"vd-{pid}.key").read_text().strip())
+
+
+def load_server_public_key(key_dir) -> Ed25519PublicKey:
+    return Ed25519PublicKey.from_public_bytes(bytes.fromhex((Path(key_dir) / "server.pub").read_text().strip()))
+
+
+def load_server_secrets(key_dir) -> tuple[Ed25519PrivateKey, dict]:
+    """伺服器端：簽章私鑰與 VD 金鑰驗證表。"""
+    server = Path(key_dir) / "server"
+    priv = Ed25519PrivateKey.from_private_bytes(bytes.fromhex((server / "ed25519.key").read_text().strip()))
+    table = json.loads((server / "vd_keys.json").read_text(encoding="utf-8"))
+    return priv, {int(k): bytes.fromhex(v) for k, v in table.items()}
 
 
 def _payload(arrays: dict, header: str) -> bytes:
@@ -42,15 +93,6 @@ def sign_update(key: bytes, arrays: dict, rnd: int, pid: int) -> str:
 
 def verify_update(key: bytes, arrays: dict, rnd: int, pid: int, tag: str) -> bool:
     return hmac.compare_digest(sign_update(key, arrays, rnd, pid), str(tag))
-
-
-def server_private_key(secret: str) -> Ed25519PrivateKey:
-    seed = hashlib.sha256(f"server-signing|{secret}".encode()).digest()
-    return Ed25519PrivateKey.from_private_bytes(seed)
-
-
-def server_public_key(secret: str) -> Ed25519PublicKey:
-    return server_private_key(secret).public_key()
 
 
 def sign_model(priv: Ed25519PrivateKey, arrays: dict, rnd: int) -> str:

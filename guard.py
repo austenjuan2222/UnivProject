@@ -16,7 +16,9 @@ from flwr.app import Array, ArrayRecord, ConfigRecord, Message, MetricRecord, Re
 from flwr.serverapp import Grid
 from flwr.serverapp.strategy import Strategy
 
-from security import server_private_key, sign_model, sign_update, tamper, verify_update, vd_key
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from security import sign_model, sign_update, tamper, verify_update
 
 AUTH = "auth"
 
@@ -34,7 +36,7 @@ def attach_update_tag(content: RecordDict, key: bytes, rnd: int, pid: int) -> No
     content[AUTH] = ConfigRecord({"tag": sign_update(key, arrays_of(content["arrays"]), rnd, pid)})
 
 
-def screen_replies(contents: list[RecordDict], rnd: int, secret: str, verify: bool,
+def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: bool,
                    tamper_rate: float, rng: np.random.Generator) -> tuple[list[bool], dict]:
     """回傳每個回覆是否可用於聚合，以及統計（被竄改數、被拒絕數）。會移除 auth 紀錄。"""
     keep, n_tampered, n_rejected = [], 0, 0
@@ -48,24 +50,25 @@ def screen_replies(contents: list[RecordDict], rnd: int, secret: str, verify: bo
         ok = True
         if verify:
             pid = int(c["metrics"]["partition-id"])
-            ok = bool(tag) and verify_update(vd_key(secret, pid), arrays_of(c["arrays"]), rnd, pid, tag)
+            key = vd_keys.get(pid)  # 驗證表裡沒有的 VD 一律拒絕
+            ok = bool(tag) and key is not None and verify_update(key, arrays_of(c["arrays"]), rnd, pid, tag)
         n_rejected += int(not ok)
         keep.append(ok)
     return keep, {"n_tampered": n_tampered, "n_rejected": n_rejected}
 
 
 class GuardedStrategy(Strategy):
-    def __init__(self, inner: Strategy, secret: str, verify_updates: bool, sign_models: bool,
+    def __init__(self, inner: Strategy, signing_key: Ed25519PrivateKey | None, vd_keys: dict | None,
                  tamper_rate: float = 0.0, seed: int = 0,
                  on_round: Callable[[int, dict], None] | None = None):
+        """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。"""
         self.inner = inner
-        self.secret = secret
-        self.verify_updates = verify_updates
-        self.sign_models = sign_models
+        self.vd_keys = vd_keys or {}
+        self.verify_updates = vd_keys is not None
         self.tamper_rate = tamper_rate
         self.rng = np.random.default_rng(seed + 7919)
         self.on_round = on_round
-        self._priv = server_private_key(secret) if sign_models else None
+        self._priv = signing_key
 
     def _sign(self, messages: Iterable[Message], arrays: ArrayRecord, rnd: int) -> list[Message]:
         messages = list(messages)
@@ -83,7 +86,7 @@ class GuardedStrategy(Strategy):
                         ) -> tuple[ArrayRecord | None, MetricRecord | None]:
         replies = list(replies)
         ok_replies = [m for m in replies if not m.has_error()]
-        keep, stats = screen_replies([m.content for m in ok_replies], server_round, self.secret,
+        keep, stats = screen_replies([m.content for m in ok_replies], server_round, self.vd_keys,
                                      self.verify_updates, self.tamper_rate, self.rng)
         stats["n_dropped"] = len(replies) - len(ok_replies)
         kept = [m for m, k in zip(ok_replies, keep) if k]

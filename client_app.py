@@ -18,7 +18,8 @@ from flwr.clientapp import ClientApp
 
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
-from security import drops_out, is_attacker, poison_update, server_public_key, verify_model, vd_key
+from security import (drops_out, is_attacker, load_server_public_key, load_vd_key, poison_update,
+                      verify_model)
 from task import TrafficModel, all_finite, evaluate, make_loader, set_seed, train, unwrap
 
 warnings.filterwarnings("ignore", category=UserWarning, module="opacus")
@@ -55,7 +56,7 @@ def _cfg(context: Context) -> dict:
         "ft_epochs": int(c.get("finetune-epochs", 0)),
         "ft_lr": float(c.get("finetune-lr", 0.05)),
         # 通訊安全與攻擊模擬（見 security.py、guard.py）
-        "secret": str(c.get("auth-secret", "")),
+        "key_dir": str(c.get("key-dir", "keys")),
         "verify_updates": bool(c.get("verify-updates", False)),
         "sign_models": bool(c.get("sign-models", False)),
         "attack_clients": int(c.get("attack-clients", 0)),
@@ -70,7 +71,7 @@ def _check_global_signature(cfg: dict, msg: Message, rnd: int) -> None:
     if not cfg["sign_models"]:
         return
     sig = str(msg.content[AUTH]["sig"]) if AUTH in msg.content else ""
-    if not (sig and verify_model(server_public_key(cfg["secret"]), arrays_of(msg.content["arrays"]),
+    if not (sig and verify_model(load_server_public_key(cfg["key_dir"]), arrays_of(msg.content["arrays"]),
                                  rnd, sig)):
         raise RuntimeError(f"第 {rnd} 輪全域模型的簽章驗證失敗，VD 拒絕使用這個模型")
 
@@ -168,7 +169,7 @@ def train_fn(msg: Message, context: Context) -> Message:
     metrics["train-seconds"] = time.perf_counter() - t0
     content = RecordDict({"arrays": arrays, "metrics": MetricRecord(metrics)})
     if cfg["verify_updates"]:
-        attach_update_tag(content, vd_key(cfg["secret"], pid), rnd, pid)
+        attach_update_tag(content, load_vd_key(cfg["key_dir"], pid), rnd, pid)  # 只讀自己的金鑰
     return Message(content=content, reply_to=msg)
 
 

@@ -19,6 +19,7 @@ from flwr.serverapp.strategy import (DifferentialPrivacyServerSideAdaptiveClippi
 
 from data import n_calendar
 from guard import GuardedStrategy
+from security import load_server_secrets, provision_keys
 from privacy import client_level_epsilon
 from results_log import RunLogger, make_run_name
 from task import TrafficModel, set_seed
@@ -129,9 +130,13 @@ def main(grid: Grid, context: Context) -> None:
     # 安全閘道（最外層）：簽全域模型、剔除斷線 VD、驗證上傳更新的 HMAC，再交給 DP／聚合
     verify = bool(cfg.get("verify-updates", False))
     sign = bool(cfg.get("sign-models", False))
-    if (verify or sign) and not str(cfg.get("auth-secret", "")):
-        raise ValueError("verify-updates／sign-models 需要設定 auth-secret")
-    strategy = GuardedStrategy(strategy, str(cfg.get("auth-secret", "")), verify, sign,
+    priv, vd_keys = None, None
+    if verify or sign:
+        # 模擬：第一次執行時產生金鑰（已有的不會換）；實際部署由安裝流程配發
+        key_dir = str(cfg.get("key-dir", "keys"))
+        provision_keys(key_dir, num_clients)
+        priv, vd_keys = load_server_secrets(key_dir)
+    strategy = GuardedStrategy(strategy, priv if sign else None, vd_keys if verify else None,
                                float(cfg.get("tamper-rate", 0.0)), int(cfg["seed"]), logger.on_security)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
