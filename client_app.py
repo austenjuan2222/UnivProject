@@ -16,6 +16,7 @@ import torch
 from flwr.app import Array, ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
+from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
 from secagg import load_agreement_keys, mask_update
@@ -65,6 +66,7 @@ def _cfg(context: Context) -> dict:
         "attack_scale": float(c.get("attack-scale", 10.0)),
         "dropout_rate": float(c.get("dropout-rate", 0.0)),
         "secure_agg": bool(c.get("secure-agg", False)),
+        "upload_bits": int(c.get("upload-bits", 32)),
     }
 
 
@@ -165,13 +167,20 @@ def train_fn(msg: Message, context: Context) -> Message:
         bad = poison_update(g, arrays_of(arrays), cfg["attack_type"], cfg["attack_scale"],
                             np.random.default_rng([cfg["seed"], pid, rnd]))
         arrays = ArrayRecord({k: Array(v) for k, v in bad.items()})
+    upload_bytes = None
+    if cfg["upload_bits"] < 32:
+        # 量化更新量再上傳（LPWAN 情境）；伺服器收到的就是還原後的值
+        q, upload_bytes = quantize_update(arrays_of(msg.content["arrays"]), arrays_of(arrays),
+                                          cfg["upload_bits"], np.random.default_rng([cfg["seed"], pid, rnd, 7]))
+        arrays = ArrayRecord({k: Array(v) for k, v in q.items()})
     if cfg["secure_agg"]:
         # 安全聚合：上傳「樣本數 × 參數 ＋ 成對遮罩」，伺服器只能還原所有 VD 的加總
         priv, pubs = load_agreement_keys(cfg["key_dir"], pid)
         masked = mask_update(arrays_of(arrays), len(d["y_train"]), pid, range(n), priv, pubs, rnd)
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
     # Edge 運算成本：上傳量（模型參數）vs. 若把原始訓練資料傳上雲的量
-    metrics["upload-bytes"] = int(sum(a.numpy().nbytes for a in arrays.values()))
+    metrics["upload-bytes"] = (upload_bytes if upload_bytes is not None
+                               else int(sum(a.numpy().nbytes for a in arrays.values())))
     # 原始資料量以「訓練期每 5 分鐘一筆車速」計（float32）；不含輸入視窗的重複
     metrics["raw-bytes"] = int(len(d["y_train"]) * 4)
     metrics["train-seconds"] = time.perf_counter() - t0
