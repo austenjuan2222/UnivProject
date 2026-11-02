@@ -75,7 +75,7 @@ def plot(data: list[dict], out: Path) -> None:
                 ax.scatter(d[key], [y] * len(d[key]), facecolors="none", edgecolors=c, s=22, linewidths=0.9)
                 ax.scatter([statistics.fmean(d[key])], [y], color=c, s=50, zorder=3)
         ax.axvline(data[0]["naive"], color="#999999", linestyle="--", linewidth=1)
-        ax.text(data[0]["naive"], len(data) - 0.4, " naive", color="#777777", fontsize=7, va="bottom")
+        ax.text(data[0]["naive"], -0.7, " naive", color="#777777", fontsize=7, va="bottom")
         ax.set_xscale("log")
         ax.set_xlabel("Test MAE (km/h, log scale), lower is better")
         ax.set_title(title, loc="left", fontsize=10)

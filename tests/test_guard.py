@@ -1,10 +1,9 @@
 """guard.py：伺服器端檢查 VD 上傳的更新（簽章驗證、模擬中間人、剔除斷線 client）。"""
+import os
 import unittest
 
 import numpy as np
-from flwr.app import Array, ArrayRecord, ConfigRecord, MetricRecord, RecordDict
-
-import os
+from flwr.app import Array, ArrayRecord, MetricRecord, RecordDict
 
 from guard import arrays_of, attach_update_tag, screen_replies
 

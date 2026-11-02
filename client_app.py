@@ -165,7 +165,8 @@ def train_fn(msg: Message, context: Context) -> Message:
         arrays = ArrayRecord({k: Array(v) for k, v in bad.items()})
     # Edge 運算成本：上傳量（模型參數）vs. 若把原始訓練資料傳上雲的量
     metrics["upload-bytes"] = int(sum(a.numpy().nbytes for a in arrays.values()))
-    metrics["raw-bytes"] = int(np.asarray(d["X_train"]).nbytes + np.asarray(d["y_train"]).nbytes)
+    # 原始資料量以「訓練期每 5 分鐘一筆車速」計（float32）；不含輸入視窗的重複
+    metrics["raw-bytes"] = int(len(d["y_train"]) * 4)
     metrics["train-seconds"] = time.perf_counter() - t0
     content = RecordDict({"arrays": arrays, "metrics": MetricRecord(metrics)})
     if cfg["verify_updates"]:
