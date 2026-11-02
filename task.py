@@ -16,13 +16,14 @@ class TrafficModel(nn.Module):
     小型 MLP：只用 Linear/ReLU，Opacus 可直接計算 per-sample gradient。
     residual=True 時預測「相對最後一筆的變化量」：輸出 = x[:, -1] + MLP(x)，
     初始時就接近 naive（下一筆 = 最後一筆），模型只需學修正量。
+    n_extra：放在輸入最前面的額外特徵數（例如日曆特徵），x[:, -1] 仍是最後一筆車速。
     """
 
-    def __init__(self, lookback: int = 12, hidden: int = 32, residual: bool = False):
+    def __init__(self, lookback: int = 12, hidden: int = 32, residual: bool = False, n_extra: int = 0):
         super().__init__()
         self.residual = residual
         self.net = nn.Sequential(
-            nn.Linear(lookback, hidden), nn.ReLU(),
+            nn.Linear(lookback + n_extra, hidden), nn.ReLU(),
             nn.Linear(hidden, hidden), nn.ReLU(),
             nn.Linear(hidden, 1),
         )
@@ -56,8 +57,12 @@ LOSSES = {
 }
 
 
-def train(model, loader, optimizer, epochs: int, device="cpu", loss: str = "mse") -> tuple[float, int]:
-    """回傳（平均訓練 loss, optimizer.step 次數）。步數用於隱私累計。"""
+def train(model, loader, optimizer, epochs: int, device="cpu", loss: str = "mse",
+          grad_clip: float = 0.0) -> tuple[float, int]:
+    """回傳（平均訓練 loss, optimizer.step 次數）。步數用於隱私累計。
+
+    grad_clip > 0 時對整批梯度做範數裁剪（非 DP 的一般穩定化技巧，沒有隱私保證；DP 時不要用）。
+    """
     loss_fn = LOSSES[loss]
     model.to(device).train()
     total, n, steps = 0.0, 0, 0
@@ -74,9 +79,16 @@ def train(model, loader, optimizer, epochs: int, device="cpu", loss: str = "mse"
                 total += batch_loss.item() * len(X)
                 n += len(X)
             batch_loss.backward()
+            if grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
             steps += 1
     return (total / n if n else float("nan")), steps
+
+
+def all_finite(model: nn.Module) -> bool:
+    """模型參數是否都是有限值（沒有 NaN／inf）。"""
+    return all(torch.isfinite(p).all().item() for p in unwrap(model).parameters())
 
 
 @torch.no_grad()

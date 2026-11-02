@@ -87,5 +87,14 @@ class ClientLevelEpsilonTest(unittest.TestCase):
         self.assertEqual(client_level_epsilon(0.0, 20, 1e-5), float("inf"))
 
 
+
+class ClientSamplingTest(unittest.TestCase):
+    def test_client_sampling_amplifies_privacy(self):
+        from privacy import client_level_epsilon
+        full = client_level_epsilon(4.0, 20, 1e-5)
+        sub = client_level_epsilon(4.0, 20, 1e-5, sample_rate=0.25)
+        self.assertLess(sub, full)
+        self.assertEqual(client_level_epsilon(4.0, 20, 1e-5, 1.0), full)
+
 if __name__ == "__main__":
     unittest.main()

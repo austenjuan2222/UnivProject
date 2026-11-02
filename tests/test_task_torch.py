@@ -32,6 +32,42 @@ class TaskTorchTest(unittest.TestCase):
         x = torch.randn(4, 12)
         self.assertTrue(torch.allclose(m(x), x[:, -1]))   # MLP 修正量為 0 時 = naive
 
+    def test_extra_inputs_keep_residual_on_last_speed(self):
+        import torch
+        from task import TrafficModel
+        m = TrafficModel(12, residual=True, n_extra=2)
+        for p in m.net[-1].parameters():
+            torch.nn.init.zeros_(p)
+        x = torch.randn(4, 14)
+        self.assertTrue(torch.allclose(m(x), x[:, -1]))   # 日曆特徵在前，殘差仍接最後一筆車速
+
+    def test_all_finite_detects_nan(self):
+        import torch
+        from task import TrafficModel, all_finite
+        m = TrafficModel(12)
+        self.assertTrue(all_finite(m))
+        with torch.no_grad():
+            m.net[0].weight[0, 0] = float("nan")
+        self.assertFalse(all_finite(m))
+
+    def test_grad_clip_bounds_update_size(self):
+        import torch
+
+        from task import TrafficModel, make_loader, train
+        torch.manual_seed(0)
+        X = torch.randn(64, 12).numpy() * 50
+        y = (torch.randn(64) * 50).numpy()
+        sizes = []
+        for clip in (0.0, 0.01):
+            torch.manual_seed(0)
+            m = TrafficModel(12, 8)
+            before = [p.detach().clone() for p in m.parameters()]
+            opt = torch.optim.SGD(m.parameters(), lr=0.1)
+            train(m, make_loader(X, y, 64, shuffle=False), opt, 1, grad_clip=clip)
+            sizes.append(sum(((p - b) ** 2).sum() for p, b in zip(m.parameters(), before)).sqrt().item())
+        self.assertLessEqual(sizes[1], 0.1 * 0.01 + 1e-6)
+        self.assertGreater(sizes[0], sizes[1])
+
     def test_training_reduces_loss_without_dp(self):
         import torch
         from task import TrafficModel, evaluate, make_loader, set_seed, train

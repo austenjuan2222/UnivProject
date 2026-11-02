@@ -21,6 +21,14 @@ class BuildRunsTest(unittest.TestCase):
         self.assertIn("use-dp=false", runs[0][1])
         self.assertIn("use-dp=true noise-multiplier=0.8", runs[2][1])
 
+    def test_client_level_dp_can_keep_record_level_clipping(self):
+        plain = build_runs(8, 20, "/d", "/r", [], True, "", client_sigmas=["4"])
+        self.assertIn("use-dp=false client-dp-noise=4", plain[0][1])
+        clip = build_runs(8, 20, "/d", "/r", [], True, "use-dp=true noise-multiplier=0",
+                          client_sigmas=["4"])
+        self.assertNotIn("use-dp=false", clip[0][1])
+        self.assertIn("client-dp-noise=4", clip[0][1])
+
     def test_multiple_seeds_repeat_every_config_with_suffix(self):
         runs = build_runs(3, 2, "/d", "/r", ["1.1"], False, "", seeds=[1, 2])
         self.assertEqual([r[0] for r in runs],

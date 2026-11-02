@@ -30,6 +30,13 @@ class PlotResultsTest(unittest.TestCase):
             runs = collect_runs(Path(d))
             self.assertEqual([r["label"] for r in runs], ["No DP (baseline)", "DP σ=1.1", "DP σ=0.8"])
 
+    def test_nan_metrics_do_not_break_summary(self):
+        with tempfile.TemporaryDirectory() as d:
+            _run(d, "nodp_seed1", False, 1.1, [4, 3], ["", ""])
+            _run(d, "nodp_seed2", False, 1.1, [4, float("nan")], ["", ""])
+            _run(d, "nodp_seed3", False, 1.1, [4, float("inf")], ["", ""])
+            self.assertEqual(main([d]), 0)
+
     def test_writes_png_and_summary(self):
         with tempfile.TemporaryDirectory() as d:
             _run(d, "nodp", False, 1.1, [4, 3], ["", ""], naive=4.5)
@@ -63,6 +70,18 @@ class PlotResultsTest(unittest.TestCase):
             with Path(d, "summary.csv").open(encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
             self.assertEqual(rows[1]["final_epsilon"], "12.3")
+
+    def test_client_level_dp_with_clip_only_reports_client_epsilon(self):
+        with tempfile.TemporaryDirectory() as d:
+            _run(d, "cldp_sigma4", True, 0.0, [4, 3], ["inf", "inf"])
+            Path(d, "cldp_sigma4", "config.json").write_text(json.dumps(
+                {"run_config": {"use-dp": True, "noise-multiplier": 0.0, "client-dp-noise": 4.0},
+                 "client_level_dp": {"epsilon": 5.4}}))
+            self.assertEqual(collect_runs(Path(d))[0]["label"], "Client-level DP σ=4 + clip")
+            main([d])
+            with Path(d, "summary_by_config.csv").open(encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+            self.assertEqual(rows[0]["final_epsilon_mean"], "5.4")
 
     def test_seed_runs_are_grouped_with_mean_and_std(self):
         with tempfile.TemporaryDirectory() as d:

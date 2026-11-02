@@ -57,6 +57,13 @@ class AggregateTest(unittest.TestCase):
         self.assertNotIn("ft_mae_kmh", plain)
         self.assertNotIn("ft_epsilon_max", plain)
 
+    def test_eval_counts_finetune_divergence(self):
+        out = aggregate_eval([
+            {"num-examples": 1, "eval-loss": 0.1, "mae-kmh": 2.0, "mse-kmh": 4.0, "ft-mae-kmh": 2.0, "ft-diverged": 1},
+            {"num-examples": 1, "eval-loss": 0.1, "mae-kmh": 2.0, "mse-kmh": 4.0, "ft-mae-kmh": 1.0, "ft-diverged": 0},
+        ])
+        self.assertEqual(out["n_ft_diverged"], 1)
+
     def test_eval_rmse_is_sqrt_of_pooled_mse(self):
         out = aggregate_eval([
             {"num-examples": 1, "eval-loss": 0.1, "mae-kmh": 2.0, "mse-kmh": 4.0},
@@ -111,6 +118,14 @@ class RunLoggerTest(unittest.TestCase):
             self.assertEqual(_rows(Path(d, "metrics.csv"))[0]["n_train_clients"], "2")
             c = _rows(Path(d, "clients.csv"))[0]
             self.assertEqual((c["dp_steps"], c["sample_rate"]), ("4", "0.25"))
+
+    def test_sampled_training_round_does_not_warn(self):
+        import warnings
+        with tempfile.TemporaryDirectory() as d:
+            log = RunLogger(Path(d), config={}, expected_clients=3, expected_train=1)
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                log.on_train([{"round": 1, "partition-id": 2, "num-examples": 1, "train-loss": 1.0}])
 
     def test_make_run_name(self):
         self.assertTrue(make_run_name({"use-dp": True, "noise-multiplier": 1.1}).startswith("dp_sigma1.1_"))

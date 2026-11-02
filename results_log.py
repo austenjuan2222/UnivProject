@@ -10,11 +10,11 @@ from pathlib import Path
 
 ROUND_FIELDS = ["round", "n_train_clients", "n_eval_clients", "train_loss", "eval_loss",
                 "mae_kmh", "rmse_kmh", "epsilon_max", "epsilon_mean", "naive_mae_kmh", "local_mae_kmh",
-                "ft_mae_kmh", "ft_epsilon_max"]
+                "ft_mae_kmh", "ft_epsilon_max", "n_diverged", "n_ft_diverged"]
 CLIENT_FIELDS = ["round", "partition", "vdid", "num_train", "train_loss", "epsilon",
                  "dp_steps", "sample_rate", "local_mae_kmh",
                  "num_test", "eval_loss", "mae_kmh", "rmse_kmh", "naive_mae_kmh",
-                 "ft_mae_kmh", "ft_epsilon"]
+                 "ft_mae_kmh", "ft_epsilon", "diverged", "ft_diverged"]
 
 
 def _wmean(replies, key):
@@ -23,7 +23,9 @@ def _wmean(replies, key):
 
 
 def aggregate_train(replies: list[dict]) -> dict:
-    out = {"train_loss": _wmean(replies, "train-loss")}
+    out = {"train_loss": _wmean(replies, "train-loss"),
+           # 本地訓練發散、改回傳全域模型的 client 數（見 client_app.train_fn）
+           "n_diverged": sum(int(r.get("diverged", 0)) for r in replies)}
     if replies and all("local-mae-kmh" in r and "num-test" in r for r in replies):
         tot = sum(float(r["num-test"]) for r in replies)
         out["local_mae_kmh"] = sum(float(r["num-test"]) * float(r["local-mae-kmh"]) for r in replies) / tot
@@ -47,6 +49,8 @@ def aggregate_eval(replies: list[dict]) -> dict:
     ft_eps = [float(r["ft-epsilon"]) for r in replies if "ft-epsilon" in r]
     if ft_eps:
         out["ft_epsilon_max"] = max(ft_eps)
+    if any("ft-diverged" in r for r in replies):
+        out["n_ft_diverged"] = sum(int(r.get("ft-diverged", 0)) for r in replies)
     return out
 
 
@@ -73,10 +77,12 @@ class RunLogger:
     """每次收到彙整就重寫 CSV，即使中途中斷也留有紀錄。"""
 
     def __init__(self, out_dir, config: dict, extra: dict | None = None,
-                 vdid_map: dict | None = None, expected_clients: int | None = None):
+                 vdid_map: dict | None = None, expected_clients: int | None = None,
+                 expected_train: int | None = None):
         self.dir = Path(out_dir)
         self.vdid_map = {int(k): v for k, v in (vdid_map or {}).items()}
         self.expected = expected_clients
+        self.expected_train = expected_train if expected_train is not None else expected_clients
         self.dir.mkdir(parents=True, exist_ok=True)
         self.rounds: dict[int, dict] = {}
         self.clients: dict[tuple[int, int], dict] = {}
@@ -93,8 +99,9 @@ class RunLogger:
         return row
 
     def _check_count(self, rnd, n, phase):
-        if self.expected is not None and n != self.expected:
-            warnings.warn(f"第 {rnd} 輪 {phase} 只收到 {n}/{self.expected} 個 client 的回覆，"
+        expected = self.expected_train if phase == "train" else self.expected
+        if expected is not None and n != expected:
+            warnings.warn(f"第 {rnd} 輪 {phase} 只收到 {n}/{expected} 個 client 的回覆，"
                           "該輪指標只反映部分 client")
 
     def on_train(self, replies: list[dict]) -> dict:
@@ -108,7 +115,8 @@ class RunLogger:
                        epsilon=float(r["epsilon"]) if "epsilon" in r else None,
                        dp_steps=int(r["dp-steps"]) if "dp-steps" in r else None,
                        sample_rate=float(r["sample-rate"]) if "sample-rate" in r else None,
-                       local_mae_kmh=float(r["local-mae-kmh"]) if "local-mae-kmh" in r else None)
+                       local_mae_kmh=float(r["local-mae-kmh"]) if "local-mae-kmh" in r else None,
+                       diverged=int(r.get("diverged", 0)))
         self._flush()
         return agg
 
@@ -123,7 +131,8 @@ class RunLogger:
                        mae_kmh=float(r["mae-kmh"]), rmse_kmh=math.sqrt(float(r["mse-kmh"])),
                        naive_mae_kmh=float(r["naive-mae-kmh"]) if "naive-mae-kmh" in r else None,
                        ft_mae_kmh=float(r["ft-mae-kmh"]) if "ft-mae-kmh" in r else None,
-                       ft_epsilon=float(r["ft-epsilon"]) if "ft-epsilon" in r else None)
+                       ft_epsilon=float(r["ft-epsilon"]) if "ft-epsilon" in r else None,
+                       ft_diverged=int(r["ft-diverged"]) if "ft-diverged" in r else None)
         self._flush()
         return agg
 

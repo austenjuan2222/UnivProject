@@ -54,5 +54,25 @@ class QuickAblationTest(unittest.TestCase):
         self.assertGreater(r["mae"], 0)
 
 
+    def test_calendar_features_extra_series_and_avg_last(self):
+        r = self.run_main("--cal", "tod,dow", "--feats", "volume,occupancy", "--avg-last", "2",
+                          "--finetune", "1")
+        self.assertTrue(r["mae"] > 0 and r["mae"] < 100)
+
+    def test_time_feats_shape_and_range(self):
+        from quick_ablation import time_feats
+        f = time_feats(["2024-03-09 06:00:00", "2024-03-11 18:00:00"], ["tod", "dow"])
+        self.assertEqual(f.shape, (2, 3))
+        self.assertAlmostEqual(f[0, 0], 1.0, places=6)   # 06:00 → sin(π/2)
+        self.assertEqual(list(f[:, 2]), [1.0, 0.0])      # 週六 / 週一
+
+    def test_block_fold_keeps_train_and_test_disjoint(self):
+        from quick_ablation import load
+        d = load(self.data, 12, 1, fold=1, nfolds=3)
+        self.assertGreater(len(d[0]["ytr"]), 0)
+        self.assertGreater(len(d[0]["yte"]), 0)
+        r = self.run_main("--fold", "1", "--nfolds", "3")
+        self.assertTrue(0 < r["mae"] < 100)
+
 if __name__ == "__main__":
     unittest.main()
