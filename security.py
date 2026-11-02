@@ -49,6 +49,17 @@ def provision_keys(key_dir, num_clients: int) -> None:
     priv = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(priv_path.read_text().strip()))
     (key_dir / "server.pub").write_text(priv.public_key().public_bytes(
         _RAW, serialization.PublicFormat.Raw).hex(), encoding="utf-8")
+    # 不可否認性用：每個 VD 一把 Ed25519 簽章私鑰，公鑰表 vd_sign_pub.json 公開
+    pub_table_path = key_dir / "vd_sign_pub.json"
+    sign_pubs = json.loads(pub_table_path.read_text(encoding="utf-8")) if pub_table_path.exists() else {}
+    for pid in range(num_clients):
+        p = key_dir / f"vd-{pid}.ed25519"
+        if not p.exists():
+            _write_secret(p, Ed25519PrivateKey.generate().private_bytes(
+                _RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption()).hex())
+        k = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(p.read_text().strip()))
+        sign_pubs[str(pid)] = k.public_key().public_bytes(_RAW, serialization.PublicFormat.Raw).hex()
+    pub_table_path.write_text(json.dumps(sign_pubs), encoding="utf-8")
     table_path = server / "vd_keys.json"
     table = json.loads(table_path.read_text(encoding="utf-8")) if table_path.exists() else {}
     for pid in range(num_clients):
@@ -62,6 +73,17 @@ def provision_keys(key_dir, num_clients: int) -> None:
 def load_vd_key(key_dir, pid: int) -> bytes:
     """VD 端：只讀自己的金鑰。"""
     return bytes.fromhex((Path(key_dir) / f"vd-{pid}.key").read_text().strip())
+
+
+def load_vd_signing_key(key_dir, pid: int) -> Ed25519PrivateKey:
+    """VD 端：自己的 Ed25519 簽章私鑰（只有這台 VD 有）。"""
+    return Ed25519PrivateKey.from_private_bytes(bytes.fromhex((Path(key_dir) / f"vd-{pid}.ed25519").read_text().strip()))
+
+
+def load_vd_verify_keys(key_dir) -> dict:
+    """伺服器端：各 VD 的簽章公鑰（只能驗證，不能簽）。"""
+    table = json.loads((Path(key_dir) / "vd_sign_pub.json").read_text(encoding="utf-8"))
+    return {int(k): Ed25519PublicKey.from_public_bytes(bytes.fromhex(v)) for k, v in table.items()}
 
 
 def load_server_public_key(key_dir) -> Ed25519PublicKey:
@@ -87,11 +109,27 @@ def _payload(arrays: dict, header: str) -> bytes:
     return h.digest()
 
 
-def sign_update(key: bytes, arrays: dict, rnd: int, pid: int) -> str:
-    return hmac.new(key, _payload(arrays, f"update|{rnd}|{pid}"), hashlib.sha256).hexdigest()
+def update_digest(arrays: dict, rnd: int, pid: int) -> str:
+    """更新內容的 SHA-256（稽核紀錄用；不含金鑰）。"""
+    return _payload(arrays, f"update|{rnd}|{pid}").hex()
 
 
-def verify_update(key: bytes, arrays: dict, rnd: int, pid: int, tag: str) -> bool:
+def sign_update(key, arrays: dict, rnd: int, pid: int) -> str:
+    """key 是 bytes：HMAC-SHA256（完整性、鑑別性）；是 Ed25519 私鑰：數位簽章（再加上不可否認性）。"""
+    msg = _payload(arrays, f"update|{rnd}|{pid}")
+    if isinstance(key, Ed25519PrivateKey):
+        return key.sign(msg).hex()
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
+def verify_update(key, arrays: dict, rnd: int, pid: int, tag: str) -> bool:
+    """key 是 bytes：比對 HMAC；是 Ed25519 公鑰：驗簽章。"""
+    if isinstance(key, Ed25519PublicKey):
+        try:
+            key.verify(bytes.fromhex(str(tag)), _payload(arrays, f"update|{rnd}|{pid}"))
+            return True
+        except (InvalidSignature, ValueError):
+            return False
     return hmac.compare_digest(sign_update(key, arrays, rnd, pid), str(tag))
 
 

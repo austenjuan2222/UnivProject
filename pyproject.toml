@@ -63,6 +63,7 @@ nodp-grad-clip = 0.0       # 無 DP 時的整批梯度範數裁剪（0 = 不裁�
 client-dp-clip = 0.1       # client-level DP 的更新量裁剪上限（更新量 L2 範數中位數約 0.24）
 # 通訊安全與攻擊模擬（對應課程講義「物聯網安全」；見 README「依課程講義補強」）
 verify-updates = true      # VD 上傳的更新附 HMAC-SHA256，伺服器驗不過就不聚合（完整性、鑑別性、防重送）
+update-auth = "hmac"       # hmac：共用金鑰的訊息鑑別碼；ed25519：VD 數位簽章，伺服器只有公鑰（加上不可否認性）
 sign-models = true         # 伺服器用 Ed25519 簽全域模型，VD 驗證通過才使用（防假更新）
 key-dir = "keys"           # 金鑰資料夾：vd-<編號>.key（各 VD 一把隨機金鑰）、server.pub；server/ 只給伺服器（不進 git）
 aggregator = "fedavg"      # fedavg／median（中位數）／trimmed（截尾平均）：後兩者可抵抗被入侵的 VD

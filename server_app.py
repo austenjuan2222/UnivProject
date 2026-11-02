@@ -20,7 +20,7 @@ from flwr.serverapp.strategy import (DifferentialPrivacyServerSideAdaptiveClippi
 from data import n_calendar
 from guard import GuardedStrategy
 from secagg import provision_agreement_keys
-from security import load_server_secrets, provision_keys
+from security import load_server_secrets, load_vd_verify_keys, provision_keys
 from privacy import client_level_epsilon
 from results_log import RunLogger, make_run_name
 from task import TrafficModel, set_seed
@@ -137,6 +137,11 @@ def main(grid: Grid, context: Context) -> None:
         key_dir = str(cfg.get("key-dir", "keys"))
         provision_keys(key_dir, num_clients)
         priv, vd_keys = load_server_secrets(key_dir)
+        auth = str(cfg.get("update-auth", "hmac"))
+        if auth == "ed25519":
+            vd_keys = load_vd_verify_keys(key_dir)  # 伺服器只拿公鑰：偽造不了 VD 的簽章
+        elif auth != "hmac":
+            raise ValueError(f"update-auth 必須是 hmac 或 ed25519，收到 {auth}")
     secure_agg = bool(cfg.get("secure-agg", False))
     if secure_agg:
         # 伺服器看不到個別更新：不能做伺服器端裁剪（client-level DP）或中位數；基本版也不容許斷線、抽樣
@@ -147,7 +152,7 @@ def main(grid: Grid, context: Context) -> None:
         provision_agreement_keys(str(cfg.get("key-dir", "keys")), num_clients)
     strategy = GuardedStrategy(strategy, priv if sign else None, vd_keys if verify else None,
                                float(cfg.get("tamper-rate", 0.0)), int(cfg["seed"]), logger.on_security,
-                               secure_agg_clients=num_clients if secure_agg else 0)
+                               secure_agg_clients=num_clients if secure_agg else 0, on_audit=logger.on_audit)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))

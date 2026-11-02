@@ -84,6 +84,14 @@ class AggregateTest(unittest.TestCase):
 
 
 class RunLoggerTest(unittest.TestCase):
+    def test_audit_log_appends_one_json_line_per_update(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = RunLogger(Path(d) / "run", config={})
+            log.on_audit([{"round": 1, "pid": 0, "accepted": True, "digest": "ab", "tag": "cd"}])
+            log.on_audit([{"round": 2, "pid": 0, "accepted": False, "digest": "ef", "tag": ""}])
+            lines = (Path(d) / "run" / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual([json.loads(x)["round"] for x in lines], [1, 2])
+
     def test_security_stats_are_written_per_round(self):
         with tempfile.TemporaryDirectory() as d:
             log = RunLogger(Path(d) / "run", config={})

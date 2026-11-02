@@ -133,6 +133,13 @@ class RunLogger:
         self.rounds.setdefault(int(rnd), {"round": int(rnd)}).update(stats)
         self._flush()
 
+    def on_audit(self, entries: list[dict]) -> None:
+        """稽核紀錄：每份上傳更新一行 JSON（輪次、VD、內容雜湊、簽章、是否採用）。
+        用 Ed25519 簽章時，伺服器只有公鑰，事後可以證明某份更新確實是那台 VD 送的（不可否認性）。"""
+        with (self.dir / "audit.jsonl").open("a", encoding="utf-8") as f:
+            for e in entries:
+                f.write(json.dumps(e, ensure_ascii=False) + "\n")
+
     def on_eval(self, replies: list[dict]) -> dict:
         agg = aggregate_eval(replies)
         rnd = int(replies[0]["round"]) if replies else 0

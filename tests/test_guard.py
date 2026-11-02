@@ -35,6 +35,14 @@ class ScreenRepliesTest(unittest.TestCase):
         self.assertEqual(keep, [True, False, False])
         self.assertEqual(stats["n_rejected"], 2)
 
+    def test_audit_entries_record_who_sent_what(self):
+        cs = [_content(0), _content(1, key=os.urandom(32))]
+        _, stats = screen_replies(cs, 3, KEYS, verify=True, tamper_rate=0.0, rng=np.random.default_rng(0))
+        audit = stats["audit"]
+        self.assertEqual([(a["round"], a["pid"], a["accepted"]) for a in audit], [(3, 0, True), (3, 1, False)])
+        self.assertEqual(len(audit[0]["digest"]), 64)  # 更新內容的 SHA-256
+        self.assertTrue(audit[0]["tag"])
+
     def test_unknown_vd_is_rejected(self):
         c = _content(0)
         c["metrics"]["partition-id"] = 9  # 不在驗證表裡的 VD 編號

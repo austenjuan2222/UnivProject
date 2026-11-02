@@ -7,11 +7,11 @@ import os
 import tempfile
 from pathlib import Path
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from security import (drops_out, is_attacker, load_server_public_key, load_server_secrets, load_vd_key,
-                      poison_update, provision_keys, sign_model, sign_update, tamper, verify_model,
-                      verify_update)
+                      load_vd_signing_key, load_vd_verify_keys, poison_update, provision_keys, sign_model,
+                      sign_update, tamper, verify_model, verify_update)
 
 
 def _arrays(v=0.5):
@@ -37,7 +37,8 @@ class KeyProvisioningTest(unittest.TestCase):
 
     def test_vd_files_hold_no_server_secret(self):
         vd_files = sorted(f.name for f in self.dir.iterdir() if f.is_file())
-        self.assertEqual(vd_files, ["server.pub", "vd-0.key", "vd-1.key", "vd-2.key", "vd-3.key"])
+        self.assertEqual(vd_files, ["server.pub", "vd-0.ed25519", "vd-0.key", "vd-1.ed25519", "vd-1.key",
+                                    "vd-2.ed25519", "vd-2.key", "vd-3.ed25519", "vd-3.key", "vd_sign_pub.json"])
         priv, table = load_server_secrets(self.dir)
         self.assertEqual(set(table), {0, 1, 2, 3})
         self.assertEqual(table[2], load_vd_key(self.dir, 2))
@@ -62,6 +63,34 @@ class KeyProvisioningTest(unittest.TestCase):
     def test_secret_files_are_owner_only(self):
         self.assertEqual((self.dir / "vd-0.key").stat().st_mode & 0o077, 0)
         self.assertEqual((self.dir / "server" / "ed25519.key").stat().st_mode & 0o077, 0)
+
+
+class UpdateSignatureTest(unittest.TestCase):
+    """不可否認性：VD 用自己的 Ed25519 私鑰簽更新，伺服器只有公鑰，偽造不了 VD 的簽章。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        provision_keys(self.tmp.name, 3)
+        self.pubs = load_vd_verify_keys(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_vd_signature_verifies_with_public_key_only(self):
+        tag = sign_update(load_vd_signing_key(self.tmp.name, 1), _arrays(), rnd=2, pid=1)
+        self.assertTrue(verify_update(self.pubs[1], _arrays(), 2, 1, tag))
+
+    def test_signature_by_another_vd_is_rejected(self):
+        tag = sign_update(load_vd_signing_key(self.tmp.name, 0), _arrays(), rnd=2, pid=1)
+        self.assertFalse(verify_update(self.pubs[1], _arrays(), 2, 1, tag))
+
+    def test_server_side_table_holds_only_public_keys(self):
+        self.assertTrue(all(isinstance(k, Ed25519PublicKey) for k in self.pubs.values()))
+
+    def test_modified_update_or_round_is_rejected(self):
+        tag = sign_update(load_vd_signing_key(self.tmp.name, 2), _arrays(), rnd=2, pid=2)
+        self.assertFalse(verify_update(self.pubs[2], _arrays(0.6), 2, 2, tag))
+        self.assertFalse(verify_update(self.pubs[2], _arrays(), 3, 2, tag))
 
 
 class UpdateMacTest(unittest.TestCase):

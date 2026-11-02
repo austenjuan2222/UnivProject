@@ -19,7 +19,7 @@ from flwr.serverapp.strategy import Strategy
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from secagg import unmask_sum
-from security import sign_model, sign_update, tamper, verify_update
+from security import sign_model, sign_update, tamper, update_digest, verify_update
 
 AUTH = "auth"
 
@@ -40,7 +40,7 @@ def attach_update_tag(content: RecordDict, key: bytes, rnd: int, pid: int) -> No
 def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: bool,
                    tamper_rate: float, rng: np.random.Generator) -> tuple[list[bool], dict]:
     """回傳每個回覆是否可用於聚合，以及統計（被竄改數、被拒絕數）。會移除 auth 紀錄。"""
-    keep, n_tampered, n_rejected = [], 0, 0
+    keep, n_tampered, n_rejected, audit = [], 0, 0, []
     for c in contents:
         if tamper_rate > 0 and rng.random() < tamper_rate:
             c["arrays"] = _array_record(tamper(arrays_of(c["arrays"]), 0.5, rng))
@@ -55,7 +55,11 @@ def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: 
             ok = bool(tag) and key is not None and verify_update(key, arrays_of(c["arrays"]), rnd, pid, tag)
         n_rejected += int(not ok)
         keep.append(ok)
-    return keep, {"n_tampered": n_tampered, "n_rejected": n_rejected}
+        # 稽核紀錄：哪個 VD、哪一輪、送了什麼（內容雜湊）、附了什麼簽章、有沒有被採用
+        audit.append({"round": int(rnd), "pid": int(c["metrics"]["partition-id"]), "accepted": ok,
+                      "digest": update_digest(arrays_of(c["arrays"]), rnd, int(c["metrics"]["partition-id"])),
+                      "tag": tag})
+    return keep, {"n_tampered": n_tampered, "n_rejected": n_rejected, "audit": audit}
 
 
 def secure_average(contents: list[RecordDict], expected: int) -> ArrayRecord | None:
@@ -71,7 +75,8 @@ def secure_average(contents: list[RecordDict], expected: int) -> ArrayRecord | N
 class GuardedStrategy(Strategy):
     def __init__(self, inner: Strategy, signing_key: Ed25519PrivateKey | None, vd_keys: dict | None,
                  tamper_rate: float = 0.0, seed: int = 0,
-                 on_round: Callable[[int, dict], None] | None = None, secure_agg_clients: int = 0):
+                 on_round: Callable[[int, dict], None] | None = None, secure_agg_clients: int = 0,
+                 on_audit: Callable[[list], None] | None = None):
         """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。"""
         self.inner = inner
         self.vd_keys = vd_keys or {}
@@ -82,6 +87,7 @@ class GuardedStrategy(Strategy):
         self._priv = signing_key
         # > 0：安全聚合，需要這麼多個 VD 全部回覆遮罩後的更新（基本版不容許斷線）
         self.secure_agg_clients = secure_agg_clients
+        self.on_audit = on_audit
 
     def _sign(self, messages: Iterable[Message], arrays: ArrayRecord, rnd: int) -> list[Message]:
         messages = list(messages)
@@ -102,6 +108,9 @@ class GuardedStrategy(Strategy):
         keep, stats = screen_replies([m.content for m in ok_replies], server_round, self.vd_keys,
                                      self.verify_updates, self.tamper_rate, self.rng)
         stats["n_dropped"] = len(replies) - len(ok_replies)
+        audit = stats.pop("audit")
+        if self.on_audit and self.verify_updates:
+            self.on_audit(audit)
         kept = [m for m, k in zip(ok_replies, keep) if k]
         if self.on_round:
             self.on_round(server_round, stats)

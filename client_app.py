@@ -20,8 +20,8 @@ from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
 from secagg import load_agreement_keys, mask_update
-from security import (drops_out, is_attacker, load_server_public_key, load_vd_key, poison_update,
-                      verify_model)
+from security import (drops_out, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key,
+                      poison_update, verify_model)
 from task import TrafficModel, all_finite, evaluate, make_loader, set_seed, train, unwrap
 
 warnings.filterwarnings("ignore", category=UserWarning, module="opacus")
@@ -67,6 +67,7 @@ def _cfg(context: Context) -> dict:
         "dropout_rate": float(c.get("dropout-rate", 0.0)),
         "secure_agg": bool(c.get("secure-agg", False)),
         "upload_bits": int(c.get("upload-bits", 32)),
+        "update_auth": str(c.get("update-auth", "hmac")),
     }
 
 
@@ -186,7 +187,9 @@ def train_fn(msg: Message, context: Context) -> Message:
     metrics["train-seconds"] = time.perf_counter() - t0
     content = RecordDict({"arrays": arrays, "metrics": MetricRecord(metrics)})
     if cfg["verify_updates"]:
-        attach_update_tag(content, load_vd_key(cfg["key_dir"], pid), rnd, pid)  # 只讀自己的金鑰
+        key = (load_vd_signing_key(cfg["key_dir"], pid) if cfg["update_auth"] == "ed25519"
+               else load_vd_key(cfg["key_dir"], pid))  # 只讀自己的金鑰
+        attach_update_tag(content, key, rnd, pid)
     return Message(content=content, reply_to=msg)
 
 
