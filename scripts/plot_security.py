@@ -44,6 +44,8 @@ SCENARIOS = [
     ("No attack, median", "s32_median", "base"),
     ("No attack, trimmed mean", "s32_trimmed", "base"),
     ("30% of VDs drop out each round", "s32_drop30", "base"),
+    ("All defences on, no attack", "s32_full_noatk", "base"),
+    ("All defences on, 3 bad VDs + 10% tamper + 10% dropout", "s32_full_atk3", "defended"),
 ]
 COLORS = {"base": "#0072B2", "attack": "#D55E00", "defended": "#009E73"}  # Okabe-Ito
 

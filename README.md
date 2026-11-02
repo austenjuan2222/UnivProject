@@ -560,6 +560,8 @@ naive 基準 2.429 km/h。
 | 沒有攻擊，中位數 | `aggregator='median'` | 2.189 | 2.117 | 正常情況下的代價：+0.005（不顯著） |
 | 沒有攻擊，截尾平均 | `aggregator='trimmed'` | 2.186 | 2.116 | +0.002（不顯著） |
 | 每輪 30% VD 斷線 | `dropout-rate=0.3` | 2.194 | 2.118 | 每個 seed 約 193 次斷線，訓練照常完成 |
+| **全部防禦一起開**，沒有攻擊 | `update-auth='ed25519' upload-bits=4 aggregator='median' client-dp-noise=0.01 client-dp-clip=0.2` | 2.275 | 2.161 | 每 VD 每輪只上傳 0.79 KB |
+| **全部防禦一起開**，同時 3 個 VD 被入侵＋10% 竄改＋10% 斷線 | `+ attack-clients=3 tamper-rate=0.1 dropout-rate=0.1` | **2.295** | 2.164 | 竄改 63 份全被拒絕、54 次斷線；仍贏 naive 5.5% |
 
 | 6 個 VD 被入侵，中位數／截尾平均 | `attack-clients=6` | 2.356／2.397 | 2.148／2.157 | 仍贏 naive |
 | 10 個 VD 被入侵，中位數 | `attack-clients=10` | 2.469（略輸 naive） | 2.160 | 微調後仍贏 naive 11% |
