@@ -14,9 +14,11 @@ import torch
 from flwr.app import ArrayRecord, ConfigRecord, Context, MetricRecord
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import (DifferentialPrivacyServerSideAdaptiveClipping,
-                                     DifferentialPrivacyServerSideFixedClipping, FedAvg)
+                                     DifferentialPrivacyServerSideFixedClipping, FedAvg, FedMedian,
+                                     FedTrimmedAvg)
 
 from data import n_calendar
+from guard import GuardedStrategy
 from privacy import client_level_epsilon
 from results_log import RunLogger, make_run_name
 from task import TrafficModel, set_seed
@@ -98,7 +100,13 @@ def main(grid: Grid, context: Context) -> None:
 
     _check_num_nodes(grid, num_clients)
 
-    strategy = FedAvg(
+    # 聚合方式：fedavg（加權平均）、median（逐參數中位數）、trimmed（去掉頭尾各 20% 再平均）
+    # 中位數／截尾平均可抵抗少數被入侵 VD 的惡意更新（講義：IoT 攻擊面、botnet）
+    agg_name = str(cfg.get("aggregator", "fedavg"))
+    agg_cls = {"fedavg": FedAvg, "median": FedMedian, "trimmed": FedTrimmedAvg}.get(agg_name)
+    if agg_cls is None:
+        raise ValueError(f"aggregator 必須是 fedavg／median／trimmed，收到 {agg_name}")
+    strategy = agg_cls(
         fraction_train=n_train / num_clients,
         fraction_evaluate=1.0,
         min_train_nodes=n_train,
@@ -118,6 +126,13 @@ def main(grid: Grid, context: Context) -> None:
     elif client_dp:
         strategy = DifferentialPrivacyServerSideFixedClipping(
             strategy, noise_multiplier=cl_sigma, clipping_norm=cl_clip, num_sampled_clients=n_train)
+    # 安全閘道（最外層）：簽全域模型、剔除斷線 VD、驗證上傳更新的 HMAC，再交給 DP／聚合
+    verify = bool(cfg.get("verify-updates", False))
+    sign = bool(cfg.get("sign-models", False))
+    if (verify or sign) and not str(cfg.get("auth-secret", "")):
+        raise ValueError("verify-updates／sign-models 需要設定 auth-secret")
+    strategy = GuardedStrategy(strategy, str(cfg.get("auth-secret", "")), verify, sign,
+                               float(cfg.get("tamper-rate", 0.0)), int(cfg["seed"]), logger.on_security)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))

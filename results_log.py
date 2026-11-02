@@ -10,7 +10,8 @@ from pathlib import Path
 
 ROUND_FIELDS = ["round", "n_train_clients", "n_eval_clients", "train_loss", "eval_loss",
                 "mae_kmh", "rmse_kmh", "epsilon_max", "epsilon_mean", "naive_mae_kmh", "local_mae_kmh",
-                "ft_mae_kmh", "ft_epsilon_max", "n_diverged", "n_ft_diverged"]
+                "ft_mae_kmh", "ft_epsilon_max", "n_diverged", "n_ft_diverged",
+                "n_rejected", "n_tampered", "n_dropped", "upload_kb", "raw_kb", "train_seconds_max"]
 CLIENT_FIELDS = ["round", "partition", "vdid", "num_train", "train_loss", "epsilon",
                  "dp_steps", "sample_rate", "local_mae_kmh",
                  "num_test", "eval_loss", "mae_kmh", "rmse_kmh", "naive_mae_kmh",
@@ -29,6 +30,13 @@ def aggregate_train(replies: list[dict]) -> dict:
     if replies and all("local-mae-kmh" in r and "num-test" in r for r in replies):
         tot = sum(float(r["num-test"]) for r in replies)
         out["local_mae_kmh"] = sum(float(r["num-test"]) * float(r["local-mae-kmh"]) for r in replies) / tot
+    # Edge 運算成本：每個 VD 每輪上傳的模型大小，對比「把原始訓練資料傳上雲」的大小
+    if replies and all("upload-bytes" in r for r in replies):
+        out["upload_kb"] = sum(float(r["upload-bytes"]) for r in replies) / len(replies) / 1024
+    if replies and all("raw-bytes" in r for r in replies):
+        out["raw_kb"] = sum(float(r["raw-bytes"]) for r in replies) / len(replies) / 1024
+    if replies and all("train-seconds" in r for r in replies):
+        out["train_seconds_max"] = max(float(r["train-seconds"]) for r in replies)
     eps = [float(r["epsilon"]) for r in replies if "epsilon" in r]
     if eps:
         out["epsilon_max"] = max(eps)
@@ -119,6 +127,11 @@ class RunLogger:
                        diverged=int(r.get("diverged", 0)))
         self._flush()
         return agg
+
+    def on_security(self, rnd: int, stats: dict) -> None:
+        """安全閘道的每輪統計：被拒絕（簽章不符）、被竄改（模擬中間人）、斷線的 VD 數。"""
+        self.rounds.setdefault(int(rnd), {"round": int(rnd)}).update(stats)
+        self._flush()
 
     def on_eval(self, replies: list[dict]) -> dict:
         agg = aggregate_eval(replies)

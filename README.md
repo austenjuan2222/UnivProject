@@ -12,6 +12,7 @@
 | 切分 | 各 client 依時間前 80% 訓練、後 20% 測試；視窗不跨切點；標準化只用訓練段 |
 | 聚合 | FedAvg，每輪全部 client 參與；SGD 學習率 0.2、MSE 損失 |
 | 隱私 | record-level DP-SGD：逐樣本裁剪（C=1.0）+ 高斯雜訊（σ=1.1）+ Poisson 取樣；RDP accountant，δ=1e-5 |
+| 通訊安全 | 上傳更新附 HMAC-SHA256、全域模型附 Ed25519 簽章（可關閉）；可選穩健聚合與攻擊模擬 |
 | 框架 | Flower 1.26（Message API）、PyTorch、Opacus |
 
 ## 1. 安裝
@@ -505,6 +506,39 @@ record-level 雜訊讓每個 VD 的更新量變大，client 裁剪 0.05 會把�
 因此報告比較 σ 時請用 `--seeds` 跑多個 seed、看 `summary_by_config.csv` 的平均 ± 標準差，
 並在真實資料上用相同學習率比較 DP 與無 DP。
 
+## 依課程講義補強（2026-11-02）：用 IoT 架構與 IoT 安全的角度看本專案
+
+### 用講義的「五個問題」拆解本系統
+
+| 講義的問題 | 本專案的答案 |
+|---|---|
+| 1. 感知什麼？ | 高速公路 VD（車輛偵測器）每分鐘的車速、車流量、佔有率；整理成每 5 分鐘一筆 |
+| 2. 在哪裡算？ | **Edge**：每個 VD（或路側 Edge Gateway）在本地訓練模型；**Cloud**：伺服器只做聚合。原始資料不離開 VD |
+| 3. 怎麼連？ | 每輪只上傳模型參數，每個 VD 約 **6 KB／輪**（實測欄位 `upload_kb`），適合 4G／5G 或 LPWAN 這類頻寬有限的連線 |
+| 4. 如何變聰明？ | 聯邦學習（講義「進階 AI」列出的技術）＋ 各 VD 本地微調，預測 5／15／30 分鐘後車速 |
+| 5. 如何保護？ | 隱私：差分隱私（ε）；完整性：HMAC 與數位簽章；可用性：斷線 VD 不影響其他 VD；攻擊：穩健聚合（見下表） |
+
+### CIA 與其他資安要求的對照
+
+| 講義的資安要求 | 威脅（本專案情境） | 做法 | 設定 |
+|---|---|---|---|
+| 機密性／隱私 | 從模型參數反推某一筆車速、某個 VD 的資料 | 差分隱私：record-level DP-SGD；選用 client-level DP | `use-dp`、`client-dp-noise` |
+| 完整性 | 網路上的中間人竄改 VD 上傳的模型更新 | 每個 VD 用自己的金鑰算 **HMAC-SHA256**（講義的 MAC），伺服器驗不過就不聚合 | `verify-updates=true`（預設） |
+| 鑑別性 | 冒充別的 VD 上傳 | 各 VD 金鑰不同，拿到一台 VD 的金鑰也偽造不了另一台的更新 | 同上 |
+| 防重送 | 把舊一輪的更新再送一次 | 簽章內容包含輪次與 VD 編號 | 同上 |
+| 完整性（下發） | 講義案例：智慧集線器被騙安裝假更新 | 伺服器用 **Ed25519 數位簽章**簽全域模型，VD 驗證通過才使用 | `sign-models=true`（預設） |
+| 完整性（裝置被入侵） | 講義的 botnet／攻擊面：VD 被入侵後持有合法金鑰，送出惡意更新，MAC 擋不住 | **穩健聚合**：逐參數中位數、截尾平均 | `aggregator=median／trimmed` |
+| 可用性 | VD 斷線、當機、網路中斷 | 伺服器略過沒回應的 VD，其他 VD 照常聚合 | `dropout-rate`（模擬用） |
+| 可稽核性 | 事後查哪一輪出了什麼事 | 每輪寫出被拒絕、被竄改、斷線的 VD 數與每個 VD 的指標 | `metrics.csv`、`clients.csv` |
+
+金鑰說明：模擬時所有金鑰都由 `auth-secret` 推導，方便重現。實際部署要在 VD 安裝時個別配發金鑰
+（例如 PKI 或 TPM），也不應把主密鑰放在設定檔裡。HMAC 用的是標準的 HMAC 結構，
+不是講義投影片上的 H(K||M)，因為後者有長度延伸攻擊的問題。
+
+### 攻擊與可用性實驗（32 個 VD，28 天，record-level DP σ=1.1，3 seeds）
+
+<!-- SECURITY_RESULTS -->
+
 ## 5. 測試
 
 ```bash
@@ -526,7 +560,9 @@ data.py            client 對應、時間切分、標準化、滑動視窗
 privacy.py         跨輪次累計 ε
 task.py            模型、訓練、評估
 client_app.py      Flower ClientApp（DP 開關、ε 回報）
-server_app.py      Flower ServerApp（FedAvg、紀錄、client 數檢查）
+server_app.py      Flower ServerApp（FedAvg／中位數／截尾平均、紀錄、client 數檢查）
+security.py        HMAC 更新驗證、Ed25519 模型簽章、攻擊與斷線模擬
+guard.py           伺服器端安全閘道（驗簽、剔除斷線 VD、模擬中間人）
 results_log.py     指標彙整與 CSV/JSON 輸出
 scripts/quick_ablation.py  不經 Flower 的快速消融實驗（預測距離、個人化、成員推論攻擊、相鄰 VD）
 scripts/           下載、前處理、合成資料、Flower 設定、實驗、畫圖、煙霧測試

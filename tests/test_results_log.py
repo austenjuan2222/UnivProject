@@ -64,6 +64,15 @@ class AggregateTest(unittest.TestCase):
         ])
         self.assertEqual(out["n_ft_diverged"], 1)
 
+    def test_train_reports_edge_cost_per_vd(self):
+        out = aggregate_train([
+            {"num-examples": 1, "train-loss": 1.0, "upload-bytes": 2048, "raw-bytes": 40960, "train-seconds": 0.2},
+            {"num-examples": 1, "train-loss": 1.0, "upload-bytes": 2048, "raw-bytes": 81920, "train-seconds": 0.4},
+        ])
+        self.assertAlmostEqual(out["upload_kb"], 2.0)       # 每個 VD 每輪上傳量
+        self.assertAlmostEqual(out["raw_kb"], 60.0)         # 若改傳原始訓練資料的平均量
+        self.assertAlmostEqual(out["train_seconds_max"], 0.4)
+
     def test_eval_rmse_is_sqrt_of_pooled_mse(self):
         out = aggregate_eval([
             {"num-examples": 1, "eval-loss": 0.1, "mae-kmh": 2.0, "mse-kmh": 4.0},
@@ -75,6 +84,13 @@ class AggregateTest(unittest.TestCase):
 
 
 class RunLoggerTest(unittest.TestCase):
+    def test_security_stats_are_written_per_round(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = RunLogger(Path(d) / "run", config={})
+            log.on_security(2, {"n_rejected": 1, "n_tampered": 1, "n_dropped": 3})
+            row = _rows(Path(d) / "run" / "metrics.csv")[0]
+            self.assertEqual((row["round"], row["n_rejected"], row["n_dropped"]), ("2", "1", "3"))
+
     def test_writes_round_metrics_clients_and_config(self):
         with tempfile.TemporaryDirectory() as d:
             log = RunLogger(Path(d) / "run1", config={"use-dp": True, "noise-multiplier": 1.1},

@@ -23,7 +23,7 @@ dev = ["pytest"]
 [tool.setuptools]
 py-modules = [
     "task", "data", "privacy", "results_log", "vd_parse", "vd_preprocess",
-    "client_app", "server_app",
+    "client_app", "server_app", "security", "guard",
 ]
 
 [tool.flwr.app]
@@ -61,6 +61,16 @@ client-fraction = 1.0       # 每輪參與訓練的 client 比例（< 1 時 clie
 client-dp-adaptive = false  # true = client-level DP 用自適應裁剪（client-dp-clip 為初始值）
 nodp-grad-clip = 0.0       # 無 DP 時的整批梯度範數裁剪（0 = 不裁剪；只穩定訓練，沒有隱私保證）
 client-dp-clip = 0.1       # client-level DP 的更新量裁剪上限（更新量 L2 範數中位數約 0.24）
+# 通訊安全與攻擊模擬（對應課程講義「物聯網安全」；見 README「依課程講義補強」）
+verify-updates = true      # VD 上傳的更新附 HMAC-SHA256，伺服器驗不過就不聚合（完整性、鑑別性、防重送）
+sign-models = true         # 伺服器用 Ed25519 簽全域模型，VD 驗證通過才使用（防假更新）
+auth-secret = "univproject-demo-secret"  # 模擬用主密鑰（推導各 VD 金鑰）；實際部署要在 VD 安裝時個別配發
+aggregator = "fedavg"      # fedavg／median（中位數）／trimmed（截尾平均）：後兩者可抵抗被入侵的 VD
+attack-clients = 0         # > 0：最後幾個 VD 被入侵，送出惡意更新（仍有合法金鑰）
+attack-type = "flip"       # flip（反向並放大自己的更新）／noise（大幅隨機雜訊）
+attack-scale = 10.0        # 惡意更新的放大倍數
+tamper-rate = 0.0          # 模擬網路中間人：每個上傳更新被竄改的機率
+dropout-rate = 0.0         # 模擬 VD 斷線：每個 VD 每輪不回應的機率（可用性）
 seed = 42
 data-dir = "data/processed"
 results-dir = "results"
