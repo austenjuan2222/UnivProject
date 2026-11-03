@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Callable, Iterable
 
 import numpy as np
@@ -184,7 +185,10 @@ class GuardedStrategy(Strategy):
         if not kept:
             return None, None  # 這一輪沒有可信的更新：維持原本的全域模型
         if self.secure_agg_clients:
-            revealed = self._recover(server_round, kept) if len(kept) < self.secure_agg_clients else None
+            # 收到了卻被拒絕的 VD（例如 HMAC 不符）不能當成斷線：交出它的種子等於讓伺服器解開它已送達的更新
+            rejected = len(ok_replies) > len(kept)
+            revealed = (self._recover(server_round, kept)
+                        if len(kept) < self.secure_agg_clients and not rejected else None)
             stats["secagg_recovered"] = int(revealed is not None)
             arrays = secure_average([m.content for m in kept], self.secure_agg_clients, revealed)
             stats["secagg_failed"] = int(arrays is None)
@@ -204,12 +208,21 @@ class GuardedStrategy(Strategy):
         q = RecordDict({"secagg": ConfigRecord({"dropped": dropped, "round": int(rnd)})})
         replies = list(self._grid.send_and_receive(
             [Message(content=q, message_type="query", dst_node_id=n) for n in alive.values()], timeout=120))
+        pid_of = {node: pid for pid, node in alive.items()}
         revealed = {}
         for r in replies:
             if r.has_error():
-                continue
-            c = r.content["secagg"]
-            revealed[int(c["pid"])] = dict(zip((int(j) for j in c["dropped"]), (str(s) for s in c["seeds"])))
+                return None
+            try:
+                c = r.content["secagg"]
+                pid, js, seeds = int(c["pid"]), [int(j) for j in c["dropped"]], [str(x) for x in c["seeds"]]
+            except (KeyError, TypeError, ValueError):
+                return None
+            # 回覆要來自它自稱的 VD、涵蓋整份斷線名單，種子是 32 bytes 的十六進位
+            if (pid_of.get(r.metadata.src_node_id) != pid or sorted(js) != dropped or len(seeds) != len(js)
+                    or not all(re.fullmatch(r"[0-9a-f]{64}", x) for x in seeds)):
+                return None
+            revealed[pid] = dict(zip(js, seeds))
         return revealed if set(revealed) == set(alive) else None
 
     def configure_evaluate(self, server_round: int, arrays: ArrayRecord, config: ConfigRecord,
