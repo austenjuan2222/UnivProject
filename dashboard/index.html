@@ -359,10 +359,14 @@ function frame(){
     // 1b) 環境流動：每條線上一直有小光點往中心跑（訓練中跑快、其他時候慢慢流），畫面不會靜止
     const flow = c.phase==="train" ? 0.55 : c.phase==="drop" ? 0 : 0.12;
     if(flow){
-      hx.strokeStyle = rgba(c.phase==="wait"||c.phase==="idle" ? COL.cyan : col, 0.22); hx.lineWidth = 1;
-      for(let k=0;k<lines.length;k+=3){
+      const idle = c.phase==="wait" || c.phase==="idle";
+      hx.lineWidth = 1.1;
+      for(let k=0;k<lines.length;k+=2){
         const L = lines[k], head = (t*flow*(0.7+L.w*0.4) + L.lag*7 + k*0.0731) % 1;
-        strokePartial(L.pts, Math.max(0, head-0.07), head);
+        // 閒置時用多色（青／綠／洋紅）流光，有狀態時跟著狀態色
+        hx.strokeStyle = rgba(idle ? FLOW[k % FLOW.length] : col, 0.32*L.w);
+        strokePartial(L.pts, Math.max(0, head-0.09), head);
+        if(k % 6 === 0){ const h = pointAt(L.pts, head); hx.fillStyle = rgba(COL.white, 0.55); hx.fillRect(h[0]-0.8, h[1]-0.8, 1.6, 1.6); }
       }
     }
     // 2) 進度：從 VD 往中心點亮到 disp
@@ -413,10 +417,23 @@ function frame(){
       hx.strokeStyle = rgba(COL.white, 0.5*L.w); strokePartial(L.pts, head, tail);
     }
   }
+  bloom();
   hx.globalCompositeOperation = "source-over";
   drawHubCore(t);
   drawNodes(t);
   requestAnimationFrame(frame);
+}
+
+const FLOW = [COL.cyan, COL.green, COL.cyan, COL.mag, COL.green, COL.white];
+// 發光：把線條畫面縮成 1/4 再模糊、疊回去（比對每條線開 shadowBlur 便宜很多）
+const glow = document.createElement("canvas"), gx = glow.getContext("2d");
+function bloom(){
+  const gw = Math.max(1, hub.width>>2), gh = Math.max(1, hub.height>>2);
+  if(glow.width !== gw || glow.height !== gh){ glow.width = gw; glow.height = gh; }
+  gx.globalCompositeOperation = "copy"; gx.filter = "blur(3px)";
+  gx.drawImage(hub, 0, 0, gw, gh);
+  hx.save(); hx.setTransform(1,0,0,1,0,0); hx.globalCompositeOperation = "lighter"; hx.globalAlpha = 0.85;
+  hx.drawImage(glow, 0, 0, hub.width, hub.height); hx.restore();
 }
 
 const dust = Array.from({length:220}, () => ({a:Math.random()*Math.PI*2, r:Math.random(), v:0.02+Math.random()*0.06}));
