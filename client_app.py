@@ -166,7 +166,9 @@ def train_fn(msg: Message, context: Context) -> Message:
         # 被入侵的 VD：送出惡意更新（它仍有合法金鑰，所以下面照樣簽章；MAC 擋不住這種攻擊）
         g = arrays_of(msg.content["arrays"])
         bad = poison_update(g, arrays_of(arrays), cfg["attack_type"], cfg["attack_scale"],
-                            np.random.default_rng([cfg["seed"], pid, rnd]))
+                            # collude：同一輪所有被入侵 VD 共用種子，才會往同一個方向偏移
+                            np.random.default_rng([cfg["seed"], rnd] if cfg["attack_type"] == "collude"
+                                                  else [cfg["seed"], pid, rnd]))
         arrays = ArrayRecord({k: Array(v) for k, v in bad.items()})
     upload_bytes = None
     if cfg["upload_bits"] < 32:

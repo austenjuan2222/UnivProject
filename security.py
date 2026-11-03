@@ -147,7 +147,9 @@ def verify_model(pub: Ed25519PublicKey, arrays: dict, rnd: int, sig: str) -> boo
 
 def poison_update(global_arrays: dict, local_arrays: dict, kind: str, scale: float,
                   rng: np.random.Generator) -> dict:
-    """被入侵 VD 的惡意更新。flip：反向並放大自己的更新量；noise：送出大幅隨機雜訊。"""
+    """被入侵 VD 的惡意更新。flip：反向並放大自己的更新量；noise：送出大幅隨機雜訊；
+    collude：多台被入侵的 VD 串通，每個參數都往同一個方向偏移 scale 倍自己的更新幅度
+    （偏移量和正常更新同一個量級，比較難被中位數當成離群值剔除；rng 要用同一輪共用的種子）。"""
     out = {}
     for k, g in global_arrays.items():
         g = np.asarray(g, dtype=np.float32)
@@ -155,8 +157,12 @@ def poison_update(global_arrays: dict, local_arrays: dict, kind: str, scale: flo
             out[k] = (g - scale * (np.asarray(local_arrays[k], dtype=np.float32) - g)).astype(np.float32)
         elif kind == "noise":
             out[k] = (g + scale * rng.standard_normal(g.shape)).astype(np.float32)
+        elif kind == "collude":
+            d = np.asarray(local_arrays[k], dtype=np.float32) - g
+            direction = rng.choice(np.array([-1.0, 1.0], dtype=np.float32), size=g.shape)
+            out[k] = (g + d + scale * np.abs(d) * direction).astype(np.float32)
         else:
-            raise ValueError(f"未知的攻擊類型：{kind}（可用 flip、noise）")
+            raise ValueError(f"未知的攻擊類型：{kind}（可用 flip、noise、collude）")
     return out
 
 

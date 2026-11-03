@@ -151,6 +151,14 @@ class AttackSimulationTest(unittest.TestCase):
         for k in g:
             self.assertGreater(np.abs(out[k] - g[k]).max(), 0.1)
 
+    def test_collude_attackers_shift_the_same_way_within_honest_scale(self):
+        g = _arrays(0.5)
+        a = poison_update(g, _arrays(0.7), "collude", scale=1.0, rng=np.random.default_rng([1, 3]))
+        b = poison_update(g, _arrays(0.6), "collude", scale=1.0, rng=np.random.default_rng([1, 3]))
+        k = "net.0.weight"
+        np.testing.assert_array_equal(np.sign(a[k] - 0.7 + 1e-9), np.sign(b[k] - 0.6 + 1e-9))
+        self.assertLessEqual(np.abs(a[k] - g[k]).max(), 2 * 0.2 + 1e-5)  # 不超過自己更新量的 (1+scale) 倍
+
     def test_unknown_attack_raises(self):
         with self.assertRaises(ValueError):
             poison_update(_arrays(), _arrays(), "nope", 1.0, np.random.default_rng(0))
