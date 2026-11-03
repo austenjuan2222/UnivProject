@@ -145,10 +145,10 @@ def main(grid: Grid, context: Context) -> None:
     secure_agg = bool(cfg.get("secure-agg", False))
     if secure_agg:
         # 伺服器看不到個別更新：不能做伺服器端裁剪（client-level DP）或中位數；基本版也不容許斷線、抽樣
-        if (client_dp or agg_name != "fedavg" or frac < 1 or float(cfg.get("dropout-rate", 0.0)) > 0
+        if (client_dp or agg_name != "fedavg" or frac < 1
                 or int(cfg.get("upload-bits", 32)) < 32 or bool(cfg.get("collusion-filter", False))):
             raise ValueError("secure-agg 只能搭配 aggregator='fedavg'、client-fraction=1、不開 client-level DP、"
-                             "dropout-rate=0、upload-bits=32、collusion-filter=false（可以和 record-level DP 一起用）")
+                             "upload-bits=32、collusion-filter=false（可以和 record-level DP 一起用）")
         provision_agreement_keys(str(cfg.get("key-dir", "keys")), num_clients)
     strategy = GuardedStrategy(strategy, priv if sign else None, vd_keys if verify else None,
                                float(cfg.get("tamper-rate", 0.0)), int(cfg["seed"]), logger.on_security,

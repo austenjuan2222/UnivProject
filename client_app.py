@@ -13,13 +13,13 @@ import warnings
 import numpy as np
 
 import torch
-from flwr.app import Array, ArrayRecord, Context, Message, MetricRecord, RecordDict
+from flwr.app import Array, ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
 from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
-from secagg import load_agreement_keys, mask_update
+from secagg import load_agreement_keys, mask_update, reveal_seeds
 from security import (drops_out, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key,
                       poison_update, verify_model)
 from task import TrafficModel, all_finite, evaluate, make_loader, set_seed, train, unwrap
@@ -28,6 +28,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="opacus")
 logging.getLogger("flwr").setLevel(logging.INFO)
 
 DP_STATE_KEY = "dp-history"
+SECAGG_STATE_KEY = "secagg-state"
 
 app = ClientApp()
 
@@ -180,6 +181,7 @@ def train_fn(msg: Message, context: Context) -> Message:
         # 安全聚合：上傳「樣本數 × 參數 ＋ 成對遮罩」，伺服器只能還原所有 VD 的加總
         priv, pubs = load_agreement_keys(cfg["key_dir"], pid)
         masked = mask_update(arrays_of(arrays), len(d["y_train"]), pid, range(n), priv, pubs, rnd)
+        context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": -1})
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
     # Edge 運算成本：上傳量（模型參數）vs. 若把原始訓練資料傳上雲的量
     metrics["upload-bytes"] = (upload_bytes if upload_bytes is not None
@@ -193,6 +195,27 @@ def train_fn(msg: Message, context: Context) -> Message:
                else load_vd_key(cfg["key_dir"], pid))  # 只讀自己的金鑰
         attach_update_tag(content, key, rnd, pid)
     return Message(content=content, reply_to=msg)
+
+
+@app.query()
+def secagg_recover_fn(msg: Message, context: Context) -> Message:
+    """安全聚合斷線復原：交出自己和斷線 VD 之間的成對種子，讓伺服器扣掉那些沒抵銷的遮罩。"""
+    pid = int(context.node_config["partition-id"])
+    n = int(context.node_config["num-partitions"])
+    q = msg.content["secagg"]
+    rnd, dropped = int(q["round"]), sorted({int(j) for j in q["dropped"]})
+    st = context.state[SECAGG_STATE_KEY] if SECAGG_STATE_KEY in context.state else None
+    # 限制惡意伺服器：只回答自己這一輪真的送過遮罩的請求、每輪只回答一次、自己不能在斷線名單裡、
+    # 在線 VD 至少 2/3（伺服器不能謊稱大多數 VD 斷線來解開少數幾台的遮罩）
+    if (st is None or int(st["masked-round"]) != rnd or int(st["revealed-round"]) == rnd or pid in dropped
+            or any(not 0 <= j < n for j in dropped) or 3 * (n - len(dropped)) < 2 * n):
+        raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪的斷線復原請求")
+    # shortcut: 伺服器仍可謊稱「某一台」斷線而解開它的遮罩；完整 SecAgg+ 用雙重遮罩＋秘密分享防止
+    context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": rnd})
+    priv, pubs = load_agreement_keys(str(context.run_config.get("key-dir", "keys")), pid)
+    seeds = reveal_seeds(pid, dropped, priv, pubs, rnd)
+    return Message(content=RecordDict({"secagg": ConfigRecord(
+        {"pid": pid, "dropped": list(seeds), "seeds": list(seeds.values())})}), reply_to=msg)
 
 
 @app.evaluate()

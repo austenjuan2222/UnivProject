@@ -5,7 +5,8 @@
 i < j 時 i 加上 r_ij、j 減去 r_ij，加總時全部抵銷。每輪遮罩不同（種子含輪次）。
 
 限制（如實記錄）：
-- 這是基本版：有 VD 在遮罩後斷線，遮罩就無法抵銷（完整的 SecAgg+ 用秘密分享處理）。
+- 斷線復原：在線 VD 交出和斷線 VD 之間的成對種子，伺服器扣掉這些遮罩（reveal_seeds、drop_correction）。
+  這是簡化版：沒有雙重遮罩與秘密分享，若斷線 VD 的更新事後又送到，伺服器就看得到它（完整的 SecAgg+ 解決這點）。
 - 伺服器看不到個別更新，所以不能和「伺服器端裁剪的 client-level DP」或中位數聚合一起用；
   可以和 record-level DP（在 VD 本地加噪）一起用。
 - 用 float64 加遮罩示範；正式實作在有限體上做整數運算，抵銷才會完全精確。
@@ -75,5 +76,21 @@ def mask_update(update: dict, n: int, me: int, pids, my_priv, pubs: dict, rnd: i
     return out
 
 
-def unmask_sum(masked: list[dict], total_n: float) -> dict:
-    return {k: sum(m[k] for m in masked) / total_n for k in masked[0]}
+def reveal_seeds(me: int, dropped, my_priv, pubs: dict, rnd: int) -> dict[int, str]:
+    """斷線復原：還在線的 VD 交出自己和每個斷線 VD 之間的成對種子（只有這幾對，伺服器還是解不開在線 VD 的遮罩）。"""
+    return {int(j): pair_seed(my_priv, pubs[int(j)], me, int(j), rnd).hex() for j in dropped if int(j) != me}
+
+
+def drop_correction(revealed: dict, like: dict) -> dict:
+    """revealed[i][j] = VD i 交出的 (i, j) 種子；回傳在線 VD 為了斷線 VD 加上、卻沒被抵銷的遮罩總和。"""
+    out = {k: np.zeros_like(v, dtype=np.float64) for k, v in like.items()}
+    for i, seeds in revealed.items():
+        for j, seed in seeds.items():
+            sign = 1.0 if int(i) < int(j) else -1.0
+            for idx, k in enumerate(sorted(out)):
+                out[k] += sign * _mask(bytes.fromhex(seed) + idx.to_bytes(4, "little"), out[k].shape)
+    return out
+
+
+def unmask_sum(masked: list[dict], total_n: float, correction: dict | None = None) -> dict:
+    return {k: (sum(m[k] for m in masked) - (correction[k] if correction else 0)) / total_n for k in masked[0]}

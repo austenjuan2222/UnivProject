@@ -18,7 +18,7 @@ from flwr.serverapp.strategy import Strategy
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from secagg import unmask_sum
+from secagg import drop_correction, unmask_sum
 from security import sign_model, sign_update, tamper, update_digest, verify_update
 
 AUTH = "auth"
@@ -110,13 +110,14 @@ class CollusionFilter:
         return {p for p, s in means.items() if s > med + self.z * mad}
 
 
-def secure_average(contents: list[RecordDict], expected: int) -> ArrayRecord | None:
-    """安全聚合：加總遮罩後的更新再除以總樣本數。少了任何 VD，遮罩無法抵銷，回傳 None 放棄這一輪。"""
-    if len(contents) != expected or not contents:
+def secure_average(contents: list[RecordDict], expected: int, revealed: dict | None = None) -> ArrayRecord | None:
+    """安全聚合：加總遮罩後的更新再除以總樣本數。少了 VD 時，需要在線 VD 交出的成對種子（revealed）
+    才能扣掉沒抵銷的遮罩；拿不到就回傳 None 放棄這一輪。"""
+    if not contents or (len(contents) != expected and revealed is None):
         return None
     masked = [arrays_of(c["arrays"]) for c in contents]
     total = sum(float(c["metrics"]["num-examples"]) for c in contents)
-    avg = unmask_sum(masked, total)
+    avg = unmask_sum(masked, total, drop_correction(revealed, masked[0]) if revealed else None)
     return _array_record({k: avg[k].astype(np.float32) for k in masked[0]})
 
 
@@ -141,6 +142,7 @@ class GuardedStrategy(Strategy):
         self.replay_rate = replay_rate
         self._last: dict = {}  # 每個 VD 上一輪的訊息（模擬重送用）
         self._global: dict = {}
+        self._grid: Grid | None = None
 
     def _sign(self, messages: Iterable[Message], arrays: ArrayRecord, rnd: int) -> list[Message]:
         messages = list(messages)
@@ -153,6 +155,7 @@ class GuardedStrategy(Strategy):
     def configure_train(self, server_round: int, arrays: ArrayRecord, config: ConfigRecord,
                         grid: Grid) -> Iterable[Message]:
         self._global = arrays_of(arrays)
+        self._grid = grid  # 安全聚合斷線復原時要再問一次在線 VD
         return self._sign(self.inner.configure_train(server_round, arrays, config, grid), arrays, server_round)
 
     def aggregate_train(self, server_round: int, replies: Iterable[Message]
@@ -181,7 +184,9 @@ class GuardedStrategy(Strategy):
         if not kept:
             return None, None  # 這一輪沒有可信的更新：維持原本的全域模型
         if self.secure_agg_clients:
-            arrays = secure_average([m.content for m in kept], self.secure_agg_clients)
+            revealed = self._recover(server_round, kept) if len(kept) < self.secure_agg_clients else None
+            stats["secagg_recovered"] = int(revealed is not None)
+            arrays = secure_average([m.content for m in kept], self.secure_agg_clients, revealed)
             stats["secagg_failed"] = int(arrays is None)
             if self.on_round:
                 self.on_round(server_round, stats)
@@ -189,6 +194,23 @@ class GuardedStrategy(Strategy):
             _, metrics = self.inner.aggregate_train(server_round, kept)
             return arrays, metrics
         return self.inner.aggregate_train(server_round, kept)
+
+    def _recover(self, rnd: int, kept: list[Message]) -> dict | None:
+        """向還在線的 VD 要它們和斷線 VD 之間的成對種子；任何一台沒回應就放棄（回傳 None）。"""
+        alive = {int(m.content["metrics"]["partition-id"]): m.metadata.src_node_id for m in kept}
+        dropped = sorted(set(range(self.secure_agg_clients)) - set(alive))
+        if self._grid is None or not dropped:
+            return None
+        q = RecordDict({"secagg": ConfigRecord({"dropped": dropped, "round": int(rnd)})})
+        replies = list(self._grid.send_and_receive(
+            [Message(content=q, message_type="query", dst_node_id=n) for n in alive.values()], timeout=120))
+        revealed = {}
+        for r in replies:
+            if r.has_error():
+                continue
+            c = r.content["secagg"]
+            revealed[int(c["pid"])] = dict(zip((int(j) for j in c["dropped"]), (str(s) for s in c["seeds"])))
+        return revealed if set(revealed) == set(alive) else None
 
     def configure_evaluate(self, server_round: int, arrays: ArrayRecord, config: ConfigRecord,
                            grid: Grid) -> Iterable[Message]:

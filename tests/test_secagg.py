@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from secagg import load_agreement_keys, mask_update, provision_agreement_keys, unmask_sum
+from secagg import drop_correction, load_agreement_keys, mask_update, provision_agreement_keys, reveal_seeds, unmask_sum
 
 SHAPES = {"w": (3, 2), "b": (3,)}
 
@@ -50,6 +50,24 @@ class SecAggTest(unittest.TestCase):
         masked = [self._masked(p, _update(0.2), 10) for p in self.pids[:3]]  # VD 3 斷線
         avg = unmask_sum(masked, 30)
         self.assertGreater(np.abs(avg["w"] - 0.2).max(), 0.5)  # 基本版不支援斷線（需 SecAgg+ 的秘密分享）
+
+    def test_survivors_reveal_seeds_so_dropped_vd_masks_cancel(self):
+        ups = {p: _update(0.1 * (p + 1)) for p in self.pids}
+        alive = self.pids[:3]  # VD 3 遮罩後斷線
+        masked = [self._masked(p, ups[p], 10) for p in alive]
+        revealed = {}
+        for p in alive:
+            priv, pubs = load_agreement_keys(self.dir, p)
+            revealed[p] = reveal_seeds(p, [3], priv, pubs, 1)
+        avg = unmask_sum(masked, 30, drop_correction(revealed, masked[0]))
+        for k in SHAPES:
+            expect = sum(ups[p][k].astype(np.float64) for p in alive) / 3
+            np.testing.assert_allclose(avg[k], expect, rtol=0, atol=1e-6)
+
+    def test_revealed_seeds_only_cover_dropped_pairs(self):
+        priv, pubs = load_agreement_keys(self.dir, 0)
+        self.assertEqual(set(reveal_seeds(0, [2, 3], priv, pubs, 1)), {2, 3})
+        self.assertEqual(reveal_seeds(0, [0], priv, pubs, 1), {})  # 不會交出自己
 
     def test_pair_seed_is_symmetric(self):
         from secagg import pair_seed
