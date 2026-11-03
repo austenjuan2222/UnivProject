@@ -62,6 +62,14 @@ def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: 
     return keep, {"n_tampered": n_tampered, "n_rejected": n_rejected, "audit": audit}
 
 
+def update_delta(local: dict, global_: dict) -> np.ndarray | None:
+    """VD 上傳減全域模型，攤平成一條向量；參數名稱、形狀不符或含 NaN／inf 時回傳 None。"""
+    if local.keys() != global_.keys() or any(local[k].shape != global_[k].shape for k in local):
+        return None
+    d = np.concatenate([np.ravel(local[k] - global_[k]) for k in global_])
+    return d if np.isfinite(d).all() else None
+
+
 class CollusionFilter:
     """跨輪偵測串通（概念同 FoolsGold，Fung et al. 2018）：每輪算每個 VD 更新量和其他 VD 的最大餘弦相似度，
     跨輪平均後，明顯高於多數 VD 的（中位數 + z × 1.4826 × MAD）就標記。單輪看不出來的小幅同向偏移，
@@ -80,6 +88,8 @@ class CollusionFilter:
             sim = m @ m.T
             np.fill_diagonal(sim, -np.inf)
             for p, s in zip(pids, sim.max(axis=1)):
+                if not np.isfinite(s):
+                    continue
                 self.total[p] = self.total.get(p, 0.0) + float(s)
                 self.count[p] = self.count.get(p, 0) + 1
         return self.flagged()
@@ -149,10 +159,12 @@ class GuardedStrategy(Strategy):
             self.on_audit(audit)
         kept = [m for m, k in zip(ok_replies, keep) if k]
         if self.collusion_filter is not None and kept:
+            deltas = {id(m): update_delta(arrays_of(m.content["arrays"]), self._global) for m in kept}
+            bad = sum(d is None for d in deltas.values())
+            stats["n_rejected"] = stats.get("n_rejected", 0) + bad  # 形狀不符或含 NaN／inf：不聚合也不計分
+            kept = [m for m in kept if deltas[id(m)] is not None]
             pid = {id(m): int(m.content["metrics"]["partition-id"]) for m in kept}
-            flagged = self.collusion_filter.update({pid[id(m)]: np.concatenate(
-                [np.ravel(v - self._global[k]) for k, v in arrays_of(m.content["arrays"]).items()])
-                for m in kept})
+            flagged = self.collusion_filter.update({pid[id(m)]: deltas[id(m)] for m in kept})
             kept = [m for m in kept if pid[id(m)] not in flagged]
             stats["flagged"] = ";".join(str(p) for p in sorted(flagged))
         if self.on_round:

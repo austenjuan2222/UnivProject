@@ -99,3 +99,11 @@ class CollusionFilterTest(unittest.TestCase):
         for _ in range(5):
             flagged = f.update(self._round(rng, k=0))
         self.assertEqual(flagged, set())
+
+    def test_malformed_or_nonfinite_update_is_rejected_not_raised(self):
+        from guard import update_delta
+        g = {"w": np.zeros((2, 2), dtype=np.float32)}
+        self.assertIsNone(update_delta({"w": np.zeros(3, dtype=np.float32)}, g))
+        self.assertIsNone(update_delta({"x": np.zeros((2, 2), dtype=np.float32)}, g))
+        self.assertIsNone(update_delta({"w": np.full((2, 2), np.nan, dtype=np.float32)}, g))
+        self.assertEqual(update_delta({"w": np.ones((2, 2), dtype=np.float32)}, g).shape, (4,))
