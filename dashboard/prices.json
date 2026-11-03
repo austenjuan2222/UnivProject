@@ -1,0 +1,11 @@
+{
+  "_note": "美元 / 每百萬 token 的估算值，只用來在儀表板上顯示大概花費；請依 Anthropic 官方定價自行修改。依模型名稱包含的關鍵字比對（由上往下第一個符合的）。cache_read / cache_write 為相對 input 的倍率。",
+  "models": [
+    {"match": "opus",   "input": 5.0, "output": 25.0},
+    {"match": "sonnet", "input": 3.0, "output": 15.0},
+    {"match": "haiku",  "input": 1.0, "output": 5.0},
+    {"match": "",       "input": 3.0, "output": 15.0}
+  ],
+  "cache_read": 0.1,
+  "cache_write": 1.25
+}

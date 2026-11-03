@@ -1,5 +1,7 @@
 # 智慧交通可信任聯邦式學習（Flower + Opacus）
 
+> **即時儀表板**：`python dashboard/server.py` 搭配 `python scripts/run_experiments.py --dashboard`，即時看各 VD 的訓練進度、ε 與 Claude Code 用量。說明見 [dashboard/README.md](dashboard/README.md)。
+
 以**高公局國道 VD（車輛偵測器）真實資料**做 5 分鐘車速預測：每個 VD 是一個聯邦 client，
 資料不出端；client 端以 **DP-SGD（Opacus）** 訓練，並正確累計、輸出各 client 的隱私預算 ε。
 同一套程式碼可切換成**無 DP 對照組**，一鍵跑完並畫比較圖。

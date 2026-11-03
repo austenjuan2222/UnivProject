@@ -17,6 +17,7 @@ from flwr.app import Array, ArrayRecord, Context, Message, MetricRecord, RecordD
 from flwr.clientapp import ClientApp
 
 from compress import quantize_update
+from dashboard_events import Emitter, Throttle
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
 from secagg import load_agreement_keys, mask_update
@@ -68,6 +69,7 @@ def _cfg(context: Context) -> dict:
         "secure_agg": bool(c.get("secure-agg", False)),
         "upload_bits": int(c.get("upload-bits", 32)),
         "update_auth": str(c.get("update-auth", "hmac")),
+        "dashboard_events": str(c.get("dashboard-events", "")),
     }
 
 
@@ -100,7 +102,19 @@ def _dp_history(context: Context):
     return {k: list(prev[k]) for k in ("sigma", "q", "steps")} if prev is not None else None
 
 
-def _dp_train(model, optimizer, loader, cfg: dict, prev, epochs: int):
+def _progress(ev: Emitter, pid: int, rnd: int, phase: str):
+    """回傳給 task.train 的 on_step：節流後寫 progress 事件（儀表板上「線跑到哪」）。"""
+    if not ev.enabled:
+        return None
+    th = Throttle(parts=20)
+
+    def on_step(step, total, run_loss):
+        if th.due(step, total):
+            ev.emit("progress", pid=pid, round=rnd, phase=phase, step=step, total=total, loss=run_loss)
+    return on_step
+
+
+def _dp_train(model, optimizer, loader, cfg: dict, prev, epochs: int, on_step=None):
     """DP-SGD 訓練 epochs 個 epoch；回傳（模型, loss, 新歷史, 累計 ε, 步數, 取樣率）。"""
     from opacus import PrivacyEngine
 
@@ -114,7 +128,7 @@ def _dp_train(model, optimizer, loader, cfg: dict, prev, epochs: int):
     # Poisson 取樣的真實機率（= 1/批次數）；Opacus 內部 accountant 用 1/len(loader)，
     # 少數 n 下會略大（較保守），這裡用真實值。
     sample_rate = float(loader.sample_rate)
-    loss, steps = train(model, loader, optimizer, epochs, loss=cfg["loss"])
+    loss, steps = train(model, loader, optimizer, epochs, loss=cfg["loss"], on_step=on_step)
     hist = append_history(prev, cfg["sigma"], sample_rate, steps)
     return model, loss, hist, compute_epsilon(history_tuples(hist), cfg["delta"]), steps, sample_rate
 
@@ -124,7 +138,9 @@ def train_fn(msg: Message, context: Context) -> Message:
     cfg = _cfg(context)
     pid, d = _client_data(context, cfg)
     rnd = int(msg.content["config"]["server-round"])
+    ev = Emitter(cfg["dashboard_events"])
     if drops_out(cfg["seed"], pid, rnd, cfg["dropout_rate"]):
+        ev.emit("dropout", pid=pid, round=rnd)
         raise RuntimeError(f"模擬 VD {pid} 在第 {rnd} 輪斷線")  # 伺服器會收到錯誤回覆並略過這個 VD
     _check_global_signature(cfg, msg, rnd)
     set_seed(cfg["seed"] + 1000 * pid + rnd)
@@ -136,17 +152,20 @@ def train_fn(msg: Message, context: Context) -> Message:
                          seed=cfg["seed"] + 1000 * pid + rnd)
     # 每個 client 都要有同一組 metric 鍵，Flower 才能彙整（diverged 只在發散時設成 1）
     metrics = {"num-examples": len(d["y_train"]), "round": rnd, "partition-id": pid, "diverged": 0}
+    ev.emit("train_start", pid=pid, round=rnd, n=len(d["y_train"]), dp=cfg["use_dp"],
+            sigma=cfg["sigma"] if cfg["use_dp"] else 0.0)
+    on_step = _progress(ev, pid, rnd, "train")
 
     if cfg["use_dp"]:
         model, loss, hist, eps, steps, sample_rate = _dp_train(
-            model, optimizer, loader, cfg, _dp_history(context), cfg["epochs"])
+            model, optimizer, loader, cfg, _dp_history(context), cfg["epochs"], on_step)
         context.state[DP_STATE_KEY] = MetricRecord(hist)
         metrics["epsilon"] = eps
         metrics["dp-steps"] = int(steps)
         metrics["sample-rate"] = sample_rate
     else:
         loss, steps = train(model, loader, optimizer, cfg["epochs"], loss=cfg["loss"],
-                            grad_clip=cfg["nodp_grad_clip"])
+                            grad_clip=cfg["nodp_grad_clip"], on_step=on_step)
 
     if not all_finite(model):
         # 本地訓練發散（例如沒有逐樣本裁剪時，標準差很小的 VD 遇到壅塞，標準化後輸入達 −20 以上，
@@ -185,6 +204,11 @@ def train_fn(msg: Message, context: Context) -> Message:
     # 原始資料量以「訓練期每 5 分鐘一筆車速」計（float32）；不含輸入視窗的重複
     metrics["raw-bytes"] = int(len(d["y_train"]) * 4)
     metrics["train-seconds"] = time.perf_counter() - t0
+    ev.emit("train_end", pid=pid, round=rnd, loss=metrics["train-loss"], eps=metrics.get("epsilon"),
+            local_mae=metrics["local-mae-kmh"], upload_bytes=metrics["upload-bytes"],
+            raw_bytes=metrics["raw-bytes"], seconds=metrics["train-seconds"],
+            diverged=metrics["diverged"], attacker=is_attacker(pid, n, cfg["attack_clients"]),
+            secure_agg=cfg["secure_agg"], bits=cfg["upload_bits"])
     content = RecordDict({"arrays": arrays, "metrics": MetricRecord(metrics)})
     if cfg["verify_updates"]:
         key = (load_vd_signing_key(cfg["key_dir"], pid) if cfg["update_auth"] == "ed25519"
@@ -210,6 +234,8 @@ def evaluate_fn(msg: Message, context: Context) -> Message:
         "mse-kmh": r["mse_kmh"],
         "naive-mae-kmh": r["naive_mae_kmh"],
     }
+    Emitter(cfg["dashboard_events"]).emit("eval", pid=pid, round=rnd, mae=r["mae_kmh"],
+                                          naive=r["naive_mae_kmh"])
     if cfg["ft_epochs"] > 0 and rnd == cfg["rounds"]:
         metrics.update(_finetune(model, d, cfg, context, pid))
     return Message(content=RecordDict({"metrics": MetricRecord(metrics)}), reply_to=msg)

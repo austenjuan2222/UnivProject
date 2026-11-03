@@ -17,6 +17,7 @@ from flwr.serverapp.strategy import (DifferentialPrivacyServerSideAdaptiveClippi
                                      DifferentialPrivacyServerSideFixedClipping, FedAvg, FedMedian,
                                      FedTrimmedAvg)
 
+from dashboard_events import Emitter, copy_since
 from data import n_calendar
 from guard import GuardedStrategy
 from secagg import provision_agreement_keys
@@ -29,6 +30,20 @@ from task import TrafficModel, set_seed
 logging.getLogger("flwr").setLevel(logging.INFO)
 
 app = ServerApp()
+
+
+class _LiveStrategy(GuardedStrategy):
+    """在最外層多送「輪次開始」事件給即時儀表板（其他行為完全同 GuardedStrategy）。"""
+
+    def __init__(self, *args, emitter: Emitter, num_rounds: int, **kw):
+        super().__init__(*args, **kw)
+        self._ev, self._num_rounds = emitter, num_rounds
+
+    def configure_train(self, server_round, arrays, config, grid):
+        msgs = list(super().configure_train(server_round, arrays, config, grid))
+        self._ev.emit("round_start", round=server_round, rounds=self._num_rounds,
+                      pids=len(msgs), signed=self._priv is not None)
+        return msgs
 
 
 def _versions() -> dict:
@@ -102,6 +117,33 @@ def main(grid: Grid, context: Context) -> None:
 
     _check_num_nodes(grid, num_clients)
 
+    # 即時儀表板（dashboard-events 空字串 = 關閉）
+    ev = Emitter(str(cfg.get("dashboard-events", "")))
+    ev_offset = ev.size()
+    ev.emit("run_start", run=run_dir.name, rounds=num_rounds,
+            clients=[{"pid": p, "vdid": vdids.get(p, f"VD-{p}")} for p in range(num_clients)],
+            use_dp=bool(cfg.get("use-dp")), sigma=float(cfg.get("noise-multiplier", 0.0)),
+            delta=float(cfg["target-delta"]), client_dp=client_dp,
+            aggregator=str(cfg.get("aggregator", "fedavg")),
+            verify=bool(cfg.get("verify-updates", False)), sign=bool(cfg.get("sign-models", False)),
+            secure_agg=bool(cfg.get("secure-agg", False)), attack_clients=int(cfg.get("attack-clients", 0)))
+
+    def _on_train(replies):
+        agg = logger.on_train(replies)
+        rnd = int(replies[0]["round"]) if replies else 0
+        ev.emit("round_train", round=rnd, n=len(replies), **agg)
+        return agg
+
+    def _on_eval(replies):
+        agg = logger.on_eval(replies)
+        rnd = int(replies[0]["round"]) if replies else 0
+        ev.emit("round_eval", round=rnd, n=len(replies), **agg)
+        return agg
+
+    def _on_security(rnd, stats):
+        logger.on_security(rnd, stats)
+        ev.emit("security", round=int(rnd), **{k: v for k, v in stats.items() if k != "audit"})
+
     # 聚合方式：fedavg（加權平均）、median（逐參數中位數）、trimmed（去掉頭尾各 20% 再平均）
     # 中位數／截尾平均可抵抗少數被入侵 VD 的惡意更新（講義：IoT 攻擊面、botnet）
     agg_name = str(cfg.get("aggregator", "fedavg"))
@@ -115,9 +157,9 @@ def main(grid: Grid, context: Context) -> None:
         min_evaluate_nodes=num_clients,
         min_available_nodes=num_clients,
         train_metrics_aggr_fn=lambda replies, _key: MetricRecord(
-            logger.on_train([dict(r["metrics"]) for r in replies])),
+            _on_train([dict(r["metrics"]) for r in replies])),
         evaluate_metrics_aggr_fn=lambda replies, _key: MetricRecord(
-            logger.on_eval([dict(r["metrics"]) for r in replies])),
+            _on_eval([dict(r["metrics"]) for r in replies])),
     )
     if client_dp and client_dp["adaptive"]:
         # 自適應裁剪（Andrew et al. 2021）：每輪依「被裁剪的 client 比例」調整裁剪值，目標中位數；
@@ -150,9 +192,10 @@ def main(grid: Grid, context: Context) -> None:
             raise ValueError("secure-agg 只能搭配 aggregator='fedavg'、client-fraction=1、不開 client-level DP、"
                              "dropout-rate=0、upload-bits=32（可以和 record-level DP 一起用）")
         provision_agreement_keys(str(cfg.get("key-dir", "keys")), num_clients)
-    strategy = GuardedStrategy(strategy, priv if sign else None, vd_keys if verify else None,
-                               float(cfg.get("tamper-rate", 0.0)), int(cfg["seed"]), logger.on_security,
-                               secure_agg_clients=num_clients if secure_agg else 0, on_audit=logger.on_audit)
+    strategy = _LiveStrategy(strategy, priv if sign else None, vd_keys if verify else None,
+                             float(cfg.get("tamper-rate", 0.0)), int(cfg["seed"]), _on_security,
+                             secure_agg_clients=num_clients if secure_agg else 0, on_audit=logger.on_audit,
+                             emitter=ev, num_rounds=num_rounds)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))
@@ -161,4 +204,7 @@ def main(grid: Grid, context: Context) -> None:
                             train_config=ConfigRecord({}), evaluate_config=ConfigRecord({}))
 
     torch.save(result.arrays.to_torch_state_dict(), run_dir / "final_model.pt")
+    ev.emit("run_end", run=run_dir.name)
+    if ev.enabled:
+        copy_since(ev.path, ev_offset, run_dir / "events.jsonl")  # 留一份，可用 --replay 重播
     print(f"\n實驗紀錄已寫到 {run_dir}")

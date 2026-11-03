@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UNIVPROJECT / FL LIVE</title>
+<style>
+  :root{
+    --bg:#04060a; --panel:#070b10; --line:#14202a; --dim:#4b5f6b; --text:#a9c1b5; --hi:#e9fff4;
+    --green:#39ff88; --cyan:#3ee8ff; --mag:#ff3da8; --red:#ff4d5e; --amber:#ffb020; --white:#f2fff8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font:12px/1.35 "JetBrains Mono","Cascadia Mono",Consolas,ui-monospace,monospace;overflow:hidden}
+  header{height:38px;display:flex;align-items:center;gap:18px;padding:0 14px;border-bottom:1px solid var(--line);
+    letter-spacing:.06em;white-space:nowrap}
+  header .brand{color:var(--hi);font-weight:700}
+  header .brand b{color:var(--green)}
+  header .kv{color:var(--dim)} header .kv span{color:var(--hi)}
+  header .grow{flex:1}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);margin-right:6px;vertical-align:middle}
+  .dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+  main{display:grid;height:calc(100% - 38px);grid-template-columns:300px 1fr 330px;grid-template-rows:1fr 250px;
+    gap:1px;background:var(--line)}
+  .panel{background:var(--panel);position:relative;overflow:hidden;display:flex;flex-direction:column;min-height:0}
+  .ph{display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--line);
+    color:var(--dim);letter-spacing:.12em;font-size:11px;text-transform:uppercase}
+  .ph b{color:var(--hi);font-weight:600}
+  .pb{padding:8px 10px;overflow:auto;flex:1;min-height:0}
+  #hubWrap{grid-column:2;grid-row:1;background:var(--bg)}
+  #hub{position:absolute;inset:0;width:100%;height:100%}
+  #hubTag{position:absolute;left:12px;top:8px;color:var(--dim);letter-spacing:.14em;font-size:11px;pointer-events:none}
+  #hubTag b{color:var(--hi)}
+  #legend{position:absolute;left:12px;bottom:8px;display:flex;gap:12px;font-size:10px;color:var(--dim);pointer-events:none}
+  #legend i{display:inline-block;width:14px;height:2px;margin-right:5px;vertical-align:middle}
+  #banner{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;
+    color:var(--dim);letter-spacing:.2em;pointer-events:none;text-align:center}
+  #banner b{color:var(--hi);font-size:16px;margin-bottom:8px}
+  table{width:100%;border-collapse:collapse}
+  td,th{padding:3px 4px;text-align:right;white-space:nowrap}
+  th{color:var(--dim);font-weight:400;font-size:10px;letter-spacing:.08em;border-bottom:1px solid var(--line)}
+  td:first-child,th:first-child{text-align:left}
+  tr.vd td{border-bottom:1px solid #0d151c}
+  .bar{height:3px;background:#0f1a22;margin-top:2px;position:relative}
+  .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--green)}
+  .st{font-size:10px;padding:0 4px;border:1px solid currentColor;border-radius:2px}
+  .metric{margin-bottom:10px}
+  .metric .mh{display:flex;justify-content:space-between;color:var(--dim);font-size:10px;letter-spacing:.1em}
+  .metric .mv{color:var(--hi);font-size:20px;font-weight:600}
+  .metric canvas{width:100%;height:46px;display:block}
+  .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}
+  .tile{border:1px solid var(--line);padding:5px 6px}
+  .tile .k{color:var(--dim);font-size:9px;letter-spacing:.12em}
+  .tile .v{color:var(--hi);font-size:15px}
+  #log{font-size:11px;white-space:pre;line-height:1.45}
+  #log .t{color:#2f4350}
+  #ccLanes{position:absolute;inset:28px 0 0 0;width:100%;height:calc(100% - 28px)}
+  .tb{display:flex;align-items:center;gap:6px;font-size:10px;margin:2px 0}
+  .tb span:first-child{width:86px;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+  .tb .b{flex:1;height:4px;background:#0f1a22;position:relative}
+  .tb .b i{position:absolute;left:0;top:0;bottom:0;background:var(--cyan)}
+  .tb span:last-child{width:34px;text-align:right;color:var(--hi)}
+  .muted{color:var(--dim)}
+  ::-webkit-scrollbar{width:6px;height:6px} ::-webkit-scrollbar-thumb{background:#14202a}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">UNIVPROJECT <b>/</b> FL&nbsp;LIVE</div>
+  <div class="kv">RUN <span id="hRun">—</span></div>
+  <div class="kv">ROUND <span id="hRound">0/0</span></div>
+  <div class="kv">MAE <span id="hMae">—</span> km/h</div>
+  <div class="kv">ε <span id="hEps">—</span></div>
+  <div class="kv">MODE <span id="hMode">—</span></div>
+  <div class="grow"></div>
+  <div class="kv">CLAUDE <span id="hCost">$0.00</span></div>
+  <div class="kv"><span class="dot" id="conn"></span><span id="hClock">--:--:--</span></div>
+</header>
+<main>
+  <section class="panel" style="grid-column:1;grid-row:1">
+    <div class="ph"><span>vd.nodes</span><b id="vdCount">0</b></div>
+    <div class="pb"><table><thead><tr><th>VD</th><th>進度</th><th>loss</th><th>ε</th><th>MAE</th></tr></thead>
+      <tbody id="vdBody"></tbody></table>
+      <div style="margin-top:12px" class="ph" ><span>security.gate</span><b id="secMode">—</b></div>
+      <div class="tiles" style="margin-top:8px">
+        <div class="tile"><div class="k">REJECTED</div><div class="v" id="sRej">0</div></div>
+        <div class="tile"><div class="k">TAMPERED</div><div class="v" id="sTam">0</div></div>
+        <div class="tile"><div class="k">DROPPED</div><div class="v" id="sDrop">0</div></div>
+        <div class="tile"><div class="k">DIVERGED</div><div class="v" id="sDiv">0</div></div>
+        <div class="tile"><div class="k">ATTACKERS</div><div class="v" id="sAtk">0</div></div>
+        <div class="tile"><div class="k">UPLOAD/VD</div><div class="v" id="sUp">—</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="hubWrap">
+    <canvas id="hub"></canvas>
+    <div id="hubTag">FEDERATED.TOPOLOGY / <b id="aggName">FEDAVG</b></div>
+    <div id="legend">
+      <span><i style="background:var(--green)"></i>本地訓練</span>
+      <span><i style="background:var(--mag)"></i>DP 加噪</span>
+      <span><i style="background:var(--cyan)"></i>上傳</span>
+      <span><i style="background:var(--white)"></i>廣播全域模型</span>
+      <span><i style="background:var(--red)"></i>斷線/拒絕</span>
+      <span><i style="background:var(--amber)"></i>發散/攻擊</span>
+    </div>
+    <div id="banner"><b>WAITING FOR RUN</b>python scripts/run_experiments.py --dashboard</div>
+  </section>
+
+  <section class="panel" style="grid-column:3;grid-row:1">
+    <div class="ph"><span>round.metrics</span><b id="rCount">0</b></div>
+    <div class="pb">
+      <div class="metric"><div class="mh"><span>GLOBAL MAE (km/h)</span><span id="mNaive">naive —</span></div>
+        <div class="mv" id="mMae">—</div><canvas id="cMae"></canvas></div>
+      <div class="metric"><div class="mh"><span>RMSE (km/h)</span><span></span></div>
+        <div class="mv" id="mRmse">—</div><canvas id="cRmse"></canvas></div>
+      <div class="metric"><div class="mh"><span>TRAIN LOSS</span><span id="mDiv"></span></div>
+        <div class="mv" id="mLoss">—</div><canvas id="cLoss"></canvas></div>
+      <div class="metric"><div class="mh"><span>PRIVACY ε (max, δ=<span id="mDelta">—</span>)</span><span id="mSigma"></span></div>
+        <div class="mv" id="mEps">—</div><canvas id="cEps"></canvas></div>
+      <div class="metric"><div class="mh"><span>ROUND TIME (s, slowest VD)</span><span></span></div>
+        <div class="mv" id="mSec">—</div><canvas id="cSec"></canvas></div>
+    </div>
+  </section>
+
+  <section class="panel" style="grid-column:1;grid-row:2">
+    <div class="ph"><span>event.stream</span><b id="evRate">0/s</b></div>
+    <div class="pb"><div id="log"></div></div>
+  </section>
+
+  <section class="panel" style="grid-column:2;grid-row:2">
+    <div class="ph"><span>claude.code / tool calls</span><b id="ccCalls">0 calls</b></div>
+    <canvas id="ccLanes"></canvas>
+  </section>
+
+  <section class="panel" style="grid-column:3;grid-row:2">
+    <div class="ph"><span>claude.code / cost</span><b id="ccSub">0 sub</b></div>
+    <div class="pb">
+      <div class="tiles">
+        <div class="tile"><div class="k">INPUT</div><div class="v" id="ccIn">0</div></div>
+        <div class="tile"><div class="k">OUTPUT</div><div class="v" id="ccOut">0</div></div>
+        <div class="tile"><div class="k">CACHE R/W</div><div class="v" id="ccCache">0</div></div>
+      </div>
+      <div id="ccModels" class="muted" style="margin-bottom:6px"></div>
+      <div id="ccTools"></div>
+      <div class="muted" style="margin-top:6px;font-size:10px">花費為估算（dashboard/prices.json）。監控本身 0 token。</div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const COL = {green:[57,255,136], cyan:[62,232,255], mag:[255,61,168], red:[255,77,94], amber:[255,176,32],
+             white:[242,255,248], dim:[75,95,107]};
+const rgba = (c,a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const fmt = (v,d=2) => (v===null||v===undefined||Number.isNaN(v)) ? "—" : Number(v).toFixed(d);
+const fmtK = v => v>=1e6 ? (v/1e6).toFixed(2)+"M" : v>=1e3 ? (v/1e3).toFixed(1)+"k" : String(v|0);
+const now = () => performance.now()/1000;
+
+// ───────────────────────── 狀態 ─────────────────────────
+let S, CC, PRICES = null;
+function resetRun(){
+  S = {run:null, rounds:0, round:0, clients:[], metrics:[], cfg:{}, ended:false,
+       sec:{rej:0,tam:0,drop:0,div:0}, bcastT:-9, pulseT:-9, alarmT:-9, upBytes:null};
+}
+function resetCC(){
+  CC = {in:0,out:0,cr:0,cw:0,cost:0,calls:0,sub:0,err:0,models:{},tools:{},streaks:[]};
+}
+resetRun(); resetCC();
+fetch("/prices.json").then(r=>r.json()).then(p=>PRICES=p).catch(()=>{});
+
+function client(pid){
+  let c = S.clients[pid];
+  if(!c){ c = S.clients[pid] = {pid, vdid:`VD-${pid}`, phase:"idle", target:0, disp:0, loss:null, eps:null,
+          mae:null, localMae:null, dp:false, attacker:false, upT:-9, flashT:-9, sparks:[]}; layoutDirty = true; }
+  return c;
+}
+
+// ───────────────────────── 事件處理 ─────────────────────────
+const logLines = []; let evCount = 0;
+function log(text, color){
+  const d = new Date();
+  logLines.push(`<span class="t">${d.toTimeString().slice(0,8)}</span> <span style="color:${color||'var(--text)'}">${text}</span>`);
+  if(logLines.length > 160) logLines.splice(0, logLines.length-160);
+  logDirty = true;
+}
+function shortVd(v){ return String(v).replace(/^VD-/, "").replace(/-M-.*$/, ""); }
+
+function handle(e, live){
+  evCount++;
+  const t = live ? now() : -9;
+  switch(e.kind){
+    case "run_start":
+      resetRun(); S.run = e.run; S.rounds = e.rounds; S.cfg = e;
+      (e.clients||[]).forEach(c => { client(c.pid).vdid = c.vdid; });
+      layoutDirty = true;
+      log(`RUN ${e.run} · ${e.rounds} rounds · ${(e.clients||[]).length} VD · ${e.use_dp?`DP σ=${e.sigma}`:"no DP"} · ${e.aggregator}`, "var(--hi)");
+      break;
+    case "round_start":
+      S.round = e.round; S.rounds = e.rounds || S.rounds; S.bcastT = t;
+      S.clients.forEach(c => { if(c){ c.phase = "wait"; c.target = 0; c.disp = 0; } });
+      log(`round ${e.round}/${e.rounds} · broadcast global model${e.signed?" (Ed25519 signed)":""}`, "var(--white)");
+      break;
+    case "train_start": { const c = client(e.pid); c.phase = "train"; c.target = 0; c.disp = 0; c.dp = !!e.dp; break; }
+    case "progress": { const c = client(e.pid); if(c.phase!=="train"){ c.phase="train"; }
+      c.target = e.total ? e.step/e.total : 0; if(e.loss!==null) c.loss = e.loss; if(!live) c.disp = c.target; break; }
+    case "train_end": { const c = client(e.pid);
+      c.target = 1; if(!live) c.disp = 1; c.loss = e.loss; c.eps = e.eps; c.localMae = e.local_mae; c.attacker = !!e.attacker;
+      c.phase = e.diverged ? "diverged" : (e.attacker ? "attacker" : "upload"); c.upT = t;
+      if(e.diverged){ S.sec.div++; log(`${shortVd(c.vdid)} diverged → sends global model back`, "var(--amber)"); }
+      else if(e.attacker) log(`${shortVd(c.vdid)} ⚠ malicious update (attack sim)`, "var(--amber)");
+      else log(`${shortVd(c.vdid)} upload ${(e.upload_bytes/1024).toFixed(1)}KB · loss ${fmt(e.loss,4)}${e.eps!=null?` · ε ${fmt(e.eps)}`:""}`, "var(--cyan)");
+      S.upBytes = e.upload_bytes; break; }
+    case "dropout": { const c = client(e.pid); c.phase = "drop"; c.flashT = t;
+      log(`${shortVd(c.vdid)} ✕ dropped out (round ${e.round})`, "var(--red)"); break; }
+    case "security": {
+      const r = e.n_rejected|0, ta = e.n_tampered|0;
+      S.sec.rej += r; S.sec.tam += ta; S.sec.drop += e.n_dropped|0;
+      if(r || ta){ S.alarmT = t; log(`security gate: ${r} rejected, ${ta} tampered`, "var(--red)"); }
+      break; }
+    case "round_train": {
+      S.pulseT = t;
+      const m = metricRow(e.round); Object.assign(m, {loss:e.train_loss, eps:e.epsilon_max, sec:e.train_seconds_max, div:e.n_diverged});
+      S.clients.forEach(c => { if(c && (c.phase==="upload"||c.phase==="train")) c.phase = "done"; });
+      log(`aggregate r${e.round} · ${e.n} updates · loss ${fmt(e.train_loss,4)}${e.epsilon_max!=null?` · ε_max ${fmt(e.epsilon_max)}`:""}`, "var(--green)");
+      break; }
+    case "round_eval": {
+      const m = metricRow(e.round); Object.assign(m, {mae:e.mae_kmh, rmse:e.rmse_kmh, naive:e.naive_mae_kmh});
+      log(`eval r${e.round} · MAE ${fmt(e.mae_kmh,3)} km/h (naive ${fmt(e.naive_mae_kmh,3)})`, "var(--hi)");
+      break; }
+    case "eval": { client(e.pid).mae = e.mae; break; }
+    case "run_end": S.ended = true; log(`RUN END · ${e.run}`, "var(--hi)"); break;
+    case "cc": {
+      CC.in += e.in; CC.out += e.out; CC.cr += e.cache_read; CC.cw += e.cache_write;
+      const cost = priceOf(e); CC.cost += cost;
+      const m = CC.models[e.model] = CC.models[e.model] || {tok:0, cost:0};
+      m.tok += e.in + e.out + e.cache_read + e.cache_write; m.cost += cost;
+      const tok = e.in + e.out + e.cache_write;
+      for(const name of e.tools){
+        CC.calls++; if(e.sub) CC.sub++;
+        CC.tools[name] = (CC.tools[name]||0) + 1;
+        if(live) CC.streaks.push({name, t0:t, w:Math.min(6, 0.8 + Math.log10(1+tok)), sub:e.sub});
+        if(live) log(`claude${e.sub?" [sub]":""} → ${name}`, e.sub ? "var(--mag)" : "#7fa6b8");
+      }
+      if(!e.tools.length && live && tok) CC.streaks.push({name:"(think)", t0:t, w:Math.min(6, 0.8+Math.log10(1+tok)), sub:e.sub});
+      ccDirty = true; break; }
+    case "cc_error": CC.err++; ccDirty = true; break;
+  }
+  if(e.kind !== "cc" && e.kind !== "cc_error") tableDirty = true;
+}
+function metricRow(r){
+  let m = S.metrics.find(x => x.round === r);
+  if(!m){ m = {round:r}; S.metrics.push(m); S.metrics.sort((a,b)=>a.round-b.round); }
+  metricsDirty = true; return m;
+}
+function priceOf(e){
+  if(!PRICES) return 0;
+  const name = String(e.model).toLowerCase();
+  const p = PRICES.models.find(x => name.includes(x.match)) || {input:3, output:15};
+  return (e.in*p.input + e.out*p.output + e.cache_read*p.input*PRICES.cache_read + e.cache_write*p.input*PRICES.cache_write)/1e6;
+}
+
+// ───────────────────────── 連線（SSE）─────────────────────────
+let es;
+function connect(){
+  es = new EventSource("/events");
+  es.addEventListener("snapshot", ev => {
+    resetRun(); resetCC();
+    JSON.parse(ev.data).forEach(e => handle(e, false));
+    $("conn").classList.add("on");
+  });
+  es.onmessage = ev => JSON.parse(ev.data).forEach(e => handle(e, true));
+  es.onerror = () => { $("conn").classList.remove("on"); };
+}
+connect();
+
+// ───────────────────────── 中央線束（Canvas 2D）─────────────────────────
+const hub = $("hub"), hx = hub.getContext("2d");
+let W=0, H=0, DPR=1, CX=0, CY=0, R=0, layoutDirty = true;
+const K = 46, SEG = 22;            // 每個 VD 幾條線、每條線幾段
+let bundles = [];                   // [pid] → [{pts:[[x,y]...], lag, w}]
+let rnd = (s => () => (s = (s*16807) % 2147483647) / 2147483647)(7);
+
+function resize(){
+  const r = hub.getBoundingClientRect(); DPR = Math.min(2, window.devicePixelRatio||1);
+  W = r.width; H = r.height; hub.width = W*DPR; hub.height = H*DPR; hx.setTransform(DPR,0,0,DPR,0,0);
+  layoutDirty = true;
+}
+window.addEventListener("resize", () => { resize(); resizeSmall(); });
+
+function bez(p0, p1, p2, t){ const u=1-t; return [u*u*p0[0]+2*u*t*p1[0]+t*t*p2[0], u*u*p0[1]+2*u*t*p1[1]+t*t*p2[1]]; }
+function nodePos(i, n){ const a = -Math.PI/2 + i*2*Math.PI/Math.max(1,n); return [CX+Math.cos(a)*R, CY+Math.sin(a)*R, a]; }
+
+function layout(){
+  CX = W/2; CY = H/2 + 6; R = Math.min(W, H)*0.37;
+  rnd = (s => () => (s = (s*16807) % 2147483647) / 2147483647)(7);
+  const n = S.clients.length || 0;
+  bundles = [];
+  for(let i=0;i<n;i++){
+    const [nx, ny, a] = nodePos(i, n), lines = [];
+    const px = -Math.sin(a), py = Math.cos(a);           // 垂直方向
+    for(let k=0;k<K;k++){
+      const f = (k/(K-1) - .5);                          // -0.5…0.5
+      const spread = R*(0.10 + 0.28*rnd()) * f * 2;
+      const mid = 0.35 + 0.3*rnd();
+      const c = [CX + (nx-CX)*mid + px*spread, CY + (ny-CY)*mid + py*spread];
+      const s = [nx + px*f*16 + (rnd()-.5)*6, ny + py*f*16 + (rnd()-.5)*6];
+      const ea = rnd()*Math.PI*2, er = R*0.09 + rnd()*R*0.05;
+      const e = [CX + Math.cos(ea)*er*0.35, CY + Math.sin(ea)*er*0.35];
+      const pts = []; for(let j=0;j<=SEG;j++) pts.push(bez(s, c, e, j/SEG));
+      lines.push({pts, lag: rnd()*0.18, w: 0.5 + rnd()*0.9});
+    }
+    bundles.push(lines);
+  }
+  layoutDirty = false;
+}
+
+function strokePartial(pts, from, to){
+  // 畫 pts 上 [from, to]（0…1）的部分
+  if(to <= from) return;
+  const a = from*SEG, b = to*SEG;
+  const i0 = Math.floor(a), i1 = Math.min(SEG, Math.ceil(b));
+  hx.beginPath();
+  const lerp = (i, f) => [pts[i][0] + (pts[Math.min(SEG,i+1)][0]-pts[i][0])*f, pts[i][1] + (pts[Math.min(SEG,i+1)][1]-pts[i][1])*f];
+  const p0 = lerp(i0, a-i0); hx.moveTo(p0[0], p0[1]);
+  for(let i=i0+1;i<i1;i++) hx.lineTo(pts[i][0], pts[i][1]);
+  const pe = lerp(Math.min(SEG-1, Math.floor(b)), b - Math.min(SEG-1, Math.floor(b))); hx.lineTo(pe[0], pe[1]);
+  hx.stroke();
+}
+function pointAt(pts, t){ const a = Math.max(0,Math.min(1,t))*SEG, i = Math.min(SEG-1, Math.floor(a)), f = a-i;
+  return [pts[i][0]+(pts[i+1][0]-pts[i][0])*f, pts[i][1]+(pts[i+1][1]-pts[i][1])*f]; }
+
+function phaseColor(c){
+  return {train:COL.green, upload:COL.cyan, done:COL.green, drop:COL.red, diverged:COL.amber, attacker:COL.amber,
+          wait:COL.dim, idle:COL.dim}[c.phase] || COL.dim;
+}
+
+let lastT = now();
+function frame(){
+  const t = now(), dt = Math.min(0.1, t - lastT); lastT = t;
+  if(layoutDirty) layout();
+  hx.globalCompositeOperation = "source-over";
+  hx.fillStyle = "#04060a"; hx.fillRect(0,0,W,H);
+  drawBackdrop(t);
+  const n = S.clients.length;
+  $("banner").style.display = n ? "none" : "flex";
+
+  hx.globalCompositeOperation = "lighter";
+  for(let i=0;i<n;i++){
+    const c = S.clients[i], lines = bundles[i]; if(!c || !lines) continue;
+    c.disp += (c.target - c.disp) * Math.min(1, dt*5);
+    const col = phaseColor(c);
+    // 1) 底線：整束淡淡的
+    hx.strokeStyle = rgba(c.phase==="drop" ? COL.red : COL.dim, c.phase==="drop" ? 0.10 : 0.07);
+    hx.lineWidth = 0.6;
+    for(const L of lines){ hx.beginPath(); hx.moveTo(L.pts[0][0],L.pts[0][1]); for(let j=1;j<=SEG;j++) hx.lineTo(L.pts[j][0],L.pts[j][1]); hx.stroke(); }
+
+    // 2) 進度：從 VD 往中心點亮到 disp
+    if(c.phase==="train" || c.phase==="upload" || c.phase==="done" || c.phase==="diverged" || c.phase==="attacker"){
+      const bright = c.phase==="done" ? 0.18 : 0.55;
+      for(const L of lines){
+        const p = Math.max(0, Math.min(1, c.disp*(1+L.lag) - L.lag));
+        hx.strokeStyle = rgba(col, bright*L.w); hx.lineWidth = 0.8*L.w;
+        strokePartial(L.pts, 0, p);
+        if(c.phase==="train" && p>0.01 && p<0.999){          // 線頭亮點
+          const h = pointAt(L.pts, p); hx.fillStyle = rgba(COL.white, 0.9);
+          hx.fillRect(h[0]-1, h[1]-1, 2, 2);
+          if(c.dp && Math.random() < 0.10){                   // DP 雜訊：線頭附近的洋紅色雜訊點
+            c.sparks.push({x:h[0]+(Math.random()-.5)*14, y:h[1]+(Math.random()-.5)*14, life:1});
+          }
+        }
+      }
+    }
+    // 3) 上傳：青色脈衝沿線衝進中心
+    if(c.phase==="upload" || c.phase==="attacker"){
+      const u = (t - c.upT) / 0.9;
+      if(u >= 0 && u <= 1.2){
+        hx.lineWidth = 1.4;
+        for(const L of lines){
+          const head = Math.min(1, u*(1+L.lag*0.5)), tail = Math.max(0, head-0.22);
+          hx.strokeStyle = rgba(c.phase==="attacker" ? COL.amber : COL.cyan, 0.75*L.w);
+          strokePartial(L.pts, tail, head);
+        }
+      }
+    }
+    // 4) 斷線：紅色閃爍斷續線
+    if(c.phase==="drop"){
+      const a = 0.25 + 0.25*Math.sin(t*9);
+      hx.strokeStyle = rgba(COL.red, a); hx.lineWidth = 1; hx.setLineDash([3,6]);
+      for(let k=0;k<lines.length;k+=4) strokePartial(lines[k].pts, 0, 0.55);
+      hx.setLineDash([]);
+    }
+    // DP 雜訊點
+    for(const s of c.sparks){ s.life -= dt*2.2; if(s.life>0){ hx.fillStyle = rgba(COL.mag, s.life*0.9); hx.fillRect(s.x, s.y, 1.6, 1.6); } }
+    c.sparks = c.sparks.filter(s => s.life > 0);
+  }
+  // 5) 廣播：白色從中心往外送到每個 VD（round_start）
+  const b = (t - S.bcastT)/0.8;
+  if(b >= 0 && b <= 1.15){
+    hx.lineWidth = 1.1;
+    for(const lines of bundles) for(let k=0;k<lines.length;k+=2){
+      const L = lines[k], head = 1 - Math.min(1, b*(1+L.lag)), tail = Math.min(1, head + 0.18);
+      hx.strokeStyle = rgba(COL.white, 0.5*L.w); strokePartial(L.pts, head, tail);
+    }
+  }
+  hx.globalCompositeOperation = "source-over";
+  drawHubCore(t);
+  drawNodes(t);
+  requestAnimationFrame(frame);
+}
+
+function drawBackdrop(t){
+  // 同心圓格線
+  hx.strokeStyle = "rgba(40,60,70,0.25)"; hx.lineWidth = 1;
+  for(let k=1;k<=4;k++){ hx.beginPath(); hx.arc(CX, CY, R*k/4, 0, Math.PI*2); hx.stroke(); }
+  // 外圈點陣環：已完成的輪次亮綠，目前這輪閃爍
+  const ringR = R*1.13, segs = Math.max(1, S.rounds||20), cells = 7;
+  for(let s=0;s<segs;s++){
+    const a0 = -Math.PI/2 + s*2*Math.PI/segs + 0.02, a1 = a0 + 2*Math.PI/segs - 0.04;
+    const done = s < S.round - 1 || (S.ended && s < S.round), cur = s === S.round-1 && !S.ended;
+    for(let j=0;j<cells;j++){
+      for(let q=0;q<5;q++){
+        const a = a0 + (a1-a0)*(q+0.5)/5, r = ringR + j*4;
+        let alpha = done ? 0.75 : cur ? (0.35 + 0.35*Math.sin(t*6 + j)) : 0.08;
+        if(!done && !cur && ((s*31+j*7+q*3) % 11 === 0)) alpha = 0.18;
+        hx.fillStyle = done ? rgba(COL.green, alpha) : cur ? rgba(COL.white, alpha) : rgba(COL.dim, alpha);
+        hx.fillRect(CX + Math.cos(a)*r - 1, CY + Math.sin(a)*r - 1, 2, 2);
+      }
+    }
+  }
+  // 安全警報：外圈紅色閃
+  const al = (t - S.alarmT);
+  if(al >= 0 && al < 1.2){ hx.strokeStyle = rgba(COL.red, 0.6*(1-al/1.2)); hx.lineWidth = 3;
+    hx.beginPath(); hx.arc(CX, CY, ringR+32, 0, Math.PI*2); hx.stroke(); }
+}
+
+function drawHubCore(t){
+  const r0 = R*0.13;
+  // 聚合脈衝
+  const p = (t - S.pulseT)/1.1;
+  if(p >= 0 && p < 1){ hx.strokeStyle = rgba(COL.green, 0.7*(1-p)); hx.lineWidth = 2;
+    hx.beginPath(); hx.arc(CX, CY, r0 + p*R*0.9, 0, Math.PI*2); hx.stroke(); }
+  const g = hx.createRadialGradient(CX, CY, 0, CX, CY, r0*1.6);
+  g.addColorStop(0, "rgba(57,255,136,0.20)"); g.addColorStop(1, "rgba(57,255,136,0)");
+  hx.fillStyle = g; hx.beginPath(); hx.arc(CX, CY, r0*1.6, 0, Math.PI*2); hx.fill();
+  hx.fillStyle = "#04060a"; hx.strokeStyle = "rgba(57,255,136,0.6)"; hx.lineWidth = 1;
+  hx.beginPath(); hx.arc(CX, CY, r0, 0, Math.PI*2); hx.fill(); hx.stroke();
+  // 旋轉刻度
+  hx.strokeStyle = "rgba(57,255,136,0.35)";
+  for(let k=0;k<48;k++){ const a = k*Math.PI/24 + t*0.15, l = k%4===0 ? 7 : 3;
+    hx.beginPath(); hx.moveTo(CX+Math.cos(a)*(r0+3), CY+Math.sin(a)*(r0+3));
+    hx.lineTo(CX+Math.cos(a)*(r0+3+l), CY+Math.sin(a)*(r0+3+l)); hx.stroke(); }
+  hx.textAlign = "center"; hx.fillStyle = "#e9fff4";
+  hx.font = `600 ${Math.max(12, r0*0.42)|0}px JetBrains Mono, Consolas, monospace`;
+  hx.fillText(S.rounds ? `R${S.round}/${S.rounds}` : "—", CX, CY - 2);
+  const last = [...S.metrics].reverse().find(m => m.mae != null);
+  hx.font = `${Math.max(10, r0*0.22)|0}px JetBrains Mono, Consolas, monospace`; hx.fillStyle = "#7fd9a6";
+  hx.fillText(last ? `MAE ${fmt(last.mae,2)}` : (S.cfg.aggregator||"fedavg").toUpperCase(), CX, CY + r0*0.38);
+}
+
+function drawNodes(t){
+  const n = S.clients.length;
+  hx.font = "11px JetBrains Mono, Consolas, monospace";
+  for(let i=0;i<n;i++){
+    const c = S.clients[i]; if(!c) continue;
+    const [x, y, a] = nodePos(i, n), col = phaseColor(c);
+    const pulse = c.phase==="train" ? 0.5 + 0.5*Math.sin(t*8 + i) : 1;
+    hx.fillStyle = rgba(col, 0.2*pulse); hx.beginPath(); hx.arc(x, y, 14, 0, Math.PI*2); hx.fill();
+    hx.fillStyle = rgba(col, 0.95); hx.beginPath(); hx.arc(x, y, 4.5, 0, Math.PI*2); hx.fill();
+    // ε 弧：繞著節點，ε 越大弧越長（以本次 run 的最大值為滿）
+    if(c.eps != null){
+      const maxE = Math.max(...S.clients.map(z => z && z.eps || 0), 1e-9);
+      hx.strokeStyle = rgba(COL.mag, 0.85); hx.lineWidth = 2;
+      hx.beginPath(); hx.arc(x, y, 9, -Math.PI/2, -Math.PI/2 + 2*Math.PI*Math.min(1, c.eps/maxE)); hx.stroke();
+    }
+    const out = 30, lx = x + Math.cos(a)*out, ly = y + Math.sin(a)*out;
+    hx.textAlign = Math.cos(a) > 0.3 ? "left" : Math.cos(a) < -0.3 ? "right" : "center";
+    hx.fillStyle = "#e9fff4"; hx.fillText(shortVd(c.vdid), lx, ly);
+    hx.fillStyle = rgba(col, 0.9);
+    const st = c.phase==="train" ? `${(c.disp*100)|0}%` : c.phase.toUpperCase();
+    hx.fillText(`${st}${c.loss!=null?` · ${fmt(c.loss,3)}`:""}`, lx, ly + 13);
+  }
+}
+
+// ───────────────────────── 小圖（sparkline）─────────────────────────
+const small = {};
+["cMae","cRmse","cLoss","cEps","cSec"].forEach(id => small[id] = $(id));
+function resizeSmall(){ for(const c of Object.values(small)){ const r = c.getBoundingClientRect();
+  c.width = r.width*DPR; c.height = r.height*DPR; } metricsDirty = true; resizeLanes(); }
+function spark(id, ys, color, ref){
+  const c = small[id], x = c.getContext("2d"), w = c.width, h = c.height;
+  x.clearRect(0,0,w,h);
+  const vals = ys.filter(v => v != null && isFinite(v)); if(!vals.length) return;
+  let lo = Math.min(...vals, ref ?? Infinity), hi = Math.max(...vals, ref ?? -Infinity);
+  if(hi - lo < 1e-9){ hi += 1; lo -= 1; }
+  const pad = 4*DPR, X = i => pad + (w-2*pad)*(ys.length<=1 ? 1 : i/(ys.length-1)), Y = v => h - pad - (h-2*pad)*(v-lo)/(hi-lo);
+  x.strokeStyle = "rgba(40,60,70,0.5)"; x.lineWidth = 1;
+  for(let k=0;k<=3;k++){ const yy = pad + (h-2*pad)*k/3; x.beginPath(); x.moveTo(0,yy); x.lineTo(w,yy); x.stroke(); }
+  if(ref != null){ x.setLineDash([4*DPR,4*DPR]); x.strokeStyle = "rgba(255,176,32,0.6)";
+    x.beginPath(); x.moveTo(0, Y(ref)); x.lineTo(w, Y(ref)); x.stroke(); x.setLineDash([]); }
+  x.strokeStyle = rgba(color, 0.95); x.lineWidth = 1.5*DPR; x.beginPath();
+  let started = false;
+  ys.forEach((v,i) => { if(v==null || !isFinite(v)) return; started ? x.lineTo(X(i),Y(v)) : x.moveTo(X(i),Y(v)); started = true; });
+  x.stroke();
+  const li = ys.length-1; if(ys[li] != null){ x.fillStyle = rgba(color,1); x.fillRect(X(li)-2*DPR, Y(ys[li])-2*DPR, 4*DPR, 4*DPR); }
+}
+
+// ───────────────────────── Claude Code 工具呼叫線道 ─────────────────────────
+const lanes = $("ccLanes"), lx = lanes.getContext("2d");
+let LW=0, LH=0;
+function resizeLanes(){ const r = lanes.getBoundingClientRect(); LW = r.width; LH = r.height;
+  lanes.width = LW*DPR; lanes.height = LH*DPR; lx.setTransform(DPR,0,0,DPR,0,0); }
+function drawLanes(t){
+  lx.clearRect(0,0,LW,LH);
+  const names = Object.entries(CC.tools).sort((a,b)=>b[1]-a[1]).slice(0,9).map(x=>x[0]);
+  if(!names.includes("(think)")) names.push("(think)");
+  const nL = names.length, top = 8, lh = (LH - top - 6)/nL, labelW = 92, span = 14; // 線道寬 = 最近 14 秒
+  lx.font = "10px JetBrains Mono, Consolas, monospace"; lx.textBaseline = "middle";
+  names.forEach((nm,i) => {
+    const y = top + lh*(i+0.5);
+    lx.fillStyle = "#4b5f6b"; lx.textAlign = "right"; lx.fillText(nm.slice(0,13), labelW-8, y);
+    lx.strokeStyle = "rgba(40,60,70,0.35)"; lx.lineWidth = 1; lx.beginPath(); lx.moveTo(labelW, y); lx.lineTo(LW-6, y); lx.stroke();
+  });
+  lx.globalCompositeOperation = "lighter";
+  CC.streaks = CC.streaks.filter(s => t - s.t0 < span);
+  for(const s of CC.streaks){
+    const i = names.indexOf(s.name); const lane = i < 0 ? nL-1 : i;
+    const y = top + lh*(lane+0.5), age = (t - s.t0)/span;
+    const xHead = labelW + (LW - 6 - labelW)*Math.min(1, age*3.2), xTail = labelW + (LW-6-labelW)*Math.max(0, age*3.2 - 0.35);
+    const col = s.sub ? COL.mag : COL.cyan, a = 1 - age;
+    const grd = lx.createLinearGradient(xTail, 0, xHead, 0);
+    grd.addColorStop(0, rgba(col, 0)); grd.addColorStop(1, rgba(col, 0.9*a));
+    lx.strokeStyle = grd; lx.lineWidth = s.w; lx.beginPath(); lx.moveTo(xTail, y); lx.lineTo(xHead, y); lx.stroke();
+    lx.fillStyle = rgba(COL.white, a); lx.fillRect(xHead-1.5, y-1.5, 3, 3);
+  }
+  lx.globalCompositeOperation = "source-over";
+  if(!CC.calls){ lx.fillStyle = "#4b5f6b"; lx.textAlign = "center";
+    lx.fillText("在 UnivProject 裡使用 Claude Code，工具呼叫會即時出現在這裡", LW/2, LH/2); }
+}
+
+// ───────────────────────── DOM 更新（節流）─────────────────────────
+let tableDirty = true, metricsDirty = true, ccDirty = true, logDirty = true, lastEv = 0, lastEvT = now();
+function ui(){
+  const t = now();
+  $("hClock").textContent = new Date().toTimeString().slice(0,8);
+  if(t - lastEvT >= 1){ $("evRate").textContent = `${((evCount-lastEv)/(t-lastEvT)).toFixed(0)}/s`; lastEv = evCount; lastEvT = t; }
+  if(tableDirty){
+    tableDirty = false;
+    $("hRun").textContent = S.run || "—";
+    $("hRound").textContent = `${S.round}/${S.rounds}`;
+    $("hMode").textContent = S.run ? (S.cfg.use_dp ? `DP σ=${S.cfg.sigma}` : "NO-DP") + (S.cfg.secure_agg ? " +SECAGG" : "") : "—";
+    $("aggName").textContent = (S.cfg.aggregator || "fedavg").toUpperCase();
+    $("vdCount").textContent = S.clients.length;
+    $("vdBody").innerHTML = S.clients.map(c => c ? `<tr class="vd"><td><span style="color:${rgba(phaseColor(c),1)}">●</span> ${shortVd(c.vdid)}
+      <div class="bar"><i style="width:${(c.target*100).toFixed(0)}%;background:${rgba(phaseColor(c),1)}"></i></div></td>
+      <td>${c.phase==="train" ? (c.target*100|0)+"%" : `<span class="st" style="color:${rgba(phaseColor(c),1)}">${c.phase}</span>`}</td>
+      <td>${fmt(c.loss,3)}</td><td>${fmt(c.eps,2)}</td><td>${fmt(c.mae,2)}</td></tr>` : "").join("");
+    $("sRej").textContent = S.sec.rej; $("sTam").textContent = S.sec.tam; $("sDrop").textContent = S.sec.drop;
+    $("sDiv").textContent = S.sec.div; $("sAtk").textContent = S.cfg.attack_clients || 0;
+    $("sUp").textContent = S.upBytes != null ? (S.upBytes/1024).toFixed(1)+"K" : "—";
+    $("secMode").textContent = S.run ? [S.cfg.verify?"HMAC":null, S.cfg.sign?"SIGN":null, S.cfg.secure_agg?"SECAGG":null].filter(Boolean).join("+") || "OFF" : "—";
+  }
+  if(metricsDirty){
+    metricsDirty = false;
+    const M = S.metrics, last = k => { for(let i=M.length-1;i>=0;i--) if(M[i][k]!=null) return M[i][k]; return null; };
+    $("rCount").textContent = M.length;
+    $("mMae").textContent = fmt(last("mae"),3); $("hMae").textContent = fmt(last("mae"),2);
+    $("mNaive").textContent = `naive ${fmt(last("naive"),3)}`;
+    $("mRmse").textContent = fmt(last("rmse"),3); $("mLoss").textContent = fmt(last("loss"),4);
+    $("mEps").textContent = S.cfg.use_dp ? fmt(last("eps"),2) : "∞ (no DP)"; $("hEps").textContent = S.cfg.use_dp ? fmt(last("eps"),2) : "—";
+    $("mDelta").textContent = S.cfg.delta ?? "—"; $("mSigma").textContent = S.cfg.use_dp ? `σ=${S.cfg.sigma}` : "";
+    $("mSec").textContent = fmt(last("sec"),2);
+    const dv = M.reduce((s,m)=>s+(m.div||0),0); $("mDiv").textContent = dv ? `diverged ${dv}` : "";
+    spark("cMae", M.map(m=>m.mae), COL.green, last("naive"));
+    spark("cRmse", M.map(m=>m.rmse), COL.cyan);
+    spark("cLoss", M.map(m=>m.loss), COL.white);
+    spark("cEps", M.map(m=>m.eps), COL.mag);
+    spark("cSec", M.map(m=>m.sec), COL.amber);
+  }
+  if(ccDirty){
+    ccDirty = false;
+    $("ccIn").textContent = fmtK(CC.in); $("ccOut").textContent = fmtK(CC.out); $("ccCache").textContent = fmtK(CC.cr + CC.cw);
+    $("hCost").textContent = "$" + CC.cost.toFixed(2);
+    $("ccCalls").textContent = `${CC.calls} calls${CC.err?` · ${CC.err} err`:""}`;
+    $("ccSub").textContent = `${CC.sub} sub`;
+    $("ccModels").innerHTML = Object.entries(CC.models).sort((a,b)=>b[1].cost-a[1].cost)
+      .map(([m,v]) => `<div>${m.replace(/^claude-/,"")} <span style="color:var(--hi)">${fmtK(v.tok)}</span> · $${v.cost.toFixed(2)}</div>`).join("") || "尚無 Claude Code 活動";
+    const tools = Object.entries(CC.tools).sort((a,b)=>b[1]-a[1]).slice(0,7), mx = tools.length ? tools[0][1] : 1;
+    $("ccTools").innerHTML = tools.map(([n,v]) => `<div class="tb"><span>${n}</span><span class="b"><i style="width:${(v/mx*100).toFixed(0)}%"></i></span><span>${v}</span></div>`).join("");
+  }
+  if(logDirty){ logDirty = false; const L = $("log"); L.innerHTML = logLines.join("\n"); L.parentElement.scrollTop = 1e9; }
+}
+
+resize(); resizeSmall();
+requestAnimationFrame(frame);
+setInterval(ui, 200);
+(function lanesLoop(){ drawLanes(now()); requestAnimationFrame(lanesLoop); })();
+</script>
+</body>
+</html>

@@ -134,10 +134,15 @@ def main(argv=None):
     p.add_argument("--num-cpus", type=float, default=1.0)
     p.add_argument("--extra", default="", help='例如 "learning-rate=0.02 local-epochs=2"')
     p.add_argument("--smoke", action="store_true", help="用合成資料跑 2 輪並檢查輸出")
+    p.add_argument("--dashboard", action="store_true",
+                   help="把即時事件寫到 results/live/events.jsonl（先另開終端機跑 python dashboard/server.py）")
     a = p.parse_args(argv)
     if a.smoke:
         smoke()
         return
+    if a.dashboard:
+        live = Path(a.results_dir).resolve() / "live" / "events.jsonl"
+        a.extra = f"{a.extra} dashboard-events='{_p(live)}'".strip()
     run_batch(Path(a.data_dir).resolve(), Path(a.results_dir).resolve(), a.rounds, a.sigmas,
               a.skip_nodp, a.extra, a.num_cpus, a.seeds, a.client_sigmas)
 

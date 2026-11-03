@@ -23,7 +23,7 @@ dev = ["pytest"]
 [tool.setuptools]
 py-modules = [
     "task", "data", "privacy", "results_log", "vd_parse", "vd_preprocess",
-    "client_app", "server_app", "security", "guard",
+    "client_app", "server_app", "security", "guard", "dashboard_events",
 ]
 
 [tool.flwr.app]
@@ -77,6 +77,7 @@ dropout-rate = 0.0         # 模擬 VD 斷線：每個 VD 每輪不回應的機�
 seed = 42
 data-dir = "data/processed"
 results-dir = "results"
+dashboard-events = ""      # 即時儀表板事件檔（絕對路徑；空字串 = 關閉）。run_experiments.py --dashboard 會自動帶入
 run-name = ""              # 空字串 = 自動命名（dp_sigma1.1_時間 / nodp_時間）
 
 #######################################################################

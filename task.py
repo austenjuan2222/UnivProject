@@ -58,14 +58,19 @@ LOSSES = {
 
 
 def train(model, loader, optimizer, epochs: int, device="cpu", loss: str = "mse",
-          grad_clip: float = 0.0) -> tuple[float, int]:
+          grad_clip: float = 0.0, on_step=None) -> tuple[float, int]:
     """回傳（平均訓練 loss, optimizer.step 次數）。步數用於隱私累計。
 
     grad_clip > 0 時對整批梯度做範數裁剪（非 DP 的一般穩定化技巧，沒有隱私保證；DP 時不要用）。
+    on_step(step, total, running_loss)：每步呼叫一次（即時儀表板用；None = 不回報）。
     """
     loss_fn = LOSSES[loss]
     model.to(device).train()
     total, n, steps = 0.0, 0, 0
+    try:
+        planned = epochs * len(loader)
+    except TypeError:
+        planned = 0
     for _ in range(epochs):
         for X, y in loader:
             X, y = X.to(device), y.to(device)
@@ -83,6 +88,8 @@ def train(model, loader, optimizer, epochs: int, device="cpu", loss: str = "mse"
                 torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
             steps += 1
+            if on_step is not None:
+                on_step(steps, max(planned, steps), total / n if n else float("nan"))
     return (total / n if n else float("nan")), steps
 
 
