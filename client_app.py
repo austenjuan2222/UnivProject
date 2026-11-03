@@ -20,7 +20,7 @@ from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
 from secagg import load_agreement_keys, mask_update, reveal_seeds
-from security import (drops_out, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key,
+from security import (drops_out, hide_congestion, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key,
                       poison_update, verify_model)
 from task import TrafficModel, all_finite, evaluate, make_loader, set_seed, train, unwrap
 
@@ -133,7 +133,11 @@ def train_fn(msg: Message, context: Context) -> Message:
 
     model = _model(cfg, msg)
     optimizer = torch.optim.SGD(model.parameters(), lr=cfg["lr"])
-    loader = make_loader(d["X_train"], d["y_train"], cfg["batch_size"], shuffle=True,
+    y_train = d["y_train"]
+    if cfg["attack_type"] == "hidejam" and is_attacker(pid, int(context.node_config["num-partitions"]),
+                                                       cfg["attack_clients"]):
+        y_train = hide_congestion(y_train, d["mean"], d["std"])  # 針對性攻擊：用竄改過的標籤訓練
+    loader = make_loader(d["X_train"], y_train, cfg["batch_size"], shuffle=True,
                          seed=cfg["seed"] + 1000 * pid + rnd)
     # 每個 client 都要有同一組 metric 鍵，Flower 才能彙整（diverged 只在發散時設成 1）
     metrics = {"num-examples": len(d["y_train"]), "round": rnd, "partition-id": pid, "diverged": 0}
@@ -234,6 +238,9 @@ def evaluate_fn(msg: Message, context: Context) -> Message:
         "mae-kmh": r["mae_kmh"],
         "mse-kmh": r["mse_kmh"],
         "naive-mae-kmh": r["naive_mae_kmh"],
+        "num-jam": r["n_jam"],
+        "jam-mae-kmh": r["jam_mae_kmh"],
+        "jam-bias-kmh": r["jam_bias_kmh"],
     }
     if cfg["ft_epochs"] > 0 and rnd == cfg["rounds"]:
         metrics.update(_finetune(model, d, cfg, context, pid))

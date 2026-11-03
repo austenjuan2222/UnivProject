@@ -91,6 +91,9 @@ def all_finite(model: nn.Module) -> bool:
     return all(torch.isfinite(p).all().item() for p in unwrap(model).parameters())
 
 
+JAM_KMH = 60.0
+
+
 @torch.no_grad()
 def evaluate(model, X, y, mean: float, std: float, device="cpu") -> dict:
     """回傳標準化尺度的 MSE，以及還原成 km/h 的 MAE、MSE。
@@ -103,5 +106,10 @@ def evaluate(model, X, y, mean: float, std: float, device="cpu") -> dict:
     loss = F.mse_loss(pred, yt).item()
     err = (pred - yt) * std
     naive = ((Xt[:, -1] - yt) * std).abs().mean().item()
+    jam = (yt * std + mean) < JAM_KMH  # 實際車速低於 60 km/h 的塞車時段
+    n_jam = int(jam.sum().item())
     return {"loss": loss, "mae_kmh": err.abs().mean().item(), "mse_kmh": (err**2).mean().item(),
-            "naive_mae_kmh": naive}
+            "naive_mae_kmh": naive, "n_jam": n_jam,
+            # 偏差為正：把塞車預測得比實際快（看不到塞車）
+            "jam_mae_kmh": err[jam].abs().mean().item() if n_jam else 0.0,
+            "jam_bias_kmh": err[jam].mean().item() if n_jam else 0.0}

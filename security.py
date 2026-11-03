@@ -157,13 +157,24 @@ def poison_update(global_arrays: dict, local_arrays: dict, kind: str, scale: flo
             out[k] = (g - scale * (np.asarray(local_arrays[k], dtype=np.float32) - g)).astype(np.float32)
         elif kind == "noise":
             out[k] = (g + scale * rng.standard_normal(g.shape)).astype(np.float32)
+        elif kind == "hidejam":
+            # 本地已用竄改過的標籤訓練（hide_congestion），再把更新放大 scale 倍，蓋過誠實 VD 的平均
+            out[k] = (g + scale * (np.asarray(local_arrays[k], dtype=np.float32) - g)).astype(np.float32)
         elif kind == "collude":
             d = np.asarray(local_arrays[k], dtype=np.float32) - g
             direction = rng.choice(np.array([-1.0, 1.0], dtype=np.float32), size=g.shape)
             out[k] = (g + d + scale * np.abs(d) * direction).astype(np.float32)
         else:
-            raise ValueError(f"未知的攻擊類型：{kind}（可用 flip、noise、collude）")
+            raise ValueError(f"未知的攻擊類型：{kind}（可用 flip、noise、collude、hidejam）")
     return out
+
+
+def hide_congestion(y: np.ndarray, mean: float, std: float, below_kmh: float = 60.0,
+                    shift_kmh: float = 30.0) -> np.ndarray:
+    """針對性攻擊的標籤竄改：實際車速低於 below_kmh（塞車）的樣本，標籤改高 shift_kmh，
+    讓模型學到「塞車時也預測順暢」。y 是標準化後的車速。"""
+    kmh = y * std + mean
+    return np.where(kmh < below_kmh, y + shift_kmh / std, y).astype(np.float32)
 
 
 def tamper(arrays: dict, magnitude: float, rng: np.random.Generator) -> dict:

@@ -9,7 +9,7 @@ import warnings
 from pathlib import Path
 
 ROUND_FIELDS = ["round", "n_train_clients", "n_eval_clients", "train_loss", "eval_loss",
-                "mae_kmh", "rmse_kmh", "epsilon_max", "epsilon_mean", "naive_mae_kmh", "local_mae_kmh",
+                "mae_kmh", "rmse_kmh", "jam_mae_kmh", "jam_bias_kmh", "epsilon_max", "epsilon_mean", "naive_mae_kmh", "local_mae_kmh",
                 "ft_mae_kmh", "ft_epsilon_max", "n_diverged", "n_ft_diverged",
                 "n_rejected", "n_tampered", "n_replayed", "n_dropped", "secagg_failed", "secagg_recovered", "flagged", "upload_kb", "raw_kb", "train_seconds_max"]
 CLIENT_FIELDS = ["round", "partition", "vdid", "num_train", "train_loss", "epsilon",
@@ -52,6 +52,11 @@ def aggregate_eval(replies: list[dict]) -> dict:
     }
     if replies and all("naive-mae-kmh" in r for r in replies):
         out["naive_mae_kmh"] = _wmean(replies, "naive-mae-kmh")
+    if replies and all("num-jam" in r for r in replies):
+        n = sum(float(r["num-jam"]) for r in replies)
+        if n:
+            out["jam_mae_kmh"] = sum(float(r["num-jam"]) * float(r["jam-mae-kmh"]) for r in replies) / n
+            out["jam_bias_kmh"] = sum(float(r["num-jam"]) * float(r["jam-bias-kmh"]) for r in replies) / n
     if replies and all("ft-mae-kmh" in r for r in replies):
         out["ft_mae_kmh"] = _wmean(replies, "ft-mae-kmh")
     ft_eps = [float(r["ft-epsilon"]) for r in replies if "ft-epsilon" in r]
