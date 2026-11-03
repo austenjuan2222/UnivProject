@@ -7,6 +7,7 @@
 
   1. 沒註冊的假 VD（講義 RFID 的偽造標籤）：拿自己產生的金鑰連線，應被拒絕
   2. 不用 TLS 的明文連線：應連不上
+  3. 撤銷 vd-0 的註冊（例如串通偵測標記它之後），再用它原本合法的金鑰連線：應被拒絕
 
   python scripts/run_tls_deployment.py --data-dir data/processed_28d_32 --num-vds 8 --rounds 3
 
@@ -18,6 +19,7 @@ import argparse
 import datetime as dt
 import ipaddress
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -73,6 +75,14 @@ def make_node_key(out: Path, name: str) -> tuple[Path, Path]:
     pub.write_bytes(key.public_key().public_bytes(serialization.Encoding.OpenSSH,
                                                   serialization.PublicFormat.OpenSSH))
     return priv, pub
+
+
+def node_id_of(register_stdout: str) -> int:
+    """從 `flwr supernode register --format json` 的輸出取出 node_id。"""
+    m = re.search(r'"node[-_]id"\s*:\s*"?(\d+)', register_stdout)
+    if not m:
+        raise SystemExit(f"找不到 node_id：{register_stdout}")
+    return int(m.group(1))
 
 
 def wait_port(port: int, timeout: float = 60) -> None:
@@ -131,12 +141,14 @@ def main(argv=None) -> int:
         wait_port(FLEET)
         wait_port(CONTROL)
         flwr = str(exe / "flwr")
+        node_ids = {}
         for i in range(a.num_vds):
             priv, pub = make_node_key(tls_dir, f"vd-{i}")
-            reg = subprocess.run([flwr, "supernode", "register", str(pub), "tls"], env=env, cwd=ROOT,
+            reg = subprocess.run([flwr, "supernode", "register", str(pub), "tls", "--format", "json"], env=env, cwd=ROOT,
                                  capture_output=True, text=True, encoding="utf-8", errors="replace")
             if reg.returncode:
                 raise SystemExit(f"註冊 vd-{i} 失敗：{reg.stdout}{reg.stderr}")
+            node_ids[i] = node_id_of(reg.stdout)
             start(node_cmd(exe, tls, priv, i, a.num_vds, 9200 + i), f"vd-{i}")
 
         cfg = (f"num-clients={a.num_vds} num-server-rounds={a.rounds} "
@@ -152,12 +164,16 @@ def main(argv=None) -> int:
         if not ok:
             return 1
 
-        # 冒充測試：沒註冊的金鑰、不用 TLS
+        # 冒充測試：沒註冊的金鑰、不用 TLS；撤銷測試：取消 vd-0 的註冊後，用它原本的金鑰重連
         fake_priv, _ = make_node_key(tls_dir, "fake-vd")
+        unreg = subprocess.run([flwr, "supernode", "unregister", str(node_ids[0]), "tls"], env=env, cwd=ROOT,
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
+        print(f"撤銷 vd-0（node_id={node_ids[0]}）：exit={unreg.returncode}")
         results = {}
         for name, cmd in {
             "fake_unregistered": node_cmd(exe, tls, fake_priv, 0, a.num_vds, 9300),
             "plaintext_insecure": node_cmd(exe, tls, None, 0, a.num_vds, 9301, secure=False),
+            "revoked_vd0": node_cmd(exe, tls, tls_dir / "vd-0.key", 0, a.num_vds, 9302),
         }.items():
             pr = start(cmd, name)
             try:
@@ -165,8 +181,9 @@ def main(argv=None) -> int:
             except subprocess.TimeoutExpired:
                 pr.kill()
             text = (out / f"{name}.log").read_text(encoding="utf-8", errors="replace")
-            results[name] = (pr.returncode, text.strip().splitlines()[-3:])
-            print(f"{name}: exit={pr.returncode}  最後幾行：{results[name][1]}")
+            reason = re.search(r'details = "([^"]*)"', text)  # gRPC 拒絕原因；找不到就印最後一行
+            results[name] = (pr.returncode, reason.group(1) if reason else text.strip().splitlines()[-1:])
+            print(f"{name}: exit={pr.returncode}  原因：{results[name][1]}")
         return r.returncode
     finally:
         for pr in procs:

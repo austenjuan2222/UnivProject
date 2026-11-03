@@ -32,5 +32,14 @@ class TlsDeploymentTest(unittest.TestCase):
                              key.public_key().public_numbers())
 
 
+class NodeIdTest(unittest.TestCase):
+    def test_node_id_is_read_from_register_json(self):
+        from run_tls_deployment import node_id_of
+        self.assertEqual(node_id_of('{"success": true, "node-id": 12017855283326916140}'), 12017855283326916140)
+        self.assertEqual(node_id_of('{"node_id": "42"}'), 42)
+        with self.assertRaises(SystemExit):
+            node_id_of("error")
+
+
 if __name__ == "__main__":
     unittest.main()

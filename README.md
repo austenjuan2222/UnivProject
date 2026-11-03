@@ -655,6 +655,11 @@ VD 多的時候結論一樣：沒有防禦時 10% 的 VD 被入侵就讓模型�
 | 8 個註冊過的 VD，經 TLS 訓練 3 輪 | 完成，全域 MAE 2.916（naive 3.008），約 170 秒；第 1 輪只有 5 台趕上（其餘還在連線） |
 | 沒註冊的假 VD（自己產生的合法格式金鑰） | 被拒絕：`FAILED_PRECONDITION: No SuperNode found with the given public key` |
 | 不用 TLS 的明文連線 | 連不上：伺服器只講 TLS，連線直接被斷（`UNAVAILABLE ... End of TCP stream`） |
+| 撤銷 vd-0 的註冊（`flwr supernode unregister`），再用它原本合法的金鑰重連 | 被拒絕（同上 `No SuperNode found`）；原本還在線上的 vd-0 也立刻被踢掉（`UNAUTHENTICATED: Invalid node ID`） |
+
+最後一列把前面的**串通偵測**和這裡的**裝置認證**接成一個流程：伺服器標記出可疑的 VD →
+管理者撤銷它的註冊 → 它連現有連線都被切斷，換回原本的金鑰也連不回來，要重新安裝金鑰並註冊才能再加入
+（對應 RFID 講義的標籤撤銷）。2026-11-03 第二次實測（8 VD、3 輪）訓練約 79 秒完成。
 
 這一層補上了講義 TLS 的「傳輸中機密性」，以及 RFID 講義的「偽造標籤」情境；它和訊息層的 HMAC／Ed25519 是互補的：
 TLS 保護線路、SuperNode 認證決定誰能連線，HMAC／簽章則保證就算連線端點被入侵，個別更新仍可驗證、可歸責。
