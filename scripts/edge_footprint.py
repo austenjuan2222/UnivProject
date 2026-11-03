@@ -26,11 +26,47 @@ def mb(n: int) -> float:
     return n / 2**20
 
 
+def crypto_costs(arrays: dict, peers: int, reps: int = 200) -> dict:
+    """VD 每輪要做的資安運算，各重複 reps 次取中位數（毫秒）；金鑰在記憶體裡臨時產生，不讀 keys/。"""
+    import os
+    from statistics import median
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
+    from secagg import mask_update
+    from security import sign_model, sign_update, verify_model
+
+    def ms(fn, n: int = reps) -> float:
+        ts = []
+        for _ in range(n):
+            t0 = time.perf_counter()
+            fn()
+            ts.append((time.perf_counter() - t0) * 1000)
+        return median(ts)
+
+    server, vd = Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate()
+    sig = sign_model(server, arrays, 1)
+    xs = [X25519PrivateKey.generate() for _ in range(peers)]
+    pubs = {i: k.public_key() for i, k in enumerate(xs)}
+    masked = mask_update(arrays, 1, 0, range(peers), xs[0], pubs, 1)
+    return {
+        "verify_model_ms": ms(lambda: verify_model(server.public_key(), arrays, 1, sig)),
+        "hmac_ms": ms(lambda: sign_update(os.urandom(32), arrays, 1, 0)),
+        "ed25519_sign_ms": ms(lambda: sign_update(vd, arrays, 1, 0)),
+        # 安全聚合：和其他 peers-1 台各做一次 X25519 金鑰交換再產生遮罩
+        "secagg_mask_ms": ms(lambda: mask_update(arrays, 1, 0, range(peers), xs[0], pubs, 1), max(reps // 10, 5)),
+        "hmac_tag_bytes": 32, "ed25519_sig_bytes": 64,
+        "secagg_upload_bytes": int(sum(v.nbytes for v in masked.values())),
+    }
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data-dir", required=True)
     p.add_argument("--pid", type=int, default=0)
     p.add_argument("--rounds", type=int, default=3)
+    p.add_argument("--peers", type=int, default=32, help="安全聚合時同一輪的 VD 數")
     a = p.parse_args(argv)
 
     proc = psutil.Process()
@@ -75,6 +111,11 @@ def main(argv=None) -> int:
     print(f"記憶體：Python 本身 {mb(base):.0f} MB，載入 PyTorch＋Opacus 後 {mb(libs):.0f} MB，"
           f"訓練時峰值 {mb(peak):.0f} MB（訓練本身多用 {mb(peak - libs):.0f} MB）")
     print(f"每輪 DP-SGD 時間（單執行緒）：{', '.join(f'{t:.2f}' for t in times)} 秒；{a.rounds} 輪後 ε={eps:.2f}")
+    c = crypto_costs({k: v.numpy() for k, v in state.items()}, a.peers)
+    print(f"資安運算（中位數）：驗全域模型簽章 {c['verify_model_ms']:.3f} ms、HMAC {c['hmac_ms']:.3f} ms、"
+          f"Ed25519 簽更新 {c['ed25519_sign_ms']:.3f} ms、安全聚合遮罩（{a.peers} 台）{c['secagg_mask_ms']:.1f} ms")
+    print(f"額外上傳：HMAC 標籤 {c['hmac_tag_bytes']} B、Ed25519 簽章 {c['ed25519_sig_bytes']} B；"
+          f"安全聚合後上傳 {c['secagg_upload_bytes'] / 1024:.1f} KB（float64）")
     return 0
 
 
