@@ -13,6 +13,12 @@ import os
 import time
 from pathlib import Path
 
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
+_LOCK_AT = 2**40  # 只當鎖用的位元組位置，檔案不會長到這麼大
+
 
 def _safe(v):
     """NaN／inf 轉成 null，numpy 純量轉成 Python 型別，確保輸出是合法 JSON。"""
@@ -31,7 +37,7 @@ def _safe(v):
 
 
 class Emitter:
-    """寫事件。多個行程同時附加寫入：每個事件一次 os.write 寫完整一行。"""
+    """寫事件。多個行程同時附加寫入：每個事件一次 os.write 寫完整一行（Windows 另加檔案鎖）。"""
 
     def __init__(self, path: str | os.PathLike | None):
         self.path = Path(path) if path else None
@@ -50,7 +56,18 @@ class Emitter:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
             try:
-                os.write(fd, line)
+                if msvcrt is None:
+                    os.write(fd, line)  # POSIX 的 O_APPEND 單次小寫入是原子的
+                else:
+                    # Windows 的 O_APPEND 是「移到檔尾再寫」兩步，多行程會互相截斷；
+                    # 鎖一個遠在檔尾之外的位元組當互斥鎖，不會擋到伺服器讀檔
+                    os.lseek(fd, _LOCK_AT, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                    try:
+                        os.write(fd, line)
+                    finally:
+                        os.lseek(fd, _LOCK_AT, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
             finally:
                 os.close(fd)
         except OSError:

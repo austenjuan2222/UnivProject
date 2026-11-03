@@ -38,6 +38,26 @@ def test_read_events_skips_partial_and_bad_lines(tmp_path):
     assert [x["kind"] for x in evs] == ["b"]
 
 
+def _burst(path, tag, n):
+    e = Emitter(path)
+    for i in range(n):
+        e.emit("progress", tag=tag, i=i, pad="x" * 200)
+
+
+def test_concurrent_processes_do_not_interleave_lines(tmp_path):
+    # Windows 的 O_APPEND 是「先移到檔尾再寫」，多行程同時寫會互相截斷（實測約 1.6% 的行壞掉）
+    import multiprocessing as mp
+    p = tmp_path / "e.jsonl"
+    procs = [mp.Process(target=_burst, args=(str(p), k, 300)) for k in range(4)]
+    for x in procs:
+        x.start()
+    for x in procs:
+        x.join()
+    lines = p.read_bytes().split(b"\n")[:-1]
+    assert len(lines) == 1200
+    assert all(json.loads(x)["kind"] == "progress" for x in lines)
+
+
 def test_read_events_missing_file(tmp_path):
     assert read_events(tmp_path / "nope.jsonl", 0) == ([], 0)
 
@@ -112,4 +132,11 @@ def test_claude_project_dirs_matches_slug(tmp_path):
     assert [d.name for d in claude_project_dirs(Path("/x/y/univproject"), base)] == \
         ["C--Users-TESTER-univproject"]
     assert claude_project_dirs(Path("/x/nothing"), base) == []
+    # worktree／venv 兄弟資料夾也要收進來，但不能誤收 univprojectx 這種
+    for n in ("C--Users-TESTER-Documents-UnivProject-git", "C--Users-TESTER-Documents-UnivProject-run",
+              "C--Users-TESTER-UnivProjectX"):
+        (base / n).mkdir()
+    got = [d.name for d in claude_project_dirs(Path("/d/UnivProject-dashboard"), base)]
+    assert got == ["C--Users-TESTER-Documents-UnivProject-git", "C--Users-TESTER-Documents-UnivProject-run",
+                   "C--Users-TESTER-univproject"]
     assert claude_project_dirs(Path("/x"), tmp_path / "missing") == []

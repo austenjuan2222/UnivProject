@@ -111,16 +111,17 @@ def claude_project_dirs(project_root: Path, base: Path | None = None) -> list[Pa
 
     Claude Code 把專案路徑中非英數字元換成 '-' 當資料夾名，例如
     C:\\Users\\TESTER\\univproject → C--Users-TESTER-univproject。
+    同一專案常分成 git 工作副本、worktree、venv 資料夾（UnivProject-git／-run／-dashboard），
+    所以也收「名稱第一段相同」的兄弟資料夾。
     """
     base = base or Path.home() / ".claude" / "projects"
     if not base.is_dir():
         return []
-    slug = re.sub(r"[^A-Za-z0-9]", "-", str(project_root))
-    exact = [d for d in base.iterdir() if d.is_dir() and d.name.lower() == slug.lower()]
-    if exact:
-        return exact
-    tail = "-" + re.sub(r"[^A-Za-z0-9]", "-", project_root.name).lower()
-    return [d for d in base.iterdir() if d.is_dir() and d.name.lower().endswith(tail)]
+    slug = re.sub(r"[^A-Za-z0-9]", "-", str(project_root)).lower()
+    stem = re.sub(r"[^A-Za-z0-9]", "-", project_root.name.split("-")[0]).lower()
+    sib = re.compile(rf"-{re.escape(stem)}(-|$)")
+    return sorted(d for d in base.iterdir()
+                  if d.is_dir() and (d.name.lower() == slug or sib.search(d.name.lower())))
 
 
 def tail_claude(hub: Hub, dirs: list[Path], since_hours: float, poll: float = 1.0) -> None:
