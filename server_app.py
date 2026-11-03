@@ -153,7 +153,8 @@ def main(grid: Grid, context: Context) -> None:
     strategy = GuardedStrategy(strategy, priv if sign else None, vd_keys if verify else None,
                                float(cfg.get("tamper-rate", 0.0)), int(cfg["seed"]), logger.on_security,
                                secure_agg_clients=num_clients if secure_agg else 0, on_audit=logger.on_audit,
-                               collusion_filter=CollusionFilter() if bool(cfg.get("collusion-filter", False)) else None)
+                               collusion_filter=CollusionFilter(float(cfg.get("collusion-z", 3.0)))
+                               if bool(cfg.get("collusion-filter", False)) else None)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))
