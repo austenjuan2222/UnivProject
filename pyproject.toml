@@ -71,6 +71,7 @@ attack-clients = 0         # > 0：最後幾個 VD 被入侵，送出惡意更�
 attack-type = "flip"       # flip（反向並放大自己的更新）／noise（大幅隨機雜訊）／collude（串通、小幅同向偏移）
 attack-scale = 10.0        # 惡意更新的放大倍數
 tamper-rate = 0.0          # 模擬網路中間人：每個上傳更新被竄改的機率
+collusion-filter = false   # true = 跨輪偵測串通：更新方向一直和別人特別像的 VD 被剔除
 secure-agg = false         # true = 安全聚合（成對遮罩）：伺服器只看得到所有 VD 的加總（只能配 fedavg、全部參與）
 upload-bits = 32           # < 32：上傳前把更新量量化成幾位元（8、4、2；隨機捨入），模擬 LPWAN 的小頻寬
 dropout-rate = 0.0         # 模擬 VD 斷線：每個 VD 每輪不回應的機率（可用性）

@@ -62,6 +62,38 @@ def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: 
     return keep, {"n_tampered": n_tampered, "n_rejected": n_rejected, "audit": audit}
 
 
+class CollusionFilter:
+    """跨輪偵測串通（概念同 FoolsGold，Fung et al. 2018）：每輪算每個 VD 更新量和其他 VD 的最大餘弦相似度，
+    跨輪平均後，明顯高於多數 VD 的（中位數 + z × 1.4826 × MAD）就標記。單輪看不出來的小幅同向偏移，
+    因為每輪都一起偏，累積後會浮出來。被標記的 VD 之後的更新不進入聚合。"""
+
+    def __init__(self, z: float = 3.0, min_rounds: int = 2):
+        self.z, self.min_rounds = z, min_rounds
+        self.total: dict[int, float] = {}
+        self.count: dict[int, int] = {}
+
+    def update(self, updates: dict[int, np.ndarray]) -> set[int]:
+        pids = list(updates)
+        if len(pids) >= 3:
+            m = np.stack([np.ravel(updates[p]).astype(np.float64) for p in pids])
+            m /= np.linalg.norm(m, axis=1, keepdims=True) + 1e-12
+            sim = m @ m.T
+            np.fill_diagonal(sim, -np.inf)
+            for p, s in zip(pids, sim.max(axis=1)):
+                self.total[p] = self.total.get(p, 0.0) + float(s)
+                self.count[p] = self.count.get(p, 0) + 1
+        return self.flagged()
+
+    def flagged(self) -> set[int]:
+        means = {p: self.total[p] / self.count[p] for p in self.total if self.count[p] >= self.min_rounds}
+        if len(means) < 3:
+            return set()
+        v = np.array(list(means.values()))
+        med = float(np.median(v))
+        mad = float(np.median(np.abs(v - med))) * 1.4826 + 1e-9
+        return {p for p, s in means.items() if s > med + self.z * mad}
+
+
 def secure_average(contents: list[RecordDict], expected: int) -> ArrayRecord | None:
     """安全聚合：加總遮罩後的更新再除以總樣本數。少了任何 VD，遮罩無法抵銷，回傳 None 放棄這一輪。"""
     if len(contents) != expected or not contents:
@@ -76,7 +108,8 @@ class GuardedStrategy(Strategy):
     def __init__(self, inner: Strategy, signing_key: Ed25519PrivateKey | None, vd_keys: dict | None,
                  tamper_rate: float = 0.0, seed: int = 0,
                  on_round: Callable[[int, dict], None] | None = None, secure_agg_clients: int = 0,
-                 on_audit: Callable[[list], None] | None = None):
+                 on_audit: Callable[[list], None] | None = None,
+                 collusion_filter: CollusionFilter | None = None):
         """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。"""
         self.inner = inner
         self.vd_keys = vd_keys or {}
@@ -88,6 +121,8 @@ class GuardedStrategy(Strategy):
         # > 0：安全聚合，需要這麼多個 VD 全部回覆遮罩後的更新（基本版不容許斷線）
         self.secure_agg_clients = secure_agg_clients
         self.on_audit = on_audit
+        self.collusion_filter = collusion_filter
+        self._global: dict = {}
 
     def _sign(self, messages: Iterable[Message], arrays: ArrayRecord, rnd: int) -> list[Message]:
         messages = list(messages)
@@ -99,6 +134,7 @@ class GuardedStrategy(Strategy):
 
     def configure_train(self, server_round: int, arrays: ArrayRecord, config: ConfigRecord,
                         grid: Grid) -> Iterable[Message]:
+        self._global = arrays_of(arrays)
         return self._sign(self.inner.configure_train(server_round, arrays, config, grid), arrays, server_round)
 
     def aggregate_train(self, server_round: int, replies: Iterable[Message]
@@ -112,6 +148,13 @@ class GuardedStrategy(Strategy):
         if self.on_audit and self.verify_updates:
             self.on_audit(audit)
         kept = [m for m, k in zip(ok_replies, keep) if k]
+        if self.collusion_filter is not None and kept:
+            pid = {id(m): int(m.content["metrics"]["partition-id"]) for m in kept}
+            flagged = self.collusion_filter.update({pid[id(m)]: np.concatenate(
+                [np.ravel(v - self._global[k]) for k, v in arrays_of(m.content["arrays"]).items()])
+                for m in kept})
+            kept = [m for m in kept if pid[id(m)] not in flagged]
+            stats["flagged"] = ";".join(str(p) for p in sorted(flagged))
         if self.on_round:
             self.on_round(server_round, stats)
         if not kept:

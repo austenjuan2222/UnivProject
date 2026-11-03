@@ -72,3 +72,30 @@ class ScreenRepliesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CollusionFilterTest(unittest.TestCase):
+    """跨輪偵測串通：一群 VD 每輪更新方向都特別像，累積起來就被標記。"""
+
+    def _round(self, rng, n=32, k=6, d=400):
+        g = rng.normal(size=d).astype(np.float32)
+        shared = rng.choice([-1.0, 1.0], size=d)
+        ups = {}
+        for p in range(n):
+            u = 0.3 * g + rng.normal(size=d)  # 誠實 VD：有共同趨勢，加上各自的雜訊
+            ups[p] = u + np.abs(u) * shared if p >= n - k else u
+        return ups
+
+    def test_colluders_are_flagged_after_a_few_rounds(self):
+        from guard import CollusionFilter
+        rng, f = np.random.default_rng(0), CollusionFilter()
+        for _ in range(3):
+            flagged = f.update(self._round(rng))
+        self.assertEqual(sorted(flagged), list(range(26, 32)))
+
+    def test_no_attack_flags_nobody(self):
+        from guard import CollusionFilter
+        rng, f = np.random.default_rng(1), CollusionFilter()
+        for _ in range(5):
+            flagged = f.update(self._round(rng, k=0))
+        self.assertEqual(flagged, set())
