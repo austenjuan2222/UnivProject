@@ -127,10 +127,15 @@ def main(argv=None) -> int:
                PATH=str(exe) + os.pathsep + os.environ.get("PATH", ""))
     procs, logs = [], []
 
-    def start(cmd, name):
+    def start(cmd, name, own_home=False):
         f = (out / f"{name}.log").open("w", encoding="utf-8")
         logs.append(f)
-        procs.append(subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, env=env, cwd=ROOT))
+        e = env
+        if own_home:
+            # 每台 VD 是獨立設備，各有自己的 Flower 資料夾；共用時第 1 輪 8 台同時解壓 app，會讀到寫一半的檔案（BadZipFile）
+            (out / "vd_homes" / name).mkdir(parents=True, exist_ok=True)
+            e = dict(env, FLWR_HOME=str(out / "vd_homes" / name))
+        procs.append(subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT, env=e, cwd=ROOT))
         return procs[-1]
 
     try:
@@ -149,7 +154,7 @@ def main(argv=None) -> int:
             if reg.returncode:
                 raise SystemExit(f"註冊 vd-{i} 失敗：{reg.stdout}{reg.stderr}")
             node_ids[i] = node_id_of(reg.stdout)
-            start(node_cmd(exe, tls, priv, i, a.num_vds, 9200 + i), f"vd-{i}")
+            start(node_cmd(exe, tls, priv, i, a.num_vds, 9200 + i), f"vd-{i}", own_home=True)
 
         cfg = (f"num-clients={a.num_vds} num-server-rounds={a.rounds} "
                f"data-dir='{Path(a.data_dir).resolve().as_posix()}' results-dir='{out.as_posix()}' "
@@ -175,7 +180,7 @@ def main(argv=None) -> int:
             "plaintext_insecure": node_cmd(exe, tls, None, 0, a.num_vds, 9301, secure=False),
             "revoked_vd0": node_cmd(exe, tls, tls_dir / "vd-0.key", 0, a.num_vds, 9302),
         }.items():
-            pr = start(cmd, name)
+            pr = start(cmd, name, own_home=True)
             try:
                 pr.wait(timeout=90)
             except subprocess.TimeoutExpired:
