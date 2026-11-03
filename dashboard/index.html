@@ -73,6 +73,8 @@
   <div class="kv">ε <span id="hEps">—</span></div>
   <div class="kv">MODE <span id="hMode">—</span></div>
   <div class="grow"></div>
+  <button id="viewBtn" class="kv" title="切換中間畫面（快捷鍵 V）"
+    style="background:none;border:1px solid var(--line);color:var(--dim);font:inherit;cursor:pointer;padding:2px 8px">VIEW <span id="hView">FLOW</span></button>
   <div class="kv">CLAUDE <span id="hCost">$0.00</span></div>
   <div class="kv"><span class="dot" id="conn"></span><span id="hClock">--:--:--</span></div>
 </header>
@@ -339,9 +341,10 @@ function phaseColor(c){
 let lastT = now();
 function frame(){
   const t = now(), dt = Math.min(0.1, t - lastT); lastT = t;
-  if(layoutDirty) layout();
+  if(layoutDirty){ layout(); flowLayout(); }
   hx.globalCompositeOperation = "source-over";
   hx.fillStyle = "#04060a"; hx.fillRect(0,0,W,H);
+  if(VIEW === "flow"){ drawFlow(t, dt); requestAnimationFrame(frame); return; }
   drawBackdrop(t);
   const n = S.clients.length;
   $("banner").style.display = n ? "none" : "flex";
@@ -425,6 +428,171 @@ function frame(){
 }
 
 const FLOW = [COL.cyan, COL.green, COL.cyan, COL.mag, COL.green, COL.white];
+
+// ───────────────────────── FLOW 版面：線束穿過浮動的階段卡片 ─────────────────────────
+// 每個 VD 拉 KF 條線，依序穿過 本地訓練 → DP 加噪 → 安全閘道 → 聚合 → 評估 卡片；
+// 線上的流光代表該 VD 目前在哪個階段。V 鍵或右上角按鈕切回原本的放射狀 HUB。
+let VIEW = "flow";
+try { VIEW = localStorage.getItem("fl.view") || "flow"; } catch(_) {}
+function setView(v){ VIEW = v; $("hView").textContent = v.toUpperCase(); $("hubTag").style.display = v==="flow" ? "none" : "";
+  $("legend").style.display = v==="flow" ? "none" : ""; try { localStorage.setItem("fl.view", v); } catch(_) {} }
+$("viewBtn").onclick = () => setView(VIEW === "flow" ? "hub" : "flow");
+window.addEventListener("keydown", e => { if(e.key === "v" || e.key === "V") setView(VIEW === "flow" ? "hub" : "flow"); });
+setView(VIEW === "hub" ? "hub" : "flow");
+
+const KF = 6, PER = 14;                        // 每個 VD 幾條線、每段取樣點數
+const STAGES = [                               // 卡片：id、標題、標頭色、在畫面上的相對位置
+  {id:"train", title:"local.train · DP-SGD", col:[150,110,255], fx:0.30, fy:0.30},
+  {id:"dp",    title:"dp.noise · gaussian",  col:COL.mag,       fx:0.46, fy:0.70},
+  {id:"gate",  title:"security.gate",        col:COL.red,       fx:0.60, fy:0.24},
+  {id:"agg",   title:"server · aggregate",   col:COL.amber,     fx:0.75, fy:0.62},
+  {id:"eval",  title:"global.eval",          col:COL.cyan,      fx:0.90, fy:0.32},
+];
+const CARD_W = 168;
+let strands = [], ambient = [], stageIdx = [];
+function catmull(P, per){
+  const out = [];
+  for(let i=0;i<P.length-1;i++){
+    const p0 = P[Math.max(0,i-1)], p1 = P[i], p2 = P[i+1], p3 = P[Math.min(P.length-1,i+2)];
+    for(let j=0;j<per;j++){ const s = j/per, s2 = s*s, s3 = s2*s;
+      out.push([0.5*((2*p1[0]) + (-p0[0]+p2[0])*s + (2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*s2 + (-p0[0]+3*p1[0]-3*p2[0]+p3[0])*s3),
+                0.5*((2*p1[1]) + (-p0[1]+p2[1])*s + (2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*s2 + (-p0[1]+3*p1[1]-3*p2[1]+p3[1])*s3)]); }
+  }
+  out.push(P[P.length-1]); return out;
+}
+function vdPos(i, n){ const top = 26, bot = H - 14; return [64, top + (bot-top)*(n<=1 ? 0.5 : i/(n-1))]; }
+function flowLayout(){
+  let r = (s => () => (s = (s*16807) % 2147483647) / 2147483647)(11);
+  const n = S.clients.length, cards = STAGES.map(s => [s.fx*W, s.fy*H]);
+  strands = []; ambient = [];
+  for(let i=0;i<n;i++){
+    const lines = [];
+    for(let k=0;k<KF;k++){
+      const P = [vdPos(i, n)];
+      cards.forEach(([cx, cy]) => {
+        const prev = P[P.length-1];
+        P.push([(prev[0]+cx)/2 + (r()-.5)*W*0.08, (prev[1]+cy)/2 + (r()-.5)*H*0.55]);   // 中途大幅擺動
+        P.push([cx + (r()-.5)*CARD_W*0.8, cy + (r()-.5)*40]);                         // 穿過卡片
+      });
+      P.push([W + 20, P[P.length-1][1] + (r()-.5)*H*0.4]);
+      lines.push({pts: catmull(P, PER), off: r(), w: 0.5 + r()*0.9, sp: 0.7 + r()*0.6});
+    }
+    strands.push(lines);
+  }
+  stageIdx = STAGES.map((_, j) => (2*j + 2)*PER);                 // 第 j 張卡片在線上的取樣點位置
+  for(let k=0;k<70;k++){                                           // 背景的白色亂線，增加密度
+    const P = [[-20, r()*H]];
+    for(let j=1;j<=5;j++) P.push([W*j/5.5 + (r()-.5)*80, r()*H]);
+    P.push([W + 20, r()*H]);
+    ambient.push({pts: catmull(P, PER), off: r(), w: 0.4 + r()*0.8, sp: 0.4 + r()*0.5});
+  }
+}
+function strokeIdx(pts, a, b){                                     // 畫取樣點 a…b（可為小數）之間的線
+  a = Math.max(0, a); b = Math.min(pts.length-1, b); if(b <= a) return;
+  const at = f => { const i = Math.min(pts.length-2, Math.floor(f)), u = f-i;
+    return [pts[i][0]+(pts[i+1][0]-pts[i][0])*u, pts[i][1]+(pts[i+1][1]-pts[i][1])*u]; };
+  hx.beginPath(); const p = at(a); hx.moveTo(p[0], p[1]);
+  for(let i=Math.ceil(a); i<b; i++) hx.lineTo(pts[i][0], pts[i][1]);
+  const q = at(b); hx.lineTo(q[0], q[1]); hx.stroke();
+}
+function comet(pts, head, len, col, a, w){
+  hx.strokeStyle = rgba(col, a*0.35); hx.lineWidth = w*3; strokeIdx(pts, head-len, head);
+  hx.strokeStyle = rgba(col, a); hx.lineWidth = w; strokeIdx(pts, head-len*0.6, head);
+}
+function drawFlow(t, dt){
+  const n = S.clients.length;
+  $("banner").style.display = n ? "none" : "flex";
+  hx.globalCompositeOperation = "lighter";
+  for(const A of ambient){                                         // 背景亂線與白色流光
+    hx.strokeStyle = "rgba(200,220,215,0.05)"; hx.lineWidth = A.w; strokeIdx(A.pts, 0, A.pts.length-1);
+    const L = A.pts.length - 1, head = ((t*A.sp*0.08 + A.off) % 1.2) * L;
+    comet(A.pts, head, 10, COL.white, 0.45, A.w);
+  }
+  const iTrain = stageIdx[0], iAgg = stageIdx[3], iEnd = stageIdx[4];
+  for(let i=0;i<n;i++){
+    const c = S.clients[i], lines = strands[i]; if(!c || !lines) continue;
+    c.disp += (c.target - c.disp) * Math.min(1, dt*5);
+    const col = phaseColor(c);
+    for(const L of lines){
+      const N = L.pts.length - 1;
+      hx.strokeStyle = rgba(c.phase==="drop" ? COL.red : [190,210,205], c.phase==="drop" ? 0.12 : 0.07);
+      hx.lineWidth = L.w; strokeIdx(L.pts, 0, N);
+      if(c.phase === "train"){                                     // 訓練：VD → 訓練卡片 點亮到目前進度，綠色流光來回
+        hx.strokeStyle = rgba(COL.green, 0.5*L.w); hx.lineWidth = L.w; strokeIdx(L.pts, 0, iTrain*c.disp);
+        comet(L.pts, ((t*L.sp*0.9 + L.off) % 1) * iTrain*Math.max(0.15, c.disp), 6, COL.green, 0.9, 1.2);
+        if(c.dp && Math.random() < 0.05) c.sparks.push({i: L, f: iTrain*c.disp, life: 1});
+      } else if(c.phase === "upload" || c.phase === "attacker" || c.phase === "diverged"){   // 上傳：一路衝到聚合卡片
+        const u = Math.min(1, (t - c.upT)/1.4 + L.off*0.15);
+        comet(L.pts, iTrain + (iAgg - iTrain)*u, 14, c.phase==="upload" ? COL.cyan : COL.amber, 0.95, 1.4);
+      } else if(c.phase === "drop"){
+        hx.setLineDash([3,6]); hx.strokeStyle = rgba(COL.red, 0.3 + 0.25*Math.sin(t*9)); hx.lineWidth = 1;
+        strokeIdx(L.pts, 0, iTrain*0.6); hx.setLineDash([]);
+      } else {                                                     // 等待／完成：慢慢流的多色流光
+        const head = ((t*L.sp*0.05 + L.off) % 1.1) * N;
+        comet(L.pts, head, 10, c.phase==="done" ? COL.green : FLOW[(i+Math.round(L.off*9)) % FLOW.length], 0.55, L.w*1.2);
+      }
+    }
+    for(const s of c.sparks){ s.life -= dt*1.8; if(s.life <= 0) continue;           // DP 加噪：洋紅雜訊點
+      const p = s.i.pts[Math.min(s.i.pts.length-1, Math.round(s.f))];
+      hx.fillStyle = rgba(COL.mag, s.life); hx.fillRect(p[0]+(Math.random()-.5)*16, p[1]+(Math.random()-.5)*16, 1.8, 1.8); }
+    c.sparks = c.sparks.filter(s => s.life > 0);
+  }
+  const b = (t - S.bcastT)/1.2;                                    // 廣播：白光從評估卡片倒流回各 VD
+  if(b >= 0 && b <= 1.1) for(const lines of strands) for(const L of lines)
+    comet(L.pts, iEnd*(1 - Math.min(1, b + L.off*0.1)) + 12, 12, COL.white, 0.6, 1);
+  bloom();
+  hx.globalCompositeOperation = "source-over";
+  drawFlowCards(t);
+  drawVdColumn(t);
+}
+function drawVdColumn(t){
+  const n = S.clients.length;
+  hx.font = "9px JetBrains Mono, Consolas, monospace"; hx.textAlign = "right"; hx.textBaseline = "middle";
+  for(let i=0;i<n;i++){
+    const c = S.clients[i]; if(!c) continue;
+    const [x, y] = vdPos(i, n), col = phaseColor(c);
+    hx.fillStyle = rgba(col, 0.95); hx.fillRect(x-2, y-2, 4, 4);
+    if(n <= 40 || i % 2 === 0){ hx.fillStyle = "#7f9a90"; hx.fillText(shortVd(c.vdid).replace(/^N1-N-/, ""), x-6, y); }
+  }
+  hx.textBaseline = "alphabetic";
+}
+function drawFlowCards(t){
+  const C = S.clients.filter(Boolean), last = k => { for(let i=S.metrics.length-1;i>=0;i--) if(S.metrics[i][k]!=null) return S.metrics[i][k]; return null; };
+  const training = C.filter(c => c.phase==="train"), prog = training.length ? training.reduce((s,c)=>s+c.disp,0)/training.length : 0;
+  const losses = C.map(c => c.loss).filter(v => v!=null), eps = C.map(c => c.eps).filter(v => v!=null);
+  const n = C.length || 1, alarm = t - S.alarmT < 1.2;
+  const rows = {
+    train: [["active", training.length/n, `${training.length}/${C.length}`], ["progress", prog, `${(prog*100)|0}%`],
+            ["loss", null, fmt(losses.length ? losses.reduce((a,b)=>a+b,0)/losses.length : null, 4)]],
+    dp:    S.cfg.use_dp ? [["sigma σ", Math.min(1, (S.cfg.sigma||0)/2), fmt(S.cfg.sigma,2)],
+            ["ε max", eps.length ? Math.min(1, Math.max(...eps)/10) : 0, fmt(eps.length ? Math.max(...eps) : null, 2)],
+            ["δ", null, String(S.cfg.delta ?? "—")]] : [["off", 0, "no DP"]],
+    gate:  [["rejected", Math.min(1, S.sec.rej/n), S.sec.rej], ["tampered", Math.min(1, S.sec.tam/n), S.sec.tam],
+            ["dropped", Math.min(1, S.sec.drop/n), S.sec.drop], ["verify", null, $("secMode").textContent]],
+    agg:   [["round", S.rounds ? S.round/S.rounds : 0, `${S.round}/${S.rounds}`], ["updates", C.filter(c=>c.phase==="done").length/n, C.filter(c=>c.phase==="done").length],
+            ["train loss", null, fmt(last("loss"),4)]],
+    eval:  [["MAE km/h", last("naive") ? Math.min(1, last("mae")/last("naive")) : 0, fmt(last("mae"),3)],
+            ["RMSE", null, fmt(last("rmse"),3)], ["naive", null, fmt(last("naive"),3)]],
+  };
+  STAGES.forEach((s, j) => {
+    const x = s.fx*W - CARD_W/2, y = s.fy*H - 30 + Math.sin(t*0.8 + j*1.7)*4;     // 卡片輕微上下浮動
+    const R = rows[s.id], h = 22 + R.length*15;
+    const hot = (s.id==="gate" && alarm) || (s.id==="train" && training.length) || (s.id==="agg" && t - S.pulseT < 1.2);
+    hx.fillStyle = "rgba(8,12,16,0.92)"; hx.fillRect(x, y, CARD_W, h);
+    hx.strokeStyle = rgba(s.col, hot ? 0.95 : 0.45); hx.lineWidth = 1; hx.strokeRect(x+0.5, y+0.5, CARD_W-1, h-1);
+    hx.fillStyle = rgba(s.col, hot ? 0.95 : 0.6); hx.fillRect(x, y, CARD_W, 16);
+    hx.font = "600 10px JetBrains Mono, Consolas, monospace"; hx.textAlign = "left"; hx.fillStyle = "#05080b";
+    hx.fillText(s.title, x+6, y+11.5);
+    hx.font = "10px JetBrains Mono, Consolas, monospace";
+    R.forEach(([k, f, v], r) => {
+      const yy = y + 30 + r*15;
+      hx.fillStyle = "#a9c1b5"; hx.textAlign = "left"; hx.fillText(k, x+6, yy);
+      if(f != null){ hx.fillStyle = "rgba(255,255,255,0.06)"; hx.fillRect(x+66, yy-8, 60, 9);
+        hx.fillStyle = rgba(s.col, 0.85); hx.fillRect(x+66, yy-8, 60*Math.max(0, Math.min(1, f)), 9); }
+      hx.fillStyle = "#e9fff4"; hx.textAlign = "right"; hx.fillText(String(v), x+CARD_W-6, yy);
+    });
+  });
+}
 // 發光：把線條畫面縮成 1/4 再模糊、疊回去（比對每條線開 shadowBlur 便宜很多）
 const glow = document.createElement("canvas"), gx = glow.getContext("2d");
 function bloom(){
