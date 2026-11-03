@@ -62,93 +62,137 @@
   .tb span:last-child{width:34px;text-align:right;color:var(--hi)}
   .muted{color:var(--dim)}
   ::-webkit-scrollbar{width:6px;height:6px} ::-webkit-scrollbar-thumb{background:#14202a}
+  .btn{background:none;border:1px solid var(--line);color:var(--text);font:inherit;cursor:pointer;padding:2px 8px}
+  .btn:hover{border-color:var(--green);color:var(--hi)}
+  .hint{padding:4px 10px 0;color:var(--dim);font-size:10px;line-height:1.4}
+  .hint0{color:var(--dim);font-size:10px;line-height:1.35;margin-top:2px}
+  #help{position:fixed;inset:0;background:rgba(2,4,6,0.82);display:flex;align-items:center;justify-content:center;z-index:9}
+  #help[hidden]{display:none}
+  #help .box{max-width:720px;max-height:86vh;overflow:auto;background:var(--panel);border:1px solid var(--green);
+    padding:16px 20px;font-size:13px;line-height:1.6;color:var(--text)}
+  #help h2{color:var(--hi);margin:0 0 8px;font-size:16px} #help h3{color:var(--green);margin:12px 0 4px;font-size:13px}
+  #help b{color:var(--hi)} #help ul{margin:4px 0;padding-left:18px}
 </style>
 </head>
 <body>
 <header>
-  <div class="brand">UNIVPROJECT <b>/</b> FL&nbsp;LIVE</div>
-  <div class="kv">RUN <span id="hRun">—</span></div>
-  <div class="kv">ROUND <span id="hRound">0/0</span></div>
-  <div class="kv">MAE <span id="hMae">—</span> km/h</div>
-  <div class="kv">ε <span id="hEps">—</span></div>
-  <div class="kv">MODE <span id="hMode">—</span></div>
+  <div class="brand">UNIVPROJECT <b>/</b> 聯邦學習即時監看</div>
+  <div class="kv" title="目前這次實驗的名稱">實驗 <span id="hRun">—</span></div>
+  <div class="kv" title="聯邦學習一輪 = 各 VD 本地訓練 → 上傳 → 伺服器合併 → 評估">輪次 <span id="hRound">0/0</span></div>
+  <div class="kv" title="全域模型預測車速的平均誤差，越低越好">誤差 <span id="hMae">—</span> km/h</div>
+  <div class="kv" title="隱私預算 ε：越小代表隱私保護越強">隱私 ε <span id="hEps">—</span></div>
+  <div class="kv" title="DP = 差分隱私；σ 是加的雜訊大小；REPLAY = 正在重播之前的實驗">模式 <span id="hMode">—</span></div>
   <div class="grow"></div>
-  <button id="viewBtn" class="kv" title="切換中間畫面（快捷鍵 V）"
-    style="background:none;border:1px solid var(--line);color:var(--dim);font:inherit;cursor:pointer;padding:2px 8px">VIEW <span id="hView">FLOW</span></button>
-  <div class="kv">CLAUDE <span id="hCost">$0.00</span></div>
-  <div class="kv"><span class="dot" id="conn"></span><span id="hClock">--:--:--</span></div>
+  <button id="helpBtn" class="btn" title="看整個畫面怎麼讀（快捷鍵 H）">說明 ?</button>
+  <button id="viewBtn" class="btn" title="切換中間畫面（快捷鍵 V）">畫面：<span id="hView">流程</span></button>
+  <div class="kv" title="依 dashboard/prices.json 估算的 Claude Code 花費">Claude 花費 <span id="hCost">$0.00</span></div>
+  <div class="kv" title="綠燈 = 已連上儀表板伺服器"><span class="dot" id="conn"></span><span id="hClock">--:--:--</span></div>
 </header>
 <main>
   <section class="panel" style="grid-column:1;grid-row:1">
-    <div class="ph"><span>vd.nodes</span><b id="vdCount">0</b></div>
-    <div class="pb"><table><thead><tr><th>VD</th><th>進度</th><th>loss</th><th>ε</th><th>MAE</th></tr></thead>
+    <div class="ph"><span>路口偵測器（VD）</span><b id="vdCount">0</b></div>
+    <div class="hint">每個 VD 是一台路邊車速偵測器，資料留在本地自己訓練，只上傳模型更新。</div>
+    <div class="pb"><table><thead><tr><th>VD</th><th>狀態</th><th title="訓練損失，越低代表模型越貼近資料">損失</th><th title="這個 VD 累計用掉的隱私預算">ε</th><th title="在這個 VD 測試資料上的車速誤差 km/h">誤差</th></tr></thead>
       <tbody id="vdBody"></tbody></table>
-      <div style="margin-top:12px" class="ph" ><span>security.gate</span><b id="secMode">—</b></div>
+      <div style="margin-top:12px" class="ph"><span>安全閘道</span><b id="secMode">—</b></div>
+      <div class="hint">伺服器收到更新前先驗證簽章，擋下被竄改或來路不明的更新。</div>
       <div class="tiles" style="margin-top:8px">
-        <div class="tile"><div class="k">REJECTED</div><div class="v" id="sRej">0</div></div>
-        <div class="tile"><div class="k">TAMPERED</div><div class="v" id="sTam">0</div></div>
-        <div class="tile"><div class="k">DROPPED</div><div class="v" id="sDrop">0</div></div>
-        <div class="tile"><div class="k">DIVERGED</div><div class="v" id="sDiv">0</div></div>
-        <div class="tile"><div class="k">ATTACKERS</div><div class="v" id="sAtk">0</div></div>
-        <div class="tile"><div class="k">UPLOAD/VD</div><div class="v" id="sUp">—</div></div>
+        <div class="tile" title="簽章驗證失敗、被伺服器拒收的更新數"><div class="k">拒收</div><div class="v" id="sRej">0</div></div>
+        <div class="tile" title="模擬傳輸中被竄改、且被偵測到的更新數"><div class="k">被竄改</div><div class="v" id="sTam">0</div></div>
+        <div class="tile" title="模擬斷線、這輪沒回應的 VD 數"><div class="k">斷線</div><div class="v" id="sDrop">0</div></div>
+        <div class="tile" title="本地訓練數值爆掉、改送回原模型的次數"><div class="k">發散</div><div class="v" id="sDiv">0</div></div>
+        <div class="tile" title="設定成惡意攻擊者的 VD 數（攻擊模擬）"><div class="k">攻擊者</div><div class="v" id="sAtk">0</div></div>
+        <div class="tile" title="每個 VD 每輪上傳的資料量"><div class="k">上傳量/VD</div><div class="v" id="sUp">—</div></div>
       </div>
     </div>
   </section>
 
   <section class="panel" id="hubWrap">
     <canvas id="hub"></canvas>
-    <div id="hubTag">FEDERATED.TOPOLOGY / <b id="aggName">FEDAVG</b></div>
+    <div id="hubTag">聯邦拓樸 / 合併方式 <b id="aggName">FEDAVG</b></div>
     <div id="legend">
       <span><i style="background:var(--green)"></i>本地訓練</span>
-      <span><i style="background:var(--mag)"></i>DP 加噪</span>
-      <span><i style="background:var(--cyan)"></i>上傳</span>
-      <span><i style="background:var(--white)"></i>廣播全域模型</span>
-      <span><i style="background:var(--red)"></i>斷線/拒絕</span>
-      <span><i style="background:var(--amber)"></i>發散/攻擊</span>
+      <span><i style="background:var(--mag)"></i>DP 加雜訊</span>
+      <span><i style="background:var(--cyan)"></i>上傳更新</span>
+      <span><i style="background:var(--white)"></i>廣播新模型</span>
+      <span><i style="background:var(--red)"></i>斷線／拒收</span>
+      <span><i style="background:var(--amber)"></i>發散／攻擊</span>
     </div>
-    <div id="banner"><b>WAITING FOR RUN</b>python scripts/run_experiments.py --dashboard</div>
+    <div id="banner"><b>等待實驗開始</b>另開終端機執行 python scripts/run_experiments.py --dashboard</div>
   </section>
 
   <section class="panel" style="grid-column:3;grid-row:1">
-    <div class="ph"><span>round.metrics</span><b id="rCount">0</b></div>
+    <div class="ph"><span>每輪成績</span><b id="rCount">0</b></div>
     <div class="pb">
-      <div class="metric"><div class="mh"><span>GLOBAL MAE (km/h)</span><span id="mNaive">naive —</span></div>
-        <div class="mv" id="mMae">—</div><canvas id="cMae"></canvas></div>
-      <div class="metric"><div class="mh"><span>RMSE (km/h)</span><span></span></div>
-        <div class="mv" id="mRmse">—</div><canvas id="cRmse"></canvas></div>
-      <div class="metric"><div class="mh"><span>TRAIN LOSS</span><span id="mDiv"></span></div>
-        <div class="mv" id="mLoss">—</div><canvas id="cLoss"></canvas></div>
-      <div class="metric"><div class="mh"><span>PRIVACY ε (max, δ=<span id="mDelta">—</span>)</span><span id="mSigma"></span></div>
-        <div class="mv" id="mEps">—</div><canvas id="cEps"></canvas></div>
-      <div class="metric"><div class="mh"><span>ROUND TIME (s, slowest VD)</span><span></span></div>
-        <div class="mv" id="mSec">—</div><canvas id="cSec"></canvas></div>
+      <div class="metric"><div class="mh"><span>全域誤差 MAE（km/h）</span><span id="mNaive">基準 —</span></div>
+        <div class="mv" id="mMae">—</div><canvas id="cMae"></canvas>
+        <div class="hint0">合併後的模型預測車速平均差幾 km/h。虛線是「直接猜跟上一筆一樣」的基準，線要在虛線下面才算有學到。</div></div>
+      <div class="metric"><div class="mh"><span>RMSE（km/h）</span><span></span></div>
+        <div class="mv" id="mRmse">—</div><canvas id="cRmse"></canvas>
+        <div class="hint0">另一種誤差算法，對「猜很離譜」的情況懲罰比較重。</div></div>
+      <div class="metric"><div class="mh"><span>訓練損失</span><span id="mDiv"></span></div>
+        <div class="mv" id="mLoss">—</div><canvas id="cLoss"></canvas>
+        <div class="hint0">各 VD 本地訓練的平均損失，往下走代表模型在進步。</div></div>
+      <div class="metric"><div class="mh"><span>隱私預算 ε（最大值，δ=<span id="mDelta">—</span>）</span><span id="mSigma"></span></div>
+        <div class="mv" id="mEps">—</div><canvas id="cEps"></canvas>
+        <div class="hint0">每多訓練一輪就多用掉一點隱私，ε 會一直往上加；越小越安全，通常希望 &lt; 10。</div></div>
+      <div class="metric"><div class="mh"><span>每輪耗時（秒，最慢的 VD）</span><span></span></div>
+        <div class="mv" id="mSec">—</div><canvas id="cSec"></canvas>
+        <div class="hint0">一輪要等最慢的 VD 做完，伺服器才能合併。</div></div>
     </div>
   </section>
 
   <section class="panel" style="grid-column:1;grid-row:2">
-    <div class="ph"><span>event.stream</span><b id="evRate">0/s</b></div>
+    <div class="ph"><span>事件紀錄</span><b id="evRate">0/s</b></div>
     <div class="pb"><div id="log"></div></div>
   </section>
 
   <section class="panel" style="grid-column:2;grid-row:2">
-    <div class="ph"><span>claude.code / tool calls</span><b id="ccCalls">0 calls</b></div>
+    <div class="ph"><span>Claude Code 工具呼叫（每條線 = 一次呼叫，越粗用越多 token）</span><b id="ccCalls">0 次</b></div>
     <canvas id="ccLanes"></canvas>
   </section>
 
   <section class="panel" style="grid-column:3;grid-row:2">
-    <div class="ph"><span>claude.code / cost</span><b id="ccSub">0 sub</b></div>
+    <div class="ph"><span>Claude Code 用量</span><b id="ccSub">子代理 0</b></div>
     <div class="pb">
       <div class="tiles">
-        <div class="tile"><div class="k">INPUT</div><div class="v" id="ccIn">0</div></div>
-        <div class="tile"><div class="k">OUTPUT</div><div class="v" id="ccOut">0</div></div>
-        <div class="tile"><div class="k">CACHE R/W</div><div class="v" id="ccCache">0</div></div>
+        <div class="tile" title="送進模型的新 token"><div class="k">輸入</div><div class="v" id="ccIn">0</div></div>
+        <div class="tile" title="模型寫出來的 token"><div class="k">輸出</div><div class="v" id="ccOut">0</div></div>
+        <div class="tile" title="從快取讀／寫的 token，比一般輸入便宜很多"><div class="k">快取讀/寫</div><div class="v" id="ccCache">0</div></div>
       </div>
       <div id="ccModels" class="muted" style="margin-bottom:6px"></div>
       <div id="ccTools"></div>
-      <div class="muted" style="margin-top:6px;font-size:10px">花費為估算（dashboard/prices.json）。監控本身 0 token。</div>
+      <div class="muted" style="margin-top:6px;font-size:10px">花費是依 dashboard/prices.json 估算的。這個監看畫面本身不呼叫 AI，不花 token。</div>
     </div>
   </section>
 </main>
+
+<div id="help" hidden>
+  <div class="box">
+    <button class="btn" id="helpClose" style="float:right">關閉 ✕</button>
+    <h2>這個畫面在看什麼？</h2>
+    <p><b>聯邦學習</b>：每個路邊車速偵測器（VD）用自己的資料在本地訓練車速預測模型，<b>原始資料不離開 VD</b>，只把「模型更新」上傳。伺服器把所有更新合併成一個全域模型，再發回去給大家，這樣算一輪。</p>
+    <p><b>差分隱私（DP）</b>：上傳前在訓練過程加入高斯雜訊（σ 越大雜訊越多），讓別人無法從模型反推出某一筆資料。代價是預測會稍微不準。<b>ε（隱私預算）</b>衡量洩漏風險，越小越安全，每訓練一輪都會往上加。</p>
+    <p><b>安全閘道</b>：伺服器用簽章（HMAC／Ed25519）檢查每份更新，被竄改或不明來源的會被拒收；也可以模擬 VD 斷線與惡意攻擊者。</p>
+    <h3>中間「流程」畫面</h3>
+    <ul>
+      <li>左邊一排是 32 個 VD，每個 VD 拉出幾條線，依序穿過五張卡片：<b>本地訓練 → DP 加雜訊 → 安全閘道 → 伺服器合併 → 全域評估</b>。</li>
+      <li><span style="color:var(--green)">綠色</span>流光：這個 VD 正在本地訓練，亮到哪裡代表做到哪裡。</li>
+      <li><span style="color:var(--mag)">洋紅</span>小點：DP 正在加雜訊。</li>
+      <li><span style="color:var(--cyan)">青色</span>流光：訓練完，把更新送往伺服器合併。</li>
+      <li><span style="color:var(--white)">白色</span>從右往左倒流：伺服器把新模型發回各 VD，下一輪開始。</li>
+      <li><span style="color:var(--red)">紅色</span>虛線：VD 斷線或更新被拒收；<span style="color:var(--amber)">琥珀色</span>：訓練發散或模擬攻擊者。</li>
+      <li>背景的白色亂線只是裝飾，讓沒事件時畫面也在動。</li>
+    </ul>
+    <h3>其他區塊</h3>
+    <ul>
+      <li>左上：每個 VD 的狀態、損失、ε 與誤差；下面是安全閘道的統計。</li>
+      <li>右上：每輪的誤差、損失、ε、耗時曲線。誤差圖的虛線是「猜跟上一筆一樣」的基準。</li>
+      <li>下方：事件紀錄，以及你在這個專案用 Claude Code 的工具呼叫與 token 花費（讀本機紀錄，不花 token）。</li>
+    </ul>
+    <p class="muted">沒有實驗在跑時，會自動重播最近一次實驗（標題列顯示 REPLAY）。按 V 切換「流程／放射」兩種畫面，按 H 開關這個說明。</p>
+  </div>
+</div>
 
 <script>
 "use strict";
@@ -197,12 +241,12 @@ function handle(e, live){
       resetRun(); S.run = e.run; S.rounds = e.rounds; S.cfg = e; S.replay = !!e.replay;
       (e.clients||[]).forEach(c => { client(c.pid).vdid = c.vdid; });
       layoutDirty = true;
-      log(`RUN ${e.run} · ${e.rounds} rounds · ${(e.clients||[]).length} VD · ${e.use_dp?`DP σ=${e.sigma}`:"no DP"} · ${e.aggregator}`, "var(--hi)");
+      log(`實驗開始 ${e.run} · 共 ${e.rounds} 輪 · ${(e.clients||[]).length} 個 VD · ${e.use_dp?`差分隱私 σ=${e.sigma}`:"不加隱私"} · 合併方式 ${e.aggregator}`, "var(--hi)");
       break;
     case "round_start":
       S.round = e.round; S.rounds = e.rounds || S.rounds; S.bcastT = t;
       S.clients.forEach(c => { if(c){ c.phase = "wait"; c.target = 0; c.disp = 0; } });
-      log(`round ${e.round}/${e.rounds} · broadcast global model${e.signed?" (Ed25519 signed)":""}`, "var(--white)");
+      log(`第 ${e.round}/${e.rounds} 輪開始 · 伺服器發送全域模型${e.signed?"（已用 Ed25519 簽章）":""}`, "var(--white)");
       break;
     case "train_start": { const c = client(e.pid); c.phase = "train"; c.target = 0; c.disp = 0; c.dp = !!e.dp; break; }
     case "progress": { const c = client(e.pid); if(c.phase!=="train"){ c.phase="train"; }
@@ -210,29 +254,29 @@ function handle(e, live){
     case "train_end": { const c = client(e.pid);
       c.target = 1; if(!live) c.disp = 1; c.loss = e.loss; c.eps = e.eps; c.localMae = e.local_mae; c.attacker = !!e.attacker;
       c.phase = e.diverged ? "diverged" : (e.attacker ? "attacker" : "upload"); c.upT = t;
-      if(e.diverged){ S.sec.div++; log(`${shortVd(c.vdid)} diverged → sends global model back`, "var(--amber)"); }
-      else if(e.attacker) log(`${shortVd(c.vdid)} ⚠ malicious update (attack sim)`, "var(--amber)");
-      else log(`${shortVd(c.vdid)} upload ${(e.upload_bytes/1024).toFixed(1)}KB · loss ${fmt(e.loss,4)}${e.eps!=null?` · ε ${fmt(e.eps)}`:""}`, "var(--cyan)");
+      if(e.diverged){ S.sec.div++; log(`${shortVd(c.vdid)} 訓練發散 → 改送回原本的模型`, "var(--amber)"); }
+      else if(e.attacker) log(`${shortVd(c.vdid)} ⚠ 送出惡意更新（攻擊模擬）`, "var(--amber)");
+      else log(`${shortVd(c.vdid)} 上傳更新 ${(e.upload_bytes/1024).toFixed(1)}KB · 損失 ${fmt(e.loss,4)}${e.eps!=null?` · ε ${fmt(e.eps)}`:""}`, "var(--cyan)");
       S.upBytes = e.upload_bytes; break; }
     case "dropout": { const c = client(e.pid); c.phase = "drop"; c.flashT = t;
-      log(`${shortVd(c.vdid)} ✕ dropped out (round ${e.round})`, "var(--red)"); break; }
+      log(`${shortVd(c.vdid)} ✕ 斷線（第 ${e.round} 輪）`, "var(--red)"); break; }
     case "security": {
       const r = e.n_rejected|0, ta = e.n_tampered|0;
       S.sec.rej += r; S.sec.tam += ta; S.sec.drop += e.n_dropped|0;
-      if(r || ta){ S.alarmT = t; log(`security gate: ${r} rejected, ${ta} tampered`, "var(--red)"); }
+      if(r || ta){ S.alarmT = t; log(`安全閘道：拒收 ${r} 份、偵測到竄改 ${ta} 份`, "var(--red)"); }
       break; }
     case "round_train": {
       S.pulseT = t;
       const m = metricRow(e.round); Object.assign(m, {loss:e.train_loss, eps:e.epsilon_max, sec:e.train_seconds_max, div:e.n_diverged});
       S.clients.forEach(c => { if(c && (c.phase==="upload"||c.phase==="train")) c.phase = "done"; });
-      log(`aggregate r${e.round} · ${e.n} updates · loss ${fmt(e.train_loss,4)}${e.epsilon_max!=null?` · ε_max ${fmt(e.epsilon_max)}`:""}`, "var(--green)");
+      log(`第 ${e.round} 輪合併 · 收到 ${e.n} 份更新 · 損失 ${fmt(e.train_loss,4)}${e.epsilon_max!=null?` · ε 最大 ${fmt(e.epsilon_max)}`:""}`, "var(--green)");
       break; }
     case "round_eval": {
       const m = metricRow(e.round); Object.assign(m, {mae:e.mae_kmh, rmse:e.rmse_kmh, naive:e.naive_mae_kmh});
-      log(`eval r${e.round} · MAE ${fmt(e.mae_kmh,3)} km/h (naive ${fmt(e.naive_mae_kmh,3)})`, "var(--hi)");
+      log(`第 ${e.round} 輪評估 · 誤差 ${fmt(e.mae_kmh,3)} km/h（基準 ${fmt(e.naive_mae_kmh,3)}）`, "var(--hi)");
       break; }
     case "eval": { client(e.pid).mae = e.mae; break; }
-    case "run_end": S.ended = true; log(`RUN END · ${e.run}`, "var(--hi)"); break;
+    case "run_end": S.ended = true; log(`實驗結束 · ${e.run}`, "var(--hi)"); break;
     case "cc": {
       CC.in += e.in; CC.out += e.out; CC.cr += e.cache_read; CC.cw += e.cache_write;
       const cost = priceOf(e); CC.cost += cost;
@@ -243,9 +287,9 @@ function handle(e, live){
         CC.calls++; if(e.sub) CC.sub++;
         CC.tools[name] = (CC.tools[name]||0) + 1;
         if(live) CC.streaks.push({name, t0:t, w:Math.min(6, 0.8 + Math.log10(1+tok)), sub:e.sub});
-        if(live) log(`claude${e.sub?" [sub]":""} → ${name}`, e.sub ? "var(--mag)" : "#7fa6b8");
+        if(live) log(`Claude${e.sub?"［子代理］":""} → ${name}`, e.sub ? "var(--mag)" : "#7fa6b8");
       }
-      if(!e.tools.length && live && tok) CC.streaks.push({name:"(think)", t0:t, w:Math.min(6, 0.8+Math.log10(1+tok)), sub:e.sub});
+      if(!e.tools.length && live && tok) CC.streaks.push({name:"（思考）", t0:t, w:Math.min(6, 0.8+Math.log10(1+tok)), sub:e.sub});
       ccDirty = true; break; }
     case "cc_error": CC.err++; ccDirty = true; break;
   }
@@ -333,6 +377,11 @@ function strokePartial(pts, from, to){
 function pointAt(pts, t){ const a = Math.max(0,Math.min(1,t))*SEG, i = Math.min(SEG-1, Math.floor(a)), f = a-i;
   return [pts[i][0]+(pts[i+1][0]-pts[i][0])*f, pts[i][1]+(pts[i+1][1]-pts[i][1])*f]; }
 
+const PH = {train:"訓練中", upload:"上傳", done:"完成", drop:"斷線", diverged:"發散", attacker:"攻擊者", wait:"等待", idle:"閒置"};
+function toggleHelp(show){ $("help").hidden = !(show ?? $("help").hidden); }
+$("helpBtn").onclick = () => toggleHelp(true); $("helpClose").onclick = () => toggleHelp(false);
+$("help").onclick = e => { if(e.target.id === "help") toggleHelp(false); };
+window.addEventListener("keydown", e => { if(e.key === "h" || e.key === "H") toggleHelp(); else if(e.key === "Escape") toggleHelp(false); });
 function phaseColor(c){
   return {train:COL.green, upload:COL.cyan, done:COL.green, drop:COL.red, diverged:COL.amber, attacker:COL.amber,
           wait:COL.dim, idle:COL.dim}[c.phase] || COL.dim;
@@ -434,19 +483,19 @@ const FLOW = [COL.cyan, COL.green, COL.cyan, COL.mag, COL.green, COL.white];
 // 線上的流光代表該 VD 目前在哪個階段。V 鍵或右上角按鈕切回原本的放射狀 HUB。
 let VIEW = "flow";
 try { VIEW = localStorage.getItem("fl.view") || "flow"; } catch(_) {}
-function setView(v){ VIEW = v; $("hView").textContent = v.toUpperCase(); $("hubTag").style.display = v==="flow" ? "none" : "";
-  $("legend").style.display = v==="flow" ? "none" : ""; try { localStorage.setItem("fl.view", v); } catch(_) {} }
+function setView(v){ VIEW = v; $("hView").textContent = v==="flow" ? "流程" : "放射"; $("hubTag").style.display = v==="flow" ? "none" : "";
+  try { localStorage.setItem("fl.view", v); } catch(_) {} }
 $("viewBtn").onclick = () => setView(VIEW === "flow" ? "hub" : "flow");
 window.addEventListener("keydown", e => { if(e.key === "v" || e.key === "V") setView(VIEW === "flow" ? "hub" : "flow"); });
 setView(VIEW === "hub" ? "hub" : "flow");
 
 const KF = 6, PER = 14;                        // 每個 VD 幾條線、每段取樣點數
-const STAGES = [                               // 卡片：id、標題、標頭色、在畫面上的相對位置
-  {id:"train", title:"local.train · DP-SGD", col:[150,110,255], fx:0.30, fy:0.30},
-  {id:"dp",    title:"dp.noise · gaussian",  col:COL.mag,       fx:0.46, fy:0.70},
-  {id:"gate",  title:"security.gate",        col:COL.red,       fx:0.60, fy:0.24},
-  {id:"agg",   title:"server · aggregate",   col:COL.amber,     fx:0.75, fy:0.62},
-  {id:"eval",  title:"global.eval",          col:COL.cyan,      fx:0.90, fy:0.32},
+const STAGES = [                               // 卡片：id、標題、一句白話說明、標頭色、在畫面上的相對位置
+  {id:"train", title:"① 本地訓練（各 VD）",   note:"資料不離開 VD，只算模型更新",   col:[150,110,255], fx:0.30, fy:0.30},
+  {id:"dp",    title:"② 差分隱私加雜訊",      note:"加雜訊，讓人反推不出單筆資料",  col:COL.mag,       fx:0.46, fy:0.70},
+  {id:"gate",  title:"③ 安全閘道（驗簽章）",  note:"擋下被竄改或來路不明的更新",    col:COL.red,       fx:0.60, fy:0.24},
+  {id:"agg",   title:"④ 伺服器合併模型",      note:"把各 VD 的更新平均成一個模型",  col:COL.amber,     fx:0.75, fy:0.62},
+  {id:"eval",  title:"⑤ 全域模型評估",        note:"用測試資料算誤差，越低越好",    col:COL.cyan,      fx:0.90, fy:0.32},
 ];
 const CARD_W = 168;
 let strands = [], ambient = [], stageIdx = [];
@@ -562,21 +611,21 @@ function drawFlowCards(t){
   const losses = C.map(c => c.loss).filter(v => v!=null), eps = C.map(c => c.eps).filter(v => v!=null);
   const n = C.length || 1, alarm = t - S.alarmT < 1.2;
   const rows = {
-    train: [["active", training.length/n, `${training.length}/${C.length}`], ["progress", prog, `${(prog*100)|0}%`],
-            ["loss", null, fmt(losses.length ? losses.reduce((a,b)=>a+b,0)/losses.length : null, 4)]],
-    dp:    S.cfg.use_dp ? [["sigma σ", Math.min(1, (S.cfg.sigma||0)/2), fmt(S.cfg.sigma,2)],
-            ["ε max", eps.length ? Math.min(1, Math.max(...eps)/10) : 0, fmt(eps.length ? Math.max(...eps) : null, 2)],
-            ["δ", null, String(S.cfg.delta ?? "—")]] : [["off", 0, "no DP"]],
-    gate:  [["rejected", Math.min(1, S.sec.rej/n), S.sec.rej], ["tampered", Math.min(1, S.sec.tam/n), S.sec.tam],
-            ["dropped", Math.min(1, S.sec.drop/n), S.sec.drop], ["verify", null, $("secMode").textContent]],
-    agg:   [["round", S.rounds ? S.round/S.rounds : 0, `${S.round}/${S.rounds}`], ["updates", C.filter(c=>c.phase==="done").length/n, C.filter(c=>c.phase==="done").length],
-            ["train loss", null, fmt(last("loss"),4)]],
-    eval:  [["MAE km/h", last("naive") ? Math.min(1, last("mae")/last("naive")) : 0, fmt(last("mae"),3)],
-            ["RMSE", null, fmt(last("rmse"),3)], ["naive", null, fmt(last("naive"),3)]],
+    train: [["訓練中", training.length/n, `${training.length}/${C.length}`], ["平均進度", prog, `${(prog*100)|0}%`],
+            ["平均損失", null, fmt(losses.length ? losses.reduce((a,b)=>a+b,0)/losses.length : null, 4)]],
+    dp:    S.cfg.use_dp ? [["雜訊 σ", Math.min(1, (S.cfg.sigma||0)/2), fmt(S.cfg.sigma,2)],
+            ["ε 最大", eps.length ? Math.min(1, Math.max(...eps)/10) : 0, fmt(eps.length ? Math.max(...eps) : null, 2)],
+            ["δ", null, String(S.cfg.delta ?? "—")]] : [["未開啟", 0, "不加隱私"]],
+    gate:  [["拒收", Math.min(1, S.sec.rej/n), S.sec.rej], ["被竄改", Math.min(1, S.sec.tam/n), S.sec.tam],
+            ["斷線", Math.min(1, S.sec.drop/n), S.sec.drop], ["驗證方式", null, $("secMode").textContent]],
+    agg:   [["輪次", S.rounds ? S.round/S.rounds : 0, `${S.round}/${S.rounds}`], ["已上傳", C.filter(c=>c.phase==="done").length/n, C.filter(c=>c.phase==="done").length],
+            ["訓練損失", null, fmt(last("loss"),4)]],
+    eval:  [["誤差 km/h", last("naive") ? Math.min(1, last("mae")/last("naive")) : 0, fmt(last("mae"),3)],
+            ["RMSE", null, fmt(last("rmse"),3)], ["基準", null, fmt(last("naive"),3)]],
   };
   STAGES.forEach((s, j) => {
     const x = s.fx*W - CARD_W/2, y = s.fy*H - 30 + Math.sin(t*0.8 + j*1.7)*4;     // 卡片輕微上下浮動
-    const R = rows[s.id], h = 22 + R.length*15;
+    const R = rows[s.id], h = 36 + R.length*15;
     const hot = (s.id==="gate" && alarm) || (s.id==="train" && training.length) || (s.id==="agg" && t - S.pulseT < 1.2);
     hx.fillStyle = "rgba(8,12,16,0.92)"; hx.fillRect(x, y, CARD_W, h);
     hx.strokeStyle = rgba(s.col, hot ? 0.95 : 0.45); hx.lineWidth = 1; hx.strokeRect(x+0.5, y+0.5, CARD_W-1, h-1);
@@ -584,6 +633,7 @@ function drawFlowCards(t){
     hx.font = "600 10px JetBrains Mono, Consolas, monospace"; hx.textAlign = "left"; hx.fillStyle = "#05080b";
     hx.fillText(s.title, x+6, y+11.5);
     hx.font = "10px JetBrains Mono, Consolas, monospace";
+    hx.fillStyle = "#6f8a80"; hx.textAlign = "left"; hx.fillText(s.note, x+6, y+h-7);
     R.forEach(([k, f, v], r) => {
       const yy = y + 30 + r*15;
       hx.fillStyle = "#a9c1b5"; hx.textAlign = "left"; hx.fillText(k, x+6, yy);
@@ -686,7 +736,7 @@ function drawNodes(t){
     hx.textAlign = Math.cos(a) > 0.3 ? "left" : Math.cos(a) < -0.3 ? "right" : "center";
     hx.fillStyle = "#e9fff4"; hx.fillText(shortVd(c.vdid), lx, ly);
     hx.fillStyle = rgba(col, 0.9);
-    const st = c.phase==="train" ? `${(c.disp*100)|0}%` : c.phase.toUpperCase();
+    const st = c.phase==="train" ? `${(c.disp*100)|0}%` : PH[c.phase];
     hx.fillText(`${st}${c.loss!=null?` · ${fmt(c.loss,3)}`:""}`, lx, ly + 13);
   }
 }
@@ -722,7 +772,7 @@ function resizeLanes(){ const r = lanes.getBoundingClientRect(); LW = r.width; L
 function drawLanes(t){
   lx.clearRect(0,0,LW,LH);
   const names = Object.entries(CC.tools).sort((a,b)=>b[1]-a[1]).slice(0,9).map(x=>x[0]);
-  if(!names.includes("(think)")) names.push("(think)");
+  if(!names.includes("（思考）")) names.push("（思考）");
   const nL = names.length, top = 8, lh = (LH - top - 6)/nL, labelW = 92, span = 14; // 線道寬 = 最近 14 秒
   lx.font = "10px JetBrains Mono, Consolas, monospace"; lx.textBaseline = "middle";
   names.forEach((nm,i) => {
@@ -760,12 +810,12 @@ function ui(){
     tableDirty = false;
     $("hRun").textContent = S.run || "—";
     $("hRound").textContent = `${S.round}/${S.rounds}`;
-    $("hMode").textContent = S.run ? (S.cfg.use_dp ? `DP σ=${S.cfg.sigma}` : "NO-DP") + (S.cfg.secure_agg ? " +SECAGG" : "") + (S.replay ? " · REPLAY" : "") : "—";
+    $("hMode").textContent = S.run ? (S.cfg.use_dp ? `差分隱私 σ=${S.cfg.sigma}` : "不加隱私") + (S.cfg.secure_agg ? " ＋安全聚合" : "") + (S.replay ? " · 重播中 REPLAY" : "") : "—";
     $("aggName").textContent = (S.cfg.aggregator || "fedavg").toUpperCase();
     $("vdCount").textContent = S.clients.length;
     $("vdBody").innerHTML = S.clients.map(c => c ? `<tr class="vd"><td><span style="color:${rgba(phaseColor(c),1)}">●</span> ${shortVd(c.vdid)}
       <div class="bar"><i style="width:${(c.target*100).toFixed(0)}%;background:${rgba(phaseColor(c),1)}"></i></div></td>
-      <td>${c.phase==="train" ? (c.target*100|0)+"%" : `<span class="st" style="color:${rgba(phaseColor(c),1)}">${c.phase}</span>`}</td>
+      <td>${c.phase==="train" ? (c.target*100|0)+"%" : `<span class="st" style="color:${rgba(phaseColor(c),1)}">${PH[c.phase]}</span>`}</td>
       <td>${fmt(c.loss,3)}</td><td>${fmt(c.eps,2)}</td><td>${fmt(c.mae,2)}</td></tr>` : "").join("");
     $("sRej").textContent = S.sec.rej; $("sTam").textContent = S.sec.tam; $("sDrop").textContent = S.sec.drop;
     $("sDiv").textContent = S.sec.div; $("sAtk").textContent = S.cfg.attack_clients || 0;
@@ -777,9 +827,9 @@ function ui(){
     const M = S.metrics, last = k => { for(let i=M.length-1;i>=0;i--) if(M[i][k]!=null) return M[i][k]; return null; };
     $("rCount").textContent = M.length;
     $("mMae").textContent = fmt(last("mae"),3); $("hMae").textContent = fmt(last("mae"),2);
-    $("mNaive").textContent = `naive ${fmt(last("naive"),3)}`;
+    $("mNaive").textContent = `基準 ${fmt(last("naive"),3)}`;
     $("mRmse").textContent = fmt(last("rmse"),3); $("mLoss").textContent = fmt(last("loss"),4);
-    $("mEps").textContent = S.cfg.use_dp ? fmt(last("eps"),2) : "∞ (no DP)"; $("hEps").textContent = S.cfg.use_dp ? fmt(last("eps"),2) : "—";
+    $("mEps").textContent = S.cfg.use_dp ? fmt(last("eps"),2) : "∞（不加隱私）"; $("hEps").textContent = S.cfg.use_dp ? fmt(last("eps"),2) : "—";
     $("mDelta").textContent = S.cfg.delta ?? "—"; $("mSigma").textContent = S.cfg.use_dp ? `σ=${S.cfg.sigma}` : "";
     $("mSec").textContent = fmt(last("sec"),2);
     const dv = M.reduce((s,m)=>s+(m.div||0),0); $("mDiv").textContent = dv ? `diverged ${dv}` : "";
@@ -793,8 +843,8 @@ function ui(){
     ccDirty = false;
     $("ccIn").textContent = fmtK(CC.in); $("ccOut").textContent = fmtK(CC.out); $("ccCache").textContent = fmtK(CC.cr + CC.cw);
     $("hCost").textContent = "$" + CC.cost.toFixed(2);
-    $("ccCalls").textContent = `${CC.calls} calls${CC.err?` · ${CC.err} err`:""}`;
-    $("ccSub").textContent = `${CC.sub} sub`;
+    $("ccCalls").textContent = `${CC.calls} 次${CC.err?` · 失敗 ${CC.err}`:""}`;
+    $("ccSub").textContent = `子代理 ${CC.sub}`;
     $("ccModels").innerHTML = Object.entries(CC.models).sort((a,b)=>b[1].cost-a[1].cost)
       .map(([m,v]) => `<div>${m.replace(/^claude-/,"")} <span style="color:var(--hi)">${fmtK(v.tok)}</span> · $${v.cost.toFixed(2)}</div>`).join("") || "尚無 Claude Code 活動";
     const tools = Object.entries(CC.tools).sort((a,b)=>b[1]-a[1]).slice(0,7), mx = tools.length ? tools[0][1] : 1;
