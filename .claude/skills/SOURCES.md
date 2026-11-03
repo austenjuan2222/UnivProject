@@ -16,3 +16,6 @@
 - `academic-plotting` 的架構圖功能會呼叫 Google Gemini（需 API key，會把描述文字送到 Google）；只用 matplotlib/seaborn 畫數據圖則不會連網。
 - `ml-paper-writing` 建議加裝第三方 Exa MCP（`npx mcp-remote`），不需要就不要裝。
 - `statistical-analysis` 建議在獨立 venv 安裝 pingouin/scipy/statsmodels。
+
+## 專案自訂 skill
+- `lecture-optimize`：依課程簡報持續優化，直到 Austen 說停止（Austen 2026-11-03 指定）。
