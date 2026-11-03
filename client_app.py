@@ -7,13 +7,21 @@
 from __future__ import annotations
 
 import logging
+import time
 import warnings
 
+import numpy as np
+
 import torch
-from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
+from flwr.app import Array, ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 
+from compress import quantize_update
 from data import load_client_arrays, n_calendar
+from guard import AUTH, arrays_of, attach_update_tag
+from secagg import load_agreement_keys, mask_update
+from security import (drops_out, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key,
+                      poison_update, verify_model)
 from task import TrafficModel, all_finite, evaluate, make_loader, set_seed, train, unwrap
 
 warnings.filterwarnings("ignore", category=UserWarning, module="opacus")
@@ -49,7 +57,28 @@ def _cfg(context: Context) -> dict:
         "rounds": int(c["num-server-rounds"]),
         "ft_epochs": int(c.get("finetune-epochs", 0)),
         "ft_lr": float(c.get("finetune-lr", 0.05)),
+        # 通訊安全與攻擊模擬（見 security.py、guard.py）
+        "key_dir": str(c.get("key-dir", "keys")),
+        "verify_updates": bool(c.get("verify-updates", False)),
+        "sign_models": bool(c.get("sign-models", False)),
+        "attack_clients": int(c.get("attack-clients", 0)),
+        "attack_type": str(c.get("attack-type", "flip")),
+        "attack_scale": float(c.get("attack-scale", 10.0)),
+        "dropout_rate": float(c.get("dropout-rate", 0.0)),
+        "secure_agg": bool(c.get("secure-agg", False)),
+        "upload_bits": int(c.get("upload-bits", 32)),
+        "update_auth": str(c.get("update-auth", "hmac")),
     }
+
+
+def _check_global_signature(cfg: dict, msg: Message, rnd: int) -> None:
+    """VD 只接受伺服器簽過名的全域模型（避免被騙去載入假的模型更新）。"""
+    if not cfg["sign_models"]:
+        return
+    sig = str(msg.content[AUTH]["sig"]) if AUTH in msg.content else ""
+    if not (sig and verify_model(load_server_public_key(cfg["key_dir"]), arrays_of(msg.content["arrays"]),
+                                 rnd, sig)):
+        raise RuntimeError(f"第 {rnd} 輪全域模型的簽章驗證失敗，VD 拒絕使用這個模型")
 
 
 def _client_data(context: Context, cfg: dict):
@@ -95,7 +124,11 @@ def train_fn(msg: Message, context: Context) -> Message:
     cfg = _cfg(context)
     pid, d = _client_data(context, cfg)
     rnd = int(msg.content["config"]["server-round"])
+    if drops_out(cfg["seed"], pid, rnd, cfg["dropout_rate"]):
+        raise RuntimeError(f"模擬 VD {pid} 在第 {rnd} 輪斷線")  # 伺服器會收到錯誤回覆並略過這個 VD
+    _check_global_signature(cfg, msg, rnd)
     set_seed(cfg["seed"] + 1000 * pid + rnd)
+    t0 = time.perf_counter()
 
     model = _model(cfg, msg)
     optimizer = torch.optim.SGD(model.parameters(), lr=cfg["lr"])
@@ -127,22 +160,47 @@ def train_fn(msg: Message, context: Context) -> Message:
     r = evaluate(unwrap(model), d["X_test"], d["y_test"], d["mean"], d["std"])
     metrics["local-mae-kmh"] = r["mae_kmh"]
     metrics["num-test"] = len(d["y_test"])
-    return Message(
-        content=RecordDict({
-            "arrays": ArrayRecord(unwrap(model).state_dict()),
-            "metrics": MetricRecord(metrics),
-        }),
-        reply_to=msg,
-    )
+    arrays = ArrayRecord(unwrap(model).state_dict())
+    n = int(context.node_config["num-partitions"])
+    if is_attacker(pid, n, cfg["attack_clients"]):
+        # 被入侵的 VD：送出惡意更新（它仍有合法金鑰，所以下面照樣簽章；MAC 擋不住這種攻擊）
+        g = arrays_of(msg.content["arrays"])
+        bad = poison_update(g, arrays_of(arrays), cfg["attack_type"], cfg["attack_scale"],
+                            np.random.default_rng([cfg["seed"], pid, rnd]))
+        arrays = ArrayRecord({k: Array(v) for k, v in bad.items()})
+    upload_bytes = None
+    if cfg["upload_bits"] < 32:
+        # 量化更新量再上傳（LPWAN 情境）；伺服器收到的就是還原後的值
+        q, upload_bytes = quantize_update(arrays_of(msg.content["arrays"]), arrays_of(arrays),
+                                          cfg["upload_bits"], np.random.default_rng([cfg["seed"], pid, rnd, 7]))
+        arrays = ArrayRecord({k: Array(v) for k, v in q.items()})
+    if cfg["secure_agg"]:
+        # 安全聚合：上傳「樣本數 × 參數 ＋ 成對遮罩」，伺服器只能還原所有 VD 的加總
+        priv, pubs = load_agreement_keys(cfg["key_dir"], pid)
+        masked = mask_update(arrays_of(arrays), len(d["y_train"]), pid, range(n), priv, pubs, rnd)
+        arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
+    # Edge 運算成本：上傳量（模型參數）vs. 若把原始訓練資料傳上雲的量
+    metrics["upload-bytes"] = (upload_bytes if upload_bytes is not None
+                               else int(sum(a.numpy().nbytes for a in arrays.values())))
+    # 原始資料量以「訓練期每 5 分鐘一筆車速」計（float32）；不含輸入視窗的重複
+    metrics["raw-bytes"] = int(len(d["y_train"]) * 4)
+    metrics["train-seconds"] = time.perf_counter() - t0
+    content = RecordDict({"arrays": arrays, "metrics": MetricRecord(metrics)})
+    if cfg["verify_updates"]:
+        key = (load_vd_signing_key(cfg["key_dir"], pid) if cfg["update_auth"] == "ed25519"
+               else load_vd_key(cfg["key_dir"], pid))  # 只讀自己的金鑰
+        attach_update_tag(content, key, rnd, pid)
+    return Message(content=content, reply_to=msg)
 
 
 @app.evaluate()
 def evaluate_fn(msg: Message, context: Context) -> Message:
     cfg = _cfg(context)
     pid, d = _client_data(context, cfg)
+    rnd = int(msg.content["config"]["server-round"])
+    _check_global_signature(cfg, msg, rnd)
     model = _model(cfg, msg)
     r = evaluate(model, d["X_test"], d["y_test"], d["mean"], d["std"])
-    rnd = int(msg.content["config"]["server-round"])
     metrics = {
         "num-examples": len(d["y_test"]),
         "round": rnd,

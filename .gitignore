@@ -11,6 +11,9 @@ data/
 *.xml.gz
 *.partial
 
+# 金鑰（每次執行時自動產生，絕不可提交）
+keys/
+
 # 實驗輸出
 results/
 *.pt

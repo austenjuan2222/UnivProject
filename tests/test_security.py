@@ -1,0 +1,178 @@
+"""security.py：模型更新的完整性（HMAC）、全域模型簽章（Ed25519）、攻擊模擬。"""
+import unittest
+
+import numpy as np
+
+import os
+import tempfile
+from pathlib import Path
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+
+from security import (drops_out, is_attacker, load_server_public_key, load_server_secrets, load_vd_key,
+                      load_vd_signing_key, load_vd_verify_keys, poison_update, provision_keys, sign_model,
+                      sign_update, tamper, verify_model, verify_update)
+
+
+def _arrays(v=0.5):
+    return {"net.0.weight": np.full((3, 2), v, dtype=np.float32),
+            "net.0.bias": np.arange(3, dtype=np.float32)}
+
+
+class KeyProvisioningTest(unittest.TestCase):
+    """每個 VD 只拿到自己的金鑰與伺服器公鑰；伺服器的私鑰與驗證表放在另一個資料夾。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name) / "keys"
+        provision_keys(self.dir, 4)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_each_vd_gets_a_distinct_random_key(self):
+        keys = [load_vd_key(self.dir, p) for p in range(4)]
+        self.assertEqual(len(set(keys)), 4)
+        self.assertTrue(all(len(k) == 32 for k in keys))
+
+    def test_vd_files_hold_no_server_secret(self):
+        vd_files = sorted(f.name for f in self.dir.iterdir() if f.is_file())
+        self.assertEqual(vd_files, ["server.pub", "vd-0.ed25519", "vd-0.key", "vd-1.ed25519", "vd-1.key",
+                                    "vd-2.ed25519", "vd-2.key", "vd-3.ed25519", "vd-3.key", "vd_sign_pub.json"])
+        priv, table = load_server_secrets(self.dir)
+        self.assertEqual(set(table), {0, 1, 2, 3})
+        self.assertEqual(table[2], load_vd_key(self.dir, 2))
+
+    def test_server_signature_verifies_with_published_public_key(self):
+        priv, _ = load_server_secrets(self.dir)
+        sig = sign_model(priv, _arrays(), rnd=1)
+        self.assertTrue(verify_model(load_server_public_key(self.dir), _arrays(), 1, sig))
+
+    def test_provisioning_twice_keeps_existing_keys(self):
+        before = load_vd_key(self.dir, 1)
+        provision_keys(self.dir, 4)
+        self.assertEqual(load_vd_key(self.dir, 1), before)
+
+    def test_more_vds_adds_keys_without_changing_old_ones(self):
+        before = load_vd_key(self.dir, 0)
+        provision_keys(self.dir, 6)
+        self.assertEqual(load_vd_key(self.dir, 0), before)
+        self.assertEqual(set(load_server_secrets(self.dir)[1]), set(range(6)))
+
+    @unittest.skipIf(os.name == "nt", "POSIX 權限")
+    def test_secret_files_are_owner_only(self):
+        self.assertEqual((self.dir / "vd-0.key").stat().st_mode & 0o077, 0)
+        self.assertEqual((self.dir / "server" / "ed25519.key").stat().st_mode & 0o077, 0)
+
+
+class UpdateSignatureTest(unittest.TestCase):
+    """不可否認性：VD 用自己的 Ed25519 私鑰簽更新，伺服器只有公鑰，偽造不了 VD 的簽章。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        provision_keys(self.tmp.name, 3)
+        self.pubs = load_vd_verify_keys(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_vd_signature_verifies_with_public_key_only(self):
+        tag = sign_update(load_vd_signing_key(self.tmp.name, 1), _arrays(), rnd=2, pid=1)
+        self.assertTrue(verify_update(self.pubs[1], _arrays(), 2, 1, tag))
+
+    def test_signature_by_another_vd_is_rejected(self):
+        tag = sign_update(load_vd_signing_key(self.tmp.name, 0), _arrays(), rnd=2, pid=1)
+        self.assertFalse(verify_update(self.pubs[1], _arrays(), 2, 1, tag))
+
+    def test_server_side_table_holds_only_public_keys(self):
+        self.assertTrue(all(isinstance(k, Ed25519PublicKey) for k in self.pubs.values()))
+
+    def test_modified_update_or_round_is_rejected(self):
+        tag = sign_update(load_vd_signing_key(self.tmp.name, 2), _arrays(), rnd=2, pid=2)
+        self.assertFalse(verify_update(self.pubs[2], _arrays(0.6), 2, 2, tag))
+        self.assertFalse(verify_update(self.pubs[2], _arrays(), 3, 2, tag))
+
+
+class UpdateMacTest(unittest.TestCase):
+    def setUp(self):
+        self.key = os.urandom(32)
+
+    def test_signed_update_verifies(self):
+        tag = sign_update(self.key, _arrays(), rnd=5, pid=3)
+        self.assertTrue(verify_update(self.key, _arrays(), 5, 3, tag))
+
+    def test_one_changed_value_is_rejected(self):
+        tag = sign_update(self.key, _arrays(), rnd=5, pid=3)
+        bad = _arrays()
+        bad["net.0.bias"][1] += 1e-3
+        self.assertFalse(verify_update(self.key, bad, 5, 3, tag))
+
+    def test_replayed_old_round_is_rejected(self):
+        tag = sign_update(self.key, _arrays(), rnd=4, pid=3)
+        self.assertFalse(verify_update(self.key, _arrays(), 5, 3, tag))
+
+    def test_other_vd_key_cannot_forge(self):
+        tag = sign_update(os.urandom(32), _arrays(), rnd=5, pid=3)
+        self.assertFalse(verify_update(self.key, _arrays(), 5, 3, tag))
+
+    def test_garbage_tag_is_rejected_not_raised(self):
+        self.assertFalse(verify_update(self.key, _arrays(), 5, 3, "zz-not-hex"))
+
+
+class ModelSignatureTest(unittest.TestCase):
+    def setUp(self):
+        self.priv = Ed25519PrivateKey.generate()
+        self.pub = self.priv.public_key()
+
+    def test_global_model_signature_verifies(self):
+        sig = sign_model(self.priv, _arrays(), rnd=2)
+        self.assertTrue(verify_model(self.pub, _arrays(), 2, sig))
+
+    def test_fake_model_update_is_rejected(self):
+        sig = sign_model(self.priv, _arrays(), rnd=2)
+        self.assertFalse(verify_model(self.pub, _arrays(0.6), 2, sig))
+        self.assertFalse(verify_model(self.pub, _arrays(), 3, sig))
+
+    def test_signature_from_other_server_is_rejected(self):
+        sig = sign_model(Ed25519PrivateKey.generate(), _arrays(), rnd=2)
+        self.assertFalse(verify_model(self.pub, _arrays(), 2, sig))
+
+
+class AttackSimulationTest(unittest.TestCase):
+    def test_flip_attack_reverses_and_scales_update(self):
+        g, local = _arrays(0.5), _arrays(0.7)
+        out = poison_update(g, local, "flip", scale=10.0, rng=np.random.default_rng(0))
+        np.testing.assert_allclose(out["net.0.weight"], 0.5 - 10 * 0.2, rtol=1e-5)
+        np.testing.assert_allclose(out["net.0.bias"], g["net.0.bias"])  # 更新量 0 → 不變
+
+    def test_noise_attack_changes_every_array(self):
+        g = _arrays()
+        out = poison_update(g, _arrays(), "noise", scale=5.0, rng=np.random.default_rng(0))
+        for k in g:
+            self.assertGreater(np.abs(out[k] - g[k]).max(), 0.1)
+
+    def test_unknown_attack_raises(self):
+        with self.assertRaises(ValueError):
+            poison_update(_arrays(), _arrays(), "nope", 1.0, np.random.default_rng(0))
+
+    def test_tamper_modifies_without_touching_input(self):
+        a = _arrays()
+        out = tamper(a, magnitude=1.0, rng=np.random.default_rng(0))
+        self.assertFalse(np.allclose(out["net.0.weight"], a["net.0.weight"]))
+        np.testing.assert_allclose(a["net.0.weight"], 0.5)
+
+
+class ScenarioTest(unittest.TestCase):
+    def test_attackers_are_the_last_k_vds(self):
+        self.assertEqual([p for p in range(8) if is_attacker(p, 8, 2)], [6, 7])
+        self.assertFalse(any(is_attacker(p, 8, 0) for p in range(8)))
+
+    def test_dropout_is_reproducible_and_near_rate(self):
+        a = [drops_out(42, p, r, 0.3) for p in range(50) for r in range(1, 21)]
+        self.assertEqual(a, [drops_out(42, p, r, 0.3) for p in range(50) for r in range(1, 21)])
+        self.assertAlmostEqual(sum(a) / len(a), 0.3, delta=0.05)
+        self.assertFalse(any(drops_out(42, p, 1, 0.0) for p in range(50)))
+
+
+if __name__ == "__main__":
+    unittest.main()
