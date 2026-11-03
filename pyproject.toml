@@ -72,6 +72,7 @@ attack-clients = 0         # > 0：最後幾個 VD 被入侵，送出惡意更�
 attack-type = "flip"       # flip（反向並放大自己的更新）／noise（大幅隨機雜訊）／collude（串通、小幅同向偏移）
 attack-scale = 10.0        # 惡意更新的放大倍數
 tamper-rate = 0.0          # 模擬網路中間人：每個上傳更新被竄改的機率
+replay-rate = 0.0          # 模擬網路中間人：把 VD 上一輪的整份訊息（參數＋簽章）再送一次的機率
 collusion-filter = false   # true = 跨輪偵測串通：更新方向一直和別人特別像的 VD 被剔除
 collusion-z = 3.0          # 標記門檻：相似度高於（中位數 + z × MAD）
 secure-agg = false         # true = 安全聚合（成對遮罩）：伺服器只看得到所有 VD 的加總（只能配 fedavg、全部參與）

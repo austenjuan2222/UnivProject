@@ -54,6 +54,25 @@ class ScreenRepliesTest(unittest.TestCase):
                                  rng=np.random.default_rng(0))
         self.assertEqual(keep, [False])
 
+    def _replay_two_rounds(self, verify):
+        last = {}
+        screen_replies([_content(0, rnd=2, v=0.1)], 2, KEYS, verify=verify, tamper_rate=0.0,
+                       rng=np.random.default_rng(0), replay_rate=1.0, last=last)
+        c = _content(0, rnd=3, v=0.5)
+        keep, stats = screen_replies([c], 3, KEYS, verify=verify, tamper_rate=0.0,
+                                     rng=np.random.default_rng(0), replay_rate=1.0, last=last)
+        return c, keep, stats
+
+    def test_replayed_whole_message_rejected_when_verifying(self):
+        _, keep, stats = self._replay_two_rounds(verify=True)
+        self.assertEqual(stats["n_replayed"], 1)
+        self.assertEqual(keep, [False])
+
+    def test_replayed_whole_message_accepted_without_verification(self):
+        c, keep, stats = self._replay_two_rounds(verify=False)
+        self.assertEqual((keep, stats["n_replayed"]), ([True], 1))
+        self.assertTrue(np.allclose(arrays_of(c["arrays"])["w"], 0.1))  # 上一輪的舊更新進入聚合
+
     def test_tampered_in_transit_rejected_when_verifying(self):
         cs = [_content(i) for i in range(4)]
         keep, stats = screen_replies(cs, 3, KEYS, verify=True, tamper_rate=1.0,

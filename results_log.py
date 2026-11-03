@@ -11,7 +11,7 @@ from pathlib import Path
 ROUND_FIELDS = ["round", "n_train_clients", "n_eval_clients", "train_loss", "eval_loss",
                 "mae_kmh", "rmse_kmh", "epsilon_max", "epsilon_mean", "naive_mae_kmh", "local_mae_kmh",
                 "ft_mae_kmh", "ft_epsilon_max", "n_diverged", "n_ft_diverged",
-                "n_rejected", "n_tampered", "n_dropped", "secagg_failed", "flagged", "upload_kb", "raw_kb", "train_seconds_max"]
+                "n_rejected", "n_tampered", "n_replayed", "n_dropped", "secagg_failed", "flagged", "upload_kb", "raw_kb", "train_seconds_max"]
 CLIENT_FIELDS = ["round", "partition", "vdid", "num_train", "train_loss", "epsilon",
                  "dp_steps", "sample_rate", "local_mae_kmh",
                  "num_test", "eval_loss", "mae_kmh", "rmse_kmh", "naive_mae_kmh",

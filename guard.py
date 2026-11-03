@@ -38,28 +38,34 @@ def attach_update_tag(content: RecordDict, key: bytes, rnd: int, pid: int) -> No
 
 
 def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: bool,
-                   tamper_rate: float, rng: np.random.Generator) -> tuple[list[bool], dict]:
-    """回傳每個回覆是否可用於聚合，以及統計（被竄改數、被拒絕數）。會移除 auth 紀錄。"""
-    keep, n_tampered, n_rejected, audit = [], 0, 0, []
+                   tamper_rate: float, rng: np.random.Generator, replay_rate: float = 0.0,
+                   last: dict | None = None) -> tuple[list[bool], dict]:
+    """回傳每個回覆是否可用於聚合，以及統計（被竄改、被重送、被拒絕數）。會移除 auth 紀錄。
+    replay_rate > 0：模擬中間人把該 VD 上一輪的整份訊息（參數＋簽章）再送一次；last 由呼叫端保存跨輪的上一份訊息。"""
+    keep, n_tampered, n_replayed, n_rejected, audit = [], 0, 0, 0, []
     for c in contents:
+        pid = int(c["metrics"]["partition-id"])
+        tag = str(c[AUTH]["tag"]) if AUTH in c else ""
+        if last is not None:
+            prev, last[pid] = last.get(pid), (c["arrays"], tag)
+            if prev is not None and replay_rate > 0 and rng.random() < replay_rate:
+                c["arrays"], tag = prev
+                n_replayed += 1
         if tamper_rate > 0 and rng.random() < tamper_rate:
             c["arrays"] = _array_record(tamper(arrays_of(c["arrays"]), 0.5, rng))
             n_tampered += 1
-        tag = str(c[AUTH]["tag"]) if AUTH in c else ""
         if AUTH in c:
             del c[AUTH]
         ok = True
         if verify:
-            pid = int(c["metrics"]["partition-id"])
             key = vd_keys.get(pid)  # 驗證表裡沒有的 VD 一律拒絕
             ok = bool(tag) and key is not None and verify_update(key, arrays_of(c["arrays"]), rnd, pid, tag)
         n_rejected += int(not ok)
         keep.append(ok)
         # 稽核紀錄：哪個 VD、哪一輪、送了什麼（內容雜湊）、附了什麼簽章、有沒有被採用
-        audit.append({"round": int(rnd), "pid": int(c["metrics"]["partition-id"]), "accepted": ok,
-                      "digest": update_digest(arrays_of(c["arrays"]), rnd, int(c["metrics"]["partition-id"])),
-                      "tag": tag})
-    return keep, {"n_tampered": n_tampered, "n_rejected": n_rejected, "audit": audit}
+        audit.append({"round": int(rnd), "pid": pid, "accepted": ok,
+                      "digest": update_digest(arrays_of(c["arrays"]), rnd, pid), "tag": tag})
+    return keep, {"n_tampered": n_tampered, "n_replayed": n_replayed, "n_rejected": n_rejected, "audit": audit}
 
 
 def update_delta(local: dict, global_: dict) -> np.ndarray | None:
@@ -119,7 +125,7 @@ class GuardedStrategy(Strategy):
                  tamper_rate: float = 0.0, seed: int = 0,
                  on_round: Callable[[int, dict], None] | None = None, secure_agg_clients: int = 0,
                  on_audit: Callable[[list], None] | None = None,
-                 collusion_filter: CollusionFilter | None = None):
+                 collusion_filter: CollusionFilter | None = None, replay_rate: float = 0.0):
         """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。"""
         self.inner = inner
         self.vd_keys = vd_keys or {}
@@ -132,6 +138,8 @@ class GuardedStrategy(Strategy):
         self.secure_agg_clients = secure_agg_clients
         self.on_audit = on_audit
         self.collusion_filter = collusion_filter
+        self.replay_rate = replay_rate
+        self._last: dict = {}  # 每個 VD 上一輪的訊息（模擬重送用）
         self._global: dict = {}
 
     def _sign(self, messages: Iterable[Message], arrays: ArrayRecord, rnd: int) -> list[Message]:
@@ -152,7 +160,8 @@ class GuardedStrategy(Strategy):
         replies = list(replies)
         ok_replies = [m for m in replies if not m.has_error()]
         keep, stats = screen_replies([m.content for m in ok_replies], server_round, self.vd_keys,
-                                     self.verify_updates, self.tamper_rate, self.rng)
+                                     self.verify_updates, self.tamper_rate, self.rng,
+                                     self.replay_rate, self._last if self.replay_rate > 0 else None)
         stats["n_dropped"] = len(replies) - len(ok_replies)
         audit = stats.pop("audit")
         if self.on_audit and self.verify_updates:
