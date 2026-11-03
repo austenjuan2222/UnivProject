@@ -20,6 +20,8 @@ python scripts/run_experiments.py --dashboard --extra "dropout-rate=0.1 attack-c
 python dashboard/server.py --replay results/<批次>/dp_sigma1.1 --speed 2 --loop
 ```
 
+沒有實驗在跑時（20 秒沒有新事件），伺服器會自動以 3 倍速循環重播 `results/` 裡最新的一次 run，標題列顯示 `REPLAY`；新實驗一開始就切回即時畫面。用 `--idle-replay 0` 關閉，`--idle-speed` 調倍速。
+
 ## 畫面怎麼讀
 
 | 元素 | 意義 |
