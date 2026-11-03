@@ -192,7 +192,7 @@ function handle(e, live){
   const t = live ? now() : -9;
   switch(e.kind){
     case "run_start":
-      resetRun(); S.run = e.run; S.rounds = e.rounds; S.cfg = e;
+      resetRun(); S.run = e.run; S.rounds = e.rounds; S.cfg = e; S.replay = !!e.replay;
       (e.clients||[]).forEach(c => { client(c.pid).vdid = c.vdid; });
       layoutDirty = true;
       log(`RUN ${e.run} · ${e.rounds} rounds · ${(e.clients||[]).length} VD · ${e.use_dp?`DP σ=${e.sigma}`:"no DP"} · ${e.aggregator}`, "var(--hi)");
@@ -356,6 +356,15 @@ function frame(){
     hx.lineWidth = 0.6;
     for(const L of lines){ hx.beginPath(); hx.moveTo(L.pts[0][0],L.pts[0][1]); for(let j=1;j<=SEG;j++) hx.lineTo(L.pts[j][0],L.pts[j][1]); hx.stroke(); }
 
+    // 1b) 環境流動：每條線上一直有小光點往中心跑（訓練中跑快、其他時候慢慢流），畫面不會靜止
+    const flow = c.phase==="train" ? 0.55 : c.phase==="drop" ? 0 : 0.12;
+    if(flow){
+      hx.strokeStyle = rgba(c.phase==="wait"||c.phase==="idle" ? COL.cyan : col, 0.22); hx.lineWidth = 1;
+      for(let k=0;k<lines.length;k+=3){
+        const L = lines[k], head = (t*flow*(0.7+L.w*0.4) + L.lag*7 + k*0.0731) % 1;
+        strokePartial(L.pts, Math.max(0, head-0.07), head);
+      }
+    }
     // 2) 進度：從 VD 往中心點亮到 disp
     if(c.phase==="train" || c.phase==="upload" || c.phase==="done" || c.phase==="diverged" || c.phase==="attacker"){
       const bright = c.phase==="done" ? 0.18 : 0.55;
@@ -410,7 +419,21 @@ function frame(){
   requestAnimationFrame(frame);
 }
 
+const dust = Array.from({length:220}, () => ({a:Math.random()*Math.PI*2, r:Math.random(), v:0.02+Math.random()*0.06}));
 function drawBackdrop(t){
+  // 漂浮微粒：繞中心緩慢旋轉、往內收，沒有實驗時也在動
+  for(const d of dust){
+    d.a += d.v*0.016; d.r -= d.v*0.0015; if(d.r < 0.05) d.r = 1;
+    const rr = d.r*R*1.25;
+    hx.fillStyle = rgba(COL.green, 0.08 + 0.25*(1-d.r));
+    hx.fillRect(CX + Math.cos(d.a)*rr, CY + Math.sin(d.a)*rr, 1.3, 1.3);
+  }
+  // 掃描線：一道淡綠扇形繞中心轉
+  if(hx.createConicGradient){
+    const sg = hx.createConicGradient(t*0.6, CX, CY);
+    sg.addColorStop(0, "rgba(57,255,136,0.10)"); sg.addColorStop(0.08, "rgba(57,255,136,0)"); sg.addColorStop(1, "rgba(57,255,136,0)");
+    hx.fillStyle = sg; hx.beginPath(); hx.arc(CX, CY, R*1.1, 0, Math.PI*2); hx.fill();
+  }
   // 同心圓格線
   hx.strokeStyle = "rgba(40,60,70,0.25)"; hx.lineWidth = 1;
   for(let k=1;k<=4;k++){ hx.beginPath(); hx.arc(CX, CY, R*k/4, 0, Math.PI*2); hx.stroke(); }
@@ -521,6 +544,9 @@ function drawLanes(t){
     const y = top + lh*(i+0.5);
     lx.fillStyle = "#4b5f6b"; lx.textAlign = "right"; lx.fillText(nm.slice(0,13), labelW-8, y);
     lx.strokeStyle = "rgba(40,60,70,0.35)"; lx.lineWidth = 1; lx.beginPath(); lx.moveTo(labelW, y); lx.lineTo(LW-6, y); lx.stroke();
+    // 線道上的虛線一直往右流（不同線道速度不同），沒有工具呼叫時也在動
+    lx.strokeStyle = "rgba(62,232,255,0.16)"; lx.setLineDash([2, 14]); lx.lineDashOffset = -t*(18 + i*5);
+    lx.beginPath(); lx.moveTo(labelW, y); lx.lineTo(LW-6, y); lx.stroke(); lx.setLineDash([]);
   });
   lx.globalCompositeOperation = "lighter";
   CC.streaks = CC.streaks.filter(s => t - s.t0 < span);
@@ -549,7 +575,7 @@ function ui(){
     tableDirty = false;
     $("hRun").textContent = S.run || "—";
     $("hRound").textContent = `${S.round}/${S.rounds}`;
-    $("hMode").textContent = S.run ? (S.cfg.use_dp ? `DP σ=${S.cfg.sigma}` : "NO-DP") + (S.cfg.secure_agg ? " +SECAGG" : "") : "—";
+    $("hMode").textContent = S.run ? (S.cfg.use_dp ? `DP σ=${S.cfg.sigma}` : "NO-DP") + (S.cfg.secure_agg ? " +SECAGG" : "") + (S.replay ? " · REPLAY" : "") : "—";
     $("aggName").textContent = (S.cfg.aggregator || "fedavg").toUpperCase();
     $("vdCount").textContent = S.clients.length;
     $("vdBody").innerHTML = S.clients.map(c => c ? `<tr class="vd"><td><span style="color:${rgba(phaseColor(c),1)}">●</span> ${shortVd(c.vdid)}

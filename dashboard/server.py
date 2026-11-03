@@ -41,6 +41,7 @@ class Hub:
         self.fl_history: list[dict] = []   # 從最近一次 run_start 起的訓練事件
         self.cc_history: list[dict] = []   # Claude Code 事件
         self.subs: list[queue.Queue] = []
+        self.last_live = 0.0               # 最近一次從即時事件檔讀到新事件的時間
 
     def publish(self, ev: dict) -> None:
         with self.lock:
@@ -87,9 +88,35 @@ def tail_events(hub: Hub, path: Path, from_start: bool, poll: float = 0.15) -> N
         except OSError:
             pass
         evs, offset = read_events(path, offset)
+        if evs:
+            hub.last_live = time.time()
         for e in evs:
             hub.publish(e)
         time.sleep(poll)
+
+
+def latest_run_events(results: Path) -> Path | None:
+    """results/ 底下最新一份 run 的 events.jsonl（不含 live/ 那份即時檔）。"""
+    runs = [p for p in results.glob("**/events.jsonl") if p.parent.name != "live" and p.stat().st_size]
+    return max(runs, key=lambda p: p.stat().st_mtime, default=None)
+
+
+def idle_replay(hub: Hub, results: Path, idle: float, speed: float) -> None:
+    """沒有實驗在跑時（idle 秒沒有新事件）循環重播最近一次 run，畫面不會停住；新實驗一開始就讓位。"""
+    def busy():
+        return time.time() - hub.last_live < idle
+    while True:
+        time.sleep(1)
+        src = None if busy() else latest_run_events(results)
+        if src is None:
+            continue
+        evs, _ = read_events(src, 0)
+        for e, d in zip(evs, replay_schedule(evs, speed=speed, max_gap=1.0)):
+            time.sleep(d)
+            if busy():
+                break
+            hub.publish(dict(e, t=time.time(), replay=True))
+        time.sleep(2)
 
 
 def replay(hub: Hub, path: Path, speed: float, loop: bool) -> None:
@@ -232,6 +259,9 @@ def main(argv=None):
     p.add_argument("--project-root", default=str(ROOT), help="用來找 Claude Code 紀錄的專案路徑")
     p.add_argument("--claude-hours", type=float, default=12.0, help="啟動時載入最近幾小時的 Claude Code 紀錄")
     p.add_argument("--no-claude", action="store_true")
+    p.add_argument("--idle-replay", type=float, default=20.0,
+                   help="幾秒沒有新事件就循環重播最近一次 run（0 = 關閉）")
+    p.add_argument("--idle-speed", type=float, default=3.0, help="閒置重播的倍速")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--no-browser", action="store_true")
@@ -248,6 +278,9 @@ def main(argv=None):
         ep = Path(a.events)
         threading.Thread(target=tail_events, args=(hub, ep, False), daemon=True).start()
         print(f"監看 {ep}")
+        if a.idle_replay > 0:
+            threading.Thread(target=idle_replay, args=(hub, ep.parent.parent, a.idle_replay, a.idle_speed),
+                             daemon=True).start()
     if not a.no_claude:
         dirs = [Path(a.claude_dir)] if a.claude_dir else claude_project_dirs(Path(a.project_root).resolve())
         if dirs:
@@ -258,6 +291,7 @@ def main(argv=None):
 
     srv = ThreadingHTTPServer((a.host, a.port), make_handler(hub, prices))
     srv.daemon_threads = True
+    srv.handle_error = lambda *_: None  # 瀏覽器關分頁造成的連線中斷不用印 traceback
     url = f"http://{a.host}:{a.port}"
     print(f"儀表板：{url}（Ctrl+C 結束）")
     if not a.no_browser:

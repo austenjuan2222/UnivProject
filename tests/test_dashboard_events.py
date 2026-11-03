@@ -58,6 +58,23 @@ def test_concurrent_processes_do_not_interleave_lines(tmp_path):
     assert all(json.loads(x)["kind"] == "progress" for x in lines)
 
 
+def test_latest_run_events_skips_live_and_empty(tmp_path):
+    import os
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dashboard"))
+    from server import latest_run_events
+    assert latest_run_events(tmp_path) is None
+    old, new, live, empty = (tmp_path / d / "events.jsonl" for d in ("b1/dp", "b2/dp", "live", "b3/dp"))
+    for p, body in ((old, "{}\n"), (new, "{}\n"), (live, "{}\n"), (empty, "")):
+        p.parent.mkdir(parents=True)
+        p.write_text(body)
+    os.utime(old, (1, 1))
+    os.utime(live, (2e9, 2e9))
+    os.utime(empty, (2e9, 2e9))
+    assert latest_run_events(tmp_path) == new
+
+
 def test_read_events_missing_file(tmp_path):
     assert read_events(tmp_path / "nope.jsonl", 0) == ([], 0)
 
