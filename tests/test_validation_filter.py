@@ -65,6 +65,14 @@ class ValidationFilterTest(unittest.TestCase):
         self.assertEqual(bad, {m for m in ups if f.last_scores[m] == f.last_scores[12]})
         self.assertIn(len(bad), (4, 5))
 
+    def test_group_mode_remainder_merges_without_losing_members(self):
+        sizes = []
+        f = ValidationFilter(lambda a: sizes.append(1) or float(a["s"][0]), z=3.0, group=2, seed=0)
+        ups = {p: {"s": np.array([5.0])} for p in range(5)}  # 2、2、1 → 2、3
+        f.screen(ups)
+        self.assertEqual(set(f.last_scores), set(ups))  # 每一份都有被評分（沒有整組被吃掉）
+        self.assertEqual(len(sizes), 2)
+
     def test_group_mode_falls_back_when_too_few_updates(self):
         f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, group=4)
         ups = {p: {"s": np.array([5.0 + 0.01 * p])} for p in range(6)} | {6: {"s": np.array([50.0])}}

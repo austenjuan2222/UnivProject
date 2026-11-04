@@ -137,7 +137,8 @@ class ValidationFilter:
             keys = [list(updates)[i] for i in self.rng.permutation(len(updates))]
             groups = [keys[i:i + self.group] for i in range(0, len(keys), self.group)]
             if len(groups[-1]) < self.group:
-                groups[-2] += groups.pop()
+                last = groups.pop()  # 先 pop 再合併：groups[-2] += groups.pop() 會寫錯位置、吃掉一整組
+                groups[-1] += last
             gs = {}
             for g, members in enumerate(groups):
                 try:
