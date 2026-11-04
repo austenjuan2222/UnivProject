@@ -174,6 +174,8 @@ class ScenarioTest(unittest.TestCase):
     def test_attackers_are_the_last_k_vds(self):
         self.assertEqual([p for p in range(8) if is_attacker(p, 8, 2)], [6, 7])
         self.assertFalse(any(is_attacker(p, 8, 0) for p in range(8)))
+        # 指定編號時改用指定的 VD（例如挑幾乎沒塞車的 VD 當攻擊者）
+        self.assertEqual([p for p in range(8) if is_attacker(p, 8, 2, ids=(1, 3))], [1, 3])
 
     def test_dropout_is_reproducible_and_near_rate(self):
         a = [drops_out(42, p, r, 0.3) for p in range(50) for r in range(1, 21)]

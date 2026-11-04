@@ -63,6 +63,7 @@ def _cfg(context: Context) -> dict:
         "verify_updates": bool(c.get("verify-updates", False)),
         "sign_models": bool(c.get("sign-models", False)),
         "attack_clients": int(c.get("attack-clients", 0)),
+        "attack_ids": tuple(int(i) for i in str(c.get("attack-ids", "")).split(",") if i.strip()),
         "attack_type": str(c.get("attack-type", "flip")),
         "attack_scale": float(c.get("attack-scale", 10.0)),
         "attack_shift_kmh": float(c.get("attack-shift-kmh", 30.0)),
@@ -154,7 +155,7 @@ def train_fn(msg: Message, context: Context) -> Message:
     optimizer = torch.optim.SGD(model.parameters(), lr=cfg["lr"])
     y_train = d["y_train"]
     if cfg["attack_type"] == "hidejam" and is_attacker(pid, int(context.node_config["num-partitions"]),
-                                                       cfg["attack_clients"]):
+                                                       cfg["attack_clients"], cfg["attack_ids"]):
         y_train = hide_congestion(y_train, d["mean"], d["std"], shift_kmh=cfg["attack_shift_kmh"])  # 針對性攻擊：用竄改過的標籤訓練
     loader = make_loader(d["X_train"], y_train, cfg["batch_size"], shuffle=True,
                          seed=cfg["seed"] + 1000 * pid + rnd)
@@ -193,7 +194,7 @@ def train_fn(msg: Message, context: Context) -> Message:
     metrics["num-test"] = len(d["y_test"])
     arrays = ArrayRecord(unwrap(model).state_dict())
     n = int(context.node_config["num-partitions"])
-    if is_attacker(pid, n, cfg["attack_clients"]):
+    if is_attacker(pid, n, cfg["attack_clients"], cfg["attack_ids"]):
         # 被入侵的 VD：送出惡意更新（它仍有合法金鑰，所以下面照樣簽章；MAC 擋不住這種攻擊）
         g = arrays_of(msg.content["arrays"])
         bad = poison_update(g, arrays_of(arrays), cfg["attack_type"], cfg["attack_scale"],

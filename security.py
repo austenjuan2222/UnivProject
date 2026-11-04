@@ -183,8 +183,10 @@ def tamper(arrays: dict, magnitude: float, rng: np.random.Generator) -> dict:
             .astype(np.float32) for k, v in arrays.items()}
 
 
-def is_attacker(pid: int, num_clients: int, num_attackers: int) -> bool:
-    """實驗設定：最後 num_attackers 個 VD 被入侵（它們仍持有合法金鑰）。"""
+def is_attacker(pid: int, num_clients: int, num_attackers: int, ids: tuple = ()) -> bool:
+    """實驗設定：最後 num_attackers 個 VD 被入侵（它們仍持有合法金鑰）；給了 ids 就改成這些編號。"""
+    if ids:
+        return pid in ids
     return num_attackers > 0 and pid >= num_clients - num_attackers
 
 
