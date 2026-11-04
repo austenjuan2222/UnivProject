@@ -42,7 +42,7 @@ def downlink_round_s(nbytes: int, sf: int, n_vd: int = 32, duty: float = 0.10) -
 
 def expected_sends(packets: int, loss: float, mode: str) -> float:
     """每包獨立以機率 loss 遺失時，期望要送出幾包才能讓 VD 收齊整份模型。
-    packet：每包各自確認、掉了只補那一包（像 FUOTA 分段＋補送）；whole：沒有分段確認，任何一包掉了整份重送。"""
+    packet：每包各自確認、掉了只補那一包；whole：沒有逐包回報，任何一包掉了就整份重送（每次都整份送完）。"""
     ok = 1.0 - loss
     return packets / ok if mode == "packet" else packets / ok ** packets
 
