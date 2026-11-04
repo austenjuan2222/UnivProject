@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 import torch
 
-from edge_numpy import dp_step, per_sample_grads, predict
+from edge_numpy import dp_step, per_sample_grads, predict, sampling
 from task import TrafficModel
 
 
@@ -46,12 +46,24 @@ class EdgeNumpyTest(unittest.TestCase):
         for k, t in m.state_dict().items():
             np.testing.assert_allclose(got[k], t.numpy(), rtol=1e-4, atol=1e-6)
 
-    def test_noise_has_expected_scale(self):
+    def test_noise_has_expected_scale_on_every_parameter(self):
         _, p, X, y = setup()
         rng = np.random.default_rng(1)
-        a = dp_step(p, X[:0], y[:0], lr=1.0, sigma=2.0, clip=0.5, expected_batch=10, rng=rng)
-        d = (p["net.2.weight"] - a["net.2.weight"]).ravel()  # 空批次：只有雜訊 / 期望批次
-        self.assertAlmostEqual(float(d.std()), 2.0 * 0.5 / 10, delta=0.01)
+        steps = [dp_step(p, X[:0], y[:0], lr=1.0, sigma=2.0, clip=0.5, expected_batch=10, rng=rng) for _ in range(200)]
+        for k in p:  # 空批次：更新量只有雜訊 / 期望批次，每個參數都要有
+            d = np.stack([p[k] - a[k] for a in steps]).ravel()
+            self.assertAlmostEqual(float(d.std()), 2.0 * 0.5 / 10, delta=0.004, msg=k)
+
+    def test_sampling_matches_opacus_data_loader(self):
+        from opacus.data_loader import DPDataLoader
+
+        from task import make_loader
+
+        for n in (1, 63, 64, 65, 640, 6404, 6400 * 3 + 7):
+            dl = DPDataLoader.from_data_loader(make_loader(np.zeros((n, 1), np.float32), np.zeros(n, np.float32), 64, True))
+            q, steps, expected = sampling(n, 64)
+            self.assertEqual((q, steps), (dl.sample_rate, len(dl)), n)
+            self.assertEqual(expected, int(len(dl.dataset) * dl.sample_rate), n)
 
 
 if __name__ == "__main__":

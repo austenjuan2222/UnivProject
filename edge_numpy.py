@@ -49,15 +49,19 @@ def dp_step(p: dict, X: np.ndarray, y: np.ndarray, lr: float, sigma: float, clip
     return out
 
 
+def sampling(n: int, batch_size: int) -> tuple[float, int, int]:
+    """和 Opacus DPDataLoader 一樣的（取樣率 q, 每 epoch 步數, 期望批次大小）。"""
+    q = 1.0 / max(1, -(-n // batch_size))                              # 1 / DataLoader 的批次數
+    return q, int(1 / q), int(n * q)
+
+
 def dp_train(p: dict, X: np.ndarray, y: np.ndarray, epochs: int, batch_size: int, lr: float, sigma: float,
              clip: float, rng: np.random.Generator, residual: bool = True) -> tuple[dict, float, int]:
     """回傳（新參數, 取樣率 q, 步數）。"""
-    n_batches = max(1, -(-len(y) // batch_size))                       # 和 DataLoader 的批次數一樣
-    q = 1.0 / n_batches
-    expected = int(len(y) * q)                                         # Opacus 的 expected_batch_size
+    q, n_steps, expected = sampling(len(y), batch_size)
     steps = 0
     for _ in range(epochs):
-        for _ in range(n_batches):
+        for _ in range(n_steps):
             m = rng.random(len(y)) < q
             p = dp_step(p, X[m], y[m], lr, sigma, clip, expected, rng, residual)
             steps += 1

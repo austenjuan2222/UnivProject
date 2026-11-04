@@ -892,20 +892,22 @@ Edge 成本（實測）：每個 VD 每輪上傳 6.1 KB，本地訓練約 0.3 �
 
 **實際換掉執行環境：只用 numpy 的 VD 端 DP-SGD（`edge_numpy.py`，2026-11-05）**：把這個模型和 DP-SGD 用 numpy 重寫
 （前向、逐樣本梯度、逐樣本裁剪、高斯雜訊、Poisson 取樣），參數名稱和 PyTorch 的 state_dict 相同，可以直接和伺服器互通。
-測試 `tests/test_edge_numpy.py` 確認：預測和 PyTorch 一樣；逐樣本梯度和 autograd 一樣；不加雜訊時一步更新和 Opacus 的 DPOptimizer 一樣
-（拿掉裁剪時這個測試會失敗）；雜訊標準差是 σC／期望批次。ε 用同樣的 (σ, q, 步數) 計算，由伺服器算，VD 不需要 Opacus。
+測試 `tests/test_edge_numpy.py` 確認：預測和 PyTorch 一樣；逐樣本梯度和 autograd 一樣；不加雜訊時，對一個固定批次的一步更新和 Opacus 的 DPOptimizer 一樣
+（拿掉裁剪時這個測試會失敗）；六個參數的雜訊標準差都是 σC／期望批次；取樣率、每 epoch 步數、期望批次大小和 Opacus 的 DPDataLoader 一樣（7 種資料筆數）。
+沒有直接比對「取樣＋裁剪＋雜訊」整個流程（雜訊不同，結果本來就不會一樣）。ε 用同樣的 (σ, q, 步數) 計算，由伺服器算，VD 不需要 Opacus。
 
-`python scripts/edge_footprint_numpy.py --data-dir data/processed_28d_32`（VD 0、單執行緒、只在本地訓練 20 輪，同起點與設定）：
+`python scripts/edge_footprint_numpy.py --data-dir data/processed_28d_32`（VD 0、BLAS 限單執行緒、只在本地訓練 20 輪，同起點與設定；
+PyTorch 版的記憶體和時間用上面的 `scripts/edge_footprint.py`，同一台電腦、同樣量 RSS）：
 
 | seed | Python 本身 | 載入 numpy 後 | 訓練峰值 | 每輪時間 | 本地測試 MAE（numpy） | 本地測試 MAE（PyTorch＋Opacus） |
 |---|---|---|---|---|---|---|
-| 1 | 19 MB | 31 MB | **37 MB** | 0.033 秒 | 2.603 | 2.613 |
-| 2 | 19 MB | 31 MB | 37 MB | 0.033 秒 | 2.672 | 2.646 |
-| 3 | 19 MB | 31 MB | 37 MB | 0.033 秒 | 2.571 | 2.839 |
+| 1 | 19 MB | 30 MB | **36 MB** | 0.033 秒 | 2.603 | 2.613 |
+| 2 | 19 MB | 30 MB | 35 MB | 0.035 秒 | 2.672 | 2.646 |
+| 3 | 19 MB | 30 MB | 35 MB | 0.037 秒 | 2.571 | 2.839 |
 
-結論：記憶體峰值從 425 MB 降到 37 MB（約 1／11），每輪時間從 0.16 秒降到 0.03 秒，準確度在同一個範圍
-（兩邊的 DP 雜訊不同，所以每個 seed 不會一樣；PyTorch 版 seed 3 較差是單一 VD、只本地訓練時 DP 雜訊造成的變動）。
-37 MB 裡大部分是 Python 和 numpy 本身，若要放進 MCU 等級的設備，還要再換成 C 或 MicroPython，這裡沒做。
+結論：記憶體峰值從約 425 MB 降到約 36 MB（約 1／12），每輪時間從 0.16 秒降到約 0.035 秒；準確度看起來在同一個範圍，
+但只有一台 VD、只本地訓練、3 個 seed，而且兩邊 DP 雜訊不同，每個 seed 不會一樣（seed 3 差 0.27 km/h，原因沒有查證）。
+36 MB 裡大部分是 Python 和 numpy 本身，若要放進 MCU 等級的設備，還要再換成 C 或 MicroPython，這裡沒做。
 限制：只實作目前預設的 residual 模型和 MSE 損失；聯邦實驗仍用 PyTorch 版的 client_app，沒有把 numpy 版接進 Flower 跑完整聯邦。
 誠實比較：20 輪共上傳約 123 KB，比直接上傳這 28 天的 5 分鐘車速序列（訓練期約 25 KB）還多；
 但遠少於 VD 原始的逐分鐘、逐車道資料（估計約 1 MB 以上）。而且上傳量只跟模型大小有關，不隨資料天數增加。

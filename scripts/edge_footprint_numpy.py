@@ -20,6 +20,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 CHILD = r"""
+import os
+for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):  # 和 PyTorch 那邊一樣單執行緒
+    os.environ[v] = "1"
 import sys, time, json
 import psutil
 proc = psutil.Process(); base = proc.memory_info().rss
