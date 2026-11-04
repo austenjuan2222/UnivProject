@@ -49,6 +49,14 @@ def main() -> int:
         for sf in (7, 12):
             n, t = upload_cost(b + 32, sf)
             print(f"| {name} {b + 32} B | SF{sf} | {n} | {t / 1000:.1f} 秒 | {t * 100 / 1000 / 60:.1f} 分鐘 |")
+    # 下行：每台 VD 收到的全域模型（量化差值），+64 B Ed25519 簽章；閘道器逐台送 32 台
+    down = {"32 位元（不壓縮）": 6276, "8 位元": 1593, "4 位元": 809, "2 位元": 417}
+    print("\n| 下行 | SF | 每台封包數 | 每台空中時間 | 閘道器 10% 工作週期下送完 32 台至少 |")
+    print("|---|---|---|---|---|")
+    for name, b in down.items():
+        for sf in (7, 12):
+            n, t = upload_cost(b + 64, sf)
+            print(f"| {name} {b + 64} B | SF{sf} | {n} | {t / 1000:.1f} 秒 | {downlink_round_s(b + 64, sf) / 60:.1f} 分鐘 |")
     return 0
 
 
