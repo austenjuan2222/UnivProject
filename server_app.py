@@ -17,13 +17,13 @@ from flwr.serverapp.strategy import (DifferentialPrivacyServerSideAdaptiveClippi
                                      DifferentialPrivacyServerSideFixedClipping, FedAvg, FedMedian,
                                      FedTrimmedAvg)
 
-from data import n_calendar
-from guard import CollusionFilter, GuardedStrategy
+from data import load_client_arrays, n_calendar
+from guard import CollusionFilter, GuardedStrategy, ValidationFilter
 from secagg import provision_agreement_keys
 from security import load_server_secrets, load_vd_verify_keys, provision_keys
 from privacy import client_level_epsilon
 from results_log import RunLogger, make_run_name
-from task import TrafficModel, set_seed
+from task import JAM_KMH, TrafficModel, jam_scorer, set_seed
 
 # Opacus 會把 flwr logger 調成 DEBUG，調回 INFO
 logging.getLogger("flwr").setLevel(logging.INFO)
@@ -59,6 +59,26 @@ def _check_num_nodes(grid: Grid, expected: int, wait_s: float = 60.0) -> None:
             "options.num-supernodes 與 num-clients、manifest 中的 VD 數一致"
             "（建議用 scripts/run_experiments.sh 執行，它會自動設定）。"
         )
+
+
+def _reference_sets(cfg: dict, exclude: set, n: int) -> list[dict]:
+    """伺服器自己的參考 VD（不在聯邦裡，例如高公局自己管的路段）：取 validation-dir 裡塞車樣本最多的 n 個，只用訓練段。"""
+    vdir = str(cfg["validation-dir"])
+    clients = _manifest(vdir).get("clients", [])
+    sets = []
+    for c in clients:
+        if c["vdid"] in exclude:
+            continue
+        d = load_client_arrays(vdir, int(c["partition"]), len(clients), int(cfg["lookback"]),
+                               float(cfg.get("train-frac", 0.8)), int(cfg.get("horizon", 1)),
+                               str(cfg.get("calendar", "")), bool(cfg.get("lag-day", False)))
+        n_jam = int(((d["y_train"] * d["std"] + d["mean"]) < JAM_KMH).sum())
+        sets.append((n_jam, c["vdid"], {"X": d["X_train"], "y": d["y_train"], "mean": d["mean"], "std": d["std"]}))
+    sets.sort(key=lambda t: (-t[0], t[1]))
+    if len(sets) < n:
+        raise ValueError(f"validation-dir 只有 {len(sets)} 個不在聯邦裡的 VD，不夠 validation-vds={n}")
+    print("伺服器參考 VD（塞車樣本數）：" + "、".join(f"{v}（{j}）" for j, v, _ in sets[:n]))
+    return [r for _, _, r in sets[:n]]
 
 
 @app.main()
@@ -146,16 +166,25 @@ def main(grid: Grid, context: Context) -> None:
     if secure_agg:
         # 伺服器看不到個別更新：不能做伺服器端裁剪（client-level DP）或中位數；基本版也不容許斷線、抽樣
         if (client_dp or agg_name != "fedavg" or frac < 1
-                or int(cfg.get("upload-bits", 32)) < 32 or bool(cfg.get("collusion-filter", False))):
+                or int(cfg.get("upload-bits", 32)) < 32 or bool(cfg.get("collusion-filter", False))
+                or str(cfg.get("validation-dir", ""))):
             raise ValueError("secure-agg 只能搭配 aggregator='fedavg'、client-fraction=1、不開 client-level DP、"
-                             "upload-bits=32、collusion-filter=false（可以和 record-level DP 一起用）")
+                             "upload-bits=32、collusion-filter=false、不設 validation-dir（可以和 record-level DP 一起用）")
         provision_agreement_keys(str(cfg.get("key-dir", "keys")), num_clients)
+    validation_filter = None
+    if str(cfg.get("validation-dir", "")):
+        refs = _reference_sets(cfg, set(vdids.values()), int(cfg.get("validation-vds", 4)))
+        validation_filter = ValidationFilter(jam_scorer(refs, lambda: TrafficModel(
+            int(cfg["lookback"]), int(cfg["hidden-size"]), bool(cfg.get("residual", False)),
+            n_calendar(str(cfg.get("calendar", ""))) + int(bool(cfg.get("lag-day", False))))),
+            float(cfg.get("validation-z", 3.0)))
     strategy = GuardedStrategy(strategy, priv if sign else None, vd_keys if verify else None,
                                float(cfg.get("tamper-rate", 0.0)), int(cfg["seed"]), logger.on_security,
                                secure_agg_clients=num_clients if secure_agg else 0, on_audit=logger.on_audit,
                                collusion_filter=CollusionFilter(float(cfg.get("collusion-z", 3.0)))
                                if bool(cfg.get("collusion-filter", False)) else None,
-                               replay_rate=float(cfg.get("replay-rate", 0.0)))
+                               replay_rate=float(cfg.get("replay-rate", 0.0)),
+                               validation_filter=validation_filter)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))

@@ -94,6 +94,27 @@ def all_finite(model: nn.Module) -> bool:
 JAM_KMH = 60.0
 
 
+def jam_scorer(refs: list[dict], new_model):
+    """伺服器端驗證分數：把一份上傳的參數載入模型，算參考 VD 在塞車時段（實際 < 60 km/h）的平均絕對誤差（km/h）。
+    refs：每個參考 VD 一個 {"X", "y", "mean", "std"}（各自標準化）；沒有塞車樣本時退回全部樣本。"""
+    model = new_model()
+
+    @torch.no_grad()
+    def score(arrays: dict) -> float:
+        model.load_state_dict({k: torch.from_numpy(np.asarray(v)) for k, v in arrays.items()})
+        model.eval()
+        tot, n = 0.0, 0
+        for r in refs:
+            yt = torch.from_numpy(r["y"])
+            err = (model(torch.from_numpy(r["X"])) - yt) * r["std"]
+            jam = (yt * r["std"] + r["mean"]) < JAM_KMH
+            e = err[jam] if jam.any() else err
+            tot, n = tot + e.abs().sum().item(), n + len(e)
+        return tot / n if n else float("nan")
+
+    return score
+
+
 @torch.no_grad()
 def evaluate(model, X, y, mean: float, std: float, device="cpu") -> dict:
     """回傳標準化尺度的 MSE，以及還原成 km/h 的 MAE、MSE。

@@ -111,6 +111,30 @@ class CollusionFilter:
         return {p for p, s in means.items() if s > med + self.z * mad}
 
 
+class ValidationFilter:
+    """伺服器用自己的參考資料檢查每份更新（概念同 Zeno，Xie et al. 2019；FLTrust，Cao et al. 2021）：
+    score(更新後的模型) 越大越差；比這一輪多數 VD 明顯差（中位數 + z × 1.4826 × MAD）的不聚合。
+    只拒絕「變差」的一側；分數不是有限值的也拒絕。需要伺服器看得到個別更新，不能和安全聚合一起用。"""
+
+    def __init__(self, score: Callable[[dict], float], z: float = 3.0, min_updates: int = 3):
+        self.score, self.z, self.min_updates = score, z, min_updates
+
+    def screen(self, updates: dict[int, dict]) -> set[int]:
+        scores = {}
+        for p, a in updates.items():
+            try:
+                scores[p] = float(self.score(a))
+            except (RuntimeError, ValueError, KeyError, TypeError):  # 形狀或參數名稱不符
+                scores[p] = float("nan")
+        bad = {p for p, s in scores.items() if not np.isfinite(s)}
+        v = np.array([s for p, s in scores.items() if p not in bad])
+        if len(v) < self.min_updates:  # 太少份無法判斷誰是離群值，只拒絕壞掉的
+            return bad
+        med = float(np.median(v))
+        mad = float(np.median(np.abs(v - med))) * 1.4826 + 1e-9
+        return bad | {p for p, s in scores.items() if p not in bad and s > med + self.z * mad}
+
+
 def secure_average(contents: list[RecordDict], expected: int, revealed: dict | None = None) -> ArrayRecord | None:
     """安全聚合：加總遮罩後的更新再除以總樣本數。少了 VD 時，需要在線 VD 交出的成對種子（revealed）
     才能扣掉沒抵銷的遮罩；拿不到就回傳 None 放棄這一輪。"""
@@ -127,7 +151,8 @@ class GuardedStrategy(Strategy):
                  tamper_rate: float = 0.0, seed: int = 0,
                  on_round: Callable[[int, dict], None] | None = None, secure_agg_clients: int = 0,
                  on_audit: Callable[[list], None] | None = None,
-                 collusion_filter: CollusionFilter | None = None, replay_rate: float = 0.0):
+                 collusion_filter: CollusionFilter | None = None, replay_rate: float = 0.0,
+                 validation_filter: ValidationFilter | None = None):
         """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。"""
         self.inner = inner
         self.vd_keys = vd_keys or {}
@@ -141,6 +166,7 @@ class GuardedStrategy(Strategy):
         self.on_audit = on_audit
         self.collusion_filter = collusion_filter
         self.replay_rate = replay_rate
+        self.validation_filter = validation_filter
         self._last: dict = {}  # 每個 VD 上一輪的訊息（模擬重送用）
         self._global: dict = {}
         self._grid: Grid | None = None
@@ -180,6 +206,11 @@ class GuardedStrategy(Strategy):
             flagged = self.collusion_filter.update({pid[id(m)]: deltas[id(m)] for m in kept})
             kept = [m for m in kept if pid[id(m)] not in flagged]
             stats["flagged"] = ";".join(str(p) for p in sorted(flagged))
+        if self.validation_filter is not None and kept:
+            pid = {id(m): int(m.content["metrics"]["partition-id"]) for m in kept}
+            invalid = self.validation_filter.screen({pid[id(m)]: arrays_of(m.content["arrays"]) for m in kept})
+            kept = [m for m in kept if pid[id(m)] not in invalid]
+            stats["val_rejected"] = ";".join(str(p) for p in sorted(invalid))
         if self.on_round:
             self.on_round(server_round, stats)
         if not kept:
