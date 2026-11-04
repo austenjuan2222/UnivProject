@@ -70,6 +70,7 @@ def _cfg(context: Context) -> dict:
         "secure_agg": bool(c.get("secure-agg", False)),
         "upload_bits": int(c.get("upload-bits", 32)),
         "update_auth": str(c.get("update-auth", "hmac")),
+        "edge_runtime": str(c.get("edge-runtime", "torch")),
     }
 
 
@@ -121,6 +122,23 @@ def _dp_train(model, optimizer, loader, cfg: dict, prev, epochs: int):
     return model, loss, hist, compute_epsilon(history_tuples(hist), cfg["delta"]), steps, sample_rate
 
 
+def _numpy_dp_train(model, X, y, cfg: dict, prev, pid: int, rnd: int):
+    """同樣的 DP-SGD，但用只靠 numpy 的 edge_numpy（模擬記憶體小的 VD）；回傳格式和 _dp_train 一樣。"""
+    from edge_numpy import dp_train, predict
+
+    from privacy import append_history, compute_epsilon, history_tuples
+
+    if not cfg["residual"] or cfg["loss"] != "mse":
+        raise ValueError("edge-runtime='numpy' 只支援 residual=true、loss='mse'")
+    p = {k: v.detach().numpy().copy() for k, v in unwrap(model).state_dict().items()}
+    p, q, steps = dp_train(p, X, y, cfg["epochs"], cfg["batch_size"], cfg["lr"], cfg["sigma"], cfg["clip"],
+                           np.random.default_rng([cfg["seed"], pid, rnd, 11]))
+    model.load_state_dict({k: torch.from_numpy(v) for k, v in p.items()})
+    loss = float(((predict(p, X) - y) ** 2).mean())  # 訓練後的 MSE（torch 版是訓練中各批平均，僅供參考）
+    hist = append_history(prev, cfg["sigma"], q, steps)
+    return model, loss, hist, compute_epsilon(history_tuples(hist), cfg["delta"]), steps, q
+
+
 @app.train()
 def train_fn(msg: Message, context: Context) -> Message:
     cfg = _cfg(context)
@@ -143,7 +161,14 @@ def train_fn(msg: Message, context: Context) -> Message:
     # 每個 client 都要有同一組 metric 鍵，Flower 才能彙整（diverged 只在發散時設成 1）
     metrics = {"num-examples": len(d["y_train"]), "round": rnd, "partition-id": pid, "diverged": 0}
 
-    if cfg["use_dp"]:
+    if cfg["use_dp"] and cfg["edge_runtime"] == "numpy":
+        model, loss, hist, eps, steps, sample_rate = _numpy_dp_train(model, d["X_train"], y_train, cfg,
+                                                                      _dp_history(context), pid, rnd)
+        context.state[DP_STATE_KEY] = MetricRecord(hist)
+        metrics["epsilon"] = eps
+        metrics["dp-steps"] = int(steps)
+        metrics["sample-rate"] = sample_rate
+    elif cfg["use_dp"]:
         model, loss, hist, eps, steps, sample_rate = _dp_train(
             model, optimizer, loader, cfg, _dp_history(context), cfg["epochs"])
         context.state[DP_STATE_KEY] = MetricRecord(hist)

@@ -66,5 +66,27 @@ class EdgeNumpyTest(unittest.TestCase):
             self.assertEqual(expected, int(len(dl.dataset) * dl.sample_rate), n)
 
 
+class ClientNumpyRuntimeTest(unittest.TestCase):
+    def test_client_uses_numpy_dp_and_accounts_same_privacy(self):
+        from client_app import _numpy_dp_train
+        from privacy import compute_epsilon
+
+        m, p, X, y = setup(n=300)
+        cfg = {"residual": True, "loss": "mse", "epochs": 2, "batch_size": 64, "lr": 0.2, "sigma": 1.1, "clip": 1.0,
+               "seed": 1, "delta": 1e-5}
+        m2, loss, hist, eps, steps, q = _numpy_dp_train(m, X, y, cfg, None, pid=0, rnd=1)
+        self.assertEqual((q, steps), (1 / 5, 10))  # 300 筆、批次 64 → 5 批，2 epoch
+        self.assertAlmostEqual(eps, compute_epsilon([(1.1, 0.2, 10)], 1e-5))
+        self.assertTrue(np.isfinite(loss))
+        self.assertFalse(np.allclose(m2.state_dict()["net.0.weight"].numpy(), p["net.0.weight"]))
+
+    def test_rejects_unsupported_model(self):
+        from client_app import _numpy_dp_train
+
+        m, _, X, y = setup()
+        with self.assertRaises(ValueError):
+            _numpy_dp_train(m, X, y, {"residual": False, "loss": "mse"}, None, 0, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
