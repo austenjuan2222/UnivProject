@@ -116,20 +116,42 @@ class ValidationFilter:
     """伺服器用自己的參考資料檢查每份更新（概念同 Zeno，Xie et al. 2019；FLTrust，Cao et al. 2021）：
     score(更新後的模型) 越大越差；比這一輪多數 VD 明顯差（中位數 + z × 1.4826 × MAD）的不聚合。
     只拒絕「變差」的一側；分數不是有限值的也拒絕。需要伺服器看得到個別更新，不能和安全聚合一起用。
-    margin > 0：另外要求至少比中位數差 margin（比例）才拒絕，避免多數更新擠在一起、MAD 很小時誤擋只差一點的 VD。"""
+    margin > 0：另外要求至少比中位數差 margin（比例）才拒絕，避免多數更新擠在一起、MAD 很小時誤擋只差一點的 VD。
+    group > 1：每輪把更新隨機分成每組 group 份，只看各組的平均（模擬「組內安全聚合、伺服器只看得到小組加總」），
+    整組一起採用或拒絕；最後一組不足 group 份時併進前一組。"""
 
-    def __init__(self, score: Callable[[dict], float], z: float = 3.0, min_updates: int = 3, margin: float = 0.0):
-        self.score, self.z, self.min_updates, self.margin = score, z, min_updates, margin
+    def __init__(self, score: Callable[[dict], float], z: float = 3.0, min_updates: int = 3, margin: float = 0.0,
+                 group: int = 1, seed: int = 0):
+        self.score, self.z, self.min_updates, self.margin, self.group = score, z, min_updates, margin, group
+        self.rng = np.random.default_rng(seed + 31337)
         self.last_scores: dict = {}
 
+    def _score(self, a: dict) -> float:
+        try:
+            return float(self.score(a))
+        except (RuntimeError, ValueError, KeyError, TypeError):  # 形狀或參數名稱不符
+            return float("nan")
+
     def screen(self, updates: dict[int, dict]) -> set[int]:
-        scores = {}
-        for p, a in updates.items():
-            try:
-                scores[p] = float(self.score(a))
-            except (RuntimeError, ValueError, KeyError, TypeError):  # 形狀或參數名稱不符
-                scores[p] = float("nan")
-        self.last_scores = scores
+        if self.group > 1 and len(updates) >= 2 * self.group:
+            keys = [list(updates)[i] for i in self.rng.permutation(len(updates))]
+            groups = [keys[i:i + self.group] for i in range(0, len(keys), self.group)]
+            if len(groups[-1]) < self.group:
+                groups[-2] += groups.pop()
+            gs = {}
+            for g, members in enumerate(groups):
+                try:
+                    avg = {k: np.mean([np.asarray(updates[m][k], np.float64) for m in members], axis=0)
+                           for k in updates[members[0]]}
+                except (ValueError, KeyError):  # 組內形狀或參數名稱不一致
+                    avg = None
+                gs[g] = self._score(avg) if avg is not None else float("nan")
+            self.last_scores = {m: gs[g] for g, members in enumerate(groups) for m in members}
+            return {m for g in self._outliers(gs) for m in groups[g]}
+        self.last_scores = {p: self._score(a) for p, a in updates.items()}
+        return self._outliers(self.last_scores)
+
+    def _outliers(self, scores: dict) -> set:
         bad = {p for p, s in scores.items() if not np.isfinite(s)}
         v = np.array([s for p, s in scores.items() if p not in bad])
         if len(v) < self.min_updates:  # 太少份無法判斷誰是離群值，只拒絕壞掉的

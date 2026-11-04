@@ -50,6 +50,27 @@ class ValidationFilterTest(unittest.TestCase):
         self.assertEqual(f.last_scores[9], 5.1)
 
 
+    def test_group_mode_scores_only_group_averages_and_rejects_whole_group(self):
+        seen = []
+
+        def score(a):
+            seen.append(float(a["s"][0]))
+            return float(a["s"][0])
+
+        ups = {p: {"s": np.array([5.0 + 0.01 * (p % 3)])} for p in range(12)} | {12: {"s": np.array([40.0])}}
+        f = ValidationFilter(score, z=3.0, group=4, seed=0)
+        bad = f.screen(ups)
+        self.assertEqual(len(seen), 3)  # 13 份分成 4、4、5：只看到 3 個平均，看不到個別更新
+        # 被拒絕的正好是 12 號所在的那一整組（其他組平均都約 5）
+        self.assertEqual(bad, {m for m in ups if f.last_scores[m] == f.last_scores[12]})
+        self.assertIn(len(bad), (4, 5))
+
+    def test_group_mode_falls_back_when_too_few_updates(self):
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, group=4)
+        ups = {p: {"s": np.array([5.0 + 0.01 * p])} for p in range(6)} | {6: {"s": np.array([50.0])}}
+        self.assertEqual(f.screen(ups), {6})
+
+
 class GuardedStrategyValidationTest(unittest.TestCase):
     def test_rejected_updates_never_reach_inner_aggregator(self):
         from flwr.app import Array, ArrayRecord, Message, MetricRecord, RecordDict
