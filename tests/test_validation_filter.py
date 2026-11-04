@@ -40,6 +40,16 @@ class ValidationFilterTest(unittest.TestCase):
         self.assertEqual(f.screen({0: {"s": np.array([1.0])}, 1: {"s": np.array([99.0])}}), set())
 
 
+    def test_margin_keeps_updates_only_slightly_worse_than_a_tight_cluster(self):
+        # 多數更新幾乎一樣時 MAD 很小，只差 2% 也會超過 z×MAD；margin=0.05 要求至少比中位數差 5% 才拒絕
+        scores = {p: 5.0 + 0.001 * p for p in range(9)} | {9: 5.1, 10: 6.0}
+        ups = {p: {"s": np.array([s])} for p, s in scores.items()}
+        self.assertEqual(ValidationFilter(lambda a: float(a["s"][0]), z=3.0).screen(ups), {9, 10})
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, margin=0.05)
+        self.assertEqual(f.screen(ups), {10})
+        self.assertEqual(f.last_scores[9], 5.1)
+
+
 class GuardedStrategyValidationTest(unittest.TestCase):
     def test_rejected_updates_never_reach_inner_aggregator(self):
         from flwr.app import Array, ArrayRecord, Message, MetricRecord, RecordDict
@@ -65,6 +75,10 @@ class GuardedStrategyValidationTest(unittest.TestCase):
         g.aggregate_train(1, [reply(p, 5.0 + 0.01 * p) for p in range(6)] + [reply(6, 50.0)])
         self.assertEqual(sorted(seen), [0, 1, 2, 3, 4, 5])
         self.assertEqual(stats["val_rejected"], "6")
+        self.assertEqual(g.validation_scores[0][0], 1)
+        got = sorted(g.validation_scores[0][1])
+        self.assertEqual([p for p, _ in got], list(range(7)))
+        np.testing.assert_allclose([v for _, v in got], [5.0 + 0.01 * p for p in range(6)] + [50.0], rtol=1e-6)
 
         # 惡意更新冒用誠實 VD 的編號：仍要被擋下，不能被同編號的誠實更新蓋過
         seen.clear()

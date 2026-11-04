@@ -115,10 +115,12 @@ class CollusionFilter:
 class ValidationFilter:
     """伺服器用自己的參考資料檢查每份更新（概念同 Zeno，Xie et al. 2019；FLTrust，Cao et al. 2021）：
     score(更新後的模型) 越大越差；比這一輪多數 VD 明顯差（中位數 + z × 1.4826 × MAD）的不聚合。
-    只拒絕「變差」的一側；分數不是有限值的也拒絕。需要伺服器看得到個別更新，不能和安全聚合一起用。"""
+    只拒絕「變差」的一側；分數不是有限值的也拒絕。需要伺服器看得到個別更新，不能和安全聚合一起用。
+    margin > 0：另外要求至少比中位數差 margin（比例）才拒絕，避免多數更新擠在一起、MAD 很小時誤擋只差一點的 VD。"""
 
-    def __init__(self, score: Callable[[dict], float], z: float = 3.0, min_updates: int = 3):
-        self.score, self.z, self.min_updates = score, z, min_updates
+    def __init__(self, score: Callable[[dict], float], z: float = 3.0, min_updates: int = 3, margin: float = 0.0):
+        self.score, self.z, self.min_updates, self.margin = score, z, min_updates, margin
+        self.last_scores: dict = {}
 
     def screen(self, updates: dict[int, dict]) -> set[int]:
         scores = {}
@@ -127,13 +129,15 @@ class ValidationFilter:
                 scores[p] = float(self.score(a))
             except (RuntimeError, ValueError, KeyError, TypeError):  # 形狀或參數名稱不符
                 scores[p] = float("nan")
+        self.last_scores = scores
         bad = {p for p, s in scores.items() if not np.isfinite(s)}
         v = np.array([s for p, s in scores.items() if p not in bad])
         if len(v) < self.min_updates:  # 太少份無法判斷誰是離群值，只拒絕壞掉的
             return bad
         med = float(np.median(v))
         mad = float(np.median(np.abs(v - med))) * 1.4826 + 1e-9
-        return bad | {p for p, s in scores.items() if p not in bad and s > med + self.z * mad}
+        limit = med + max(self.z * mad, self.margin * abs(med))
+        return bad | {p for p, s in scores.items() if p not in bad and s > limit}
 
 
 def secure_average(contents: list[RecordDict], expected: int, revealed: dict | None = None) -> ArrayRecord | None:
@@ -168,6 +172,7 @@ class GuardedStrategy(Strategy):
         self.collusion_filter = collusion_filter
         self.replay_rate = replay_rate
         self.validation_filter = validation_filter
+        self.validation_scores: list = []  # 每輪 (輪次, [(VD 編號, 驗證分數)])，事後分析誤擋用
         # 下行壓縮：只廣播「新全域模型 − VD 手上那一版」的量化差值；第一次（VD 手上沒有模型）送完整 float32
         self.download_bits = download_bits
         self.download_bytes: list[int] = []  # 每次實際廣播的位元組數（每個 VD 收到一樣的）
@@ -233,6 +238,8 @@ class GuardedStrategy(Strategy):
             invalid = self.validation_filter.screen({i: arrays_of(m.content["arrays"]) for i, m in enumerate(kept)})
             stats["val_rejected"] = ";".join(sorted(str(int(kept[i].content["metrics"]["partition-id"]))
                                                     for i in invalid))
+            self.validation_scores.append((server_round, [(int(kept[i].content["metrics"]["partition-id"]), v)
+                                                          for i, v in self.validation_filter.last_scores.items()]))
             kept = [m for i, m in enumerate(kept) if i not in invalid]
         if self.on_round:
             self.on_round(server_round, stats)

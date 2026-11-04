@@ -178,7 +178,7 @@ def main(grid: Grid, context: Context) -> None:
         validation_filter = ValidationFilter(jam_scorer(refs, lambda: TrafficModel(
             int(cfg["lookback"]), int(cfg["hidden-size"]), bool(cfg.get("residual", False)),
             n_calendar(str(cfg.get("calendar", ""))) + int(bool(cfg.get("lag-day", False))))),
-            float(cfg.get("validation-z", 3.0)))
+            float(cfg.get("validation-z", 3.0)), margin=float(cfg.get("validation-margin", 0.0)))
     strategy = GuardedStrategy(strategy, priv if sign else None, vd_keys if verify else None,
                                float(cfg.get("tamper-rate", 0.0)), int(cfg["seed"]), logger.on_security,
                                secure_agg_clients=num_clients if secure_agg else 0, on_audit=logger.on_audit,
@@ -195,6 +195,8 @@ def main(grid: Grid, context: Context) -> None:
                             train_config=ConfigRecord({}), evaluate_config=ConfigRecord({}))
 
     torch.save(result.arrays.to_torch_state_dict(), run_dir / "final_model.pt")
+    if strategy.validation_scores:
+        (run_dir / "validation_scores.json").write_text(json.dumps(strategy.validation_scores), encoding="utf-8")
     if strategy.download_bytes:
         (run_dir / "download_bytes.json").write_text(json.dumps(strategy.download_bytes), encoding="utf-8")
         print(f"下行廣播 {len(strategy.download_bytes)} 次，每個 VD 共收 {sum(strategy.download_bytes)} bytes")
