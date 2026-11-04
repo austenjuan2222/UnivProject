@@ -40,6 +40,13 @@ def downlink_round_s(nbytes: int, sf: int, n_vd: int = 32, duty: float = 0.10) -
     return n_vd * t / 1000 / duty
 
 
+def expected_sends(packets: int, loss: float, mode: str) -> float:
+    """每包獨立以機率 loss 遺失時，期望要送出幾包才能讓 VD 收齊整份模型。
+    packet：每包各自確認、掉了只補那一包（像 FUOTA 分段＋補送）；whole：沒有分段確認，任何一包掉了整份重送。"""
+    ok = 1.0 - loss
+    return packets / ok if mode == "packet" else packets / ok ** packets
+
+
 def main() -> int:
     # 32 VD 實驗的每 VD 每輪上傳量（README 壓縮上傳一節），+32 B HMAC 標籤
     sizes = {"32 位元（不壓縮）": 6276, "8 位元": 1597, "4 位元": 809}
@@ -57,6 +64,13 @@ def main() -> int:
         for sf in (7, 12):
             n, t = upload_cost(b + 64, sf)
             print(f"| {name} {b + 64} B | SF{sf} | {n} | {t / 1000:.1f} 秒 | {downlink_round_s(b + 64, sf) / 60:.1f} 分鐘 |")
+    # 封包遺失：下行每台 VD 要收齊整份模型（SF12），比較「掉了補那一包」和「整份重送」
+    print("\n| 下行（SF12） | 每台封包數 | 遺失率 | 逐包補送：期望總包數 | 整份重送：期望總包數 |")
+    print("|---|---|---|---|---|")
+    for name, b in down.items():
+        n, _ = upload_cost(b + 64, 12)
+        for loss in (0.05, 0.1, 0.2):
+            print(f"| {name} | {n} | {loss:.0%} | {expected_sends(n, loss, 'packet'):.0f} | {expected_sends(n, loss, 'whole'):,.0f} |")
     return 0
 
 
