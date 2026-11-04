@@ -79,6 +79,7 @@ collusion-z = 3.0          # 標記門檻：相似度高於（中位數 + z × M
 validation-dir = ""         # 非空：伺服器用這個資料夾裡不在聯邦中的參考 VD 檢查每份更新在塞車時段的誤差（絕對路徑）
 validation-vds = 4         # 參考 VD 數（取塞車樣本最多的）
 validation-z = 3.0         # 拒絕門檻：塞車誤差高於（中位數 + z × MAD）
+validation-match = ""        # 參考 VD 編號要包含這段字（例如 "-N-" 只用北向）；空字串＝不限
 secure-agg = false         # true = 安全聚合（成對遮罩）：伺服器只看得到所有 VD 的加總（只能配 fedavg、全部參與）
 upload-bits = 32           # < 32：上傳前把更新量量化成幾位元（8、4、2；隨機捨入），模擬 LPWAN 的小頻寬
 download-bits = 32         # < 32：伺服器只廣播「新全域模型 − VD 手上那一版」的量化差值（LPWAN 下行）；第一輪送完整模型

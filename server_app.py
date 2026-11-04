@@ -66,8 +66,9 @@ def _reference_sets(cfg: dict, exclude: set, n: int) -> list[dict]:
     vdir = str(cfg["validation-dir"])
     clients = _manifest(vdir).get("clients", [])
     sets = []
+    match = str(cfg.get("validation-match", ""))  # 例如 "-N-"：只用同方向（北向）的參考 VD
     for c in clients:
-        if c["vdid"] in exclude:
+        if c["vdid"] in exclude or match not in c["vdid"]:
             continue
         d = load_client_arrays(vdir, int(c["partition"]), len(clients), int(cfg["lookback"]),
                                float(cfg.get("train-frac", 0.8)), int(cfg.get("horizon", 1)),
