@@ -5,6 +5,7 @@ import csv
 import datetime as dt
 import json
 import math
+import time
 import warnings
 from pathlib import Path
 
@@ -83,7 +84,14 @@ def _write_csv(path: Path, fields, rows):
         w.writeheader()
         for r in rows:
             w.writerow({k: ("" if r.get(k) is None else r.get(k)) for k in fields})
-    tmp.replace(path)
+    for attempt in range(20):
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError:  # Windows：目的檔被防毒、索引或讀檔的程式短暫開著
+            if attempt == 19:
+                raise
+            time.sleep(0.25)
 
 
 class RunLogger:
