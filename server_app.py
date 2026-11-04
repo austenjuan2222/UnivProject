@@ -184,7 +184,8 @@ def main(grid: Grid, context: Context) -> None:
                                collusion_filter=CollusionFilter(float(cfg.get("collusion-z", 3.0)))
                                if bool(cfg.get("collusion-filter", False)) else None,
                                replay_rate=float(cfg.get("replay-rate", 0.0)),
-                               validation_filter=validation_filter)
+                               validation_filter=validation_filter,
+                               download_bits=int(cfg.get("download-bits", 32)))
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))
@@ -193,4 +194,7 @@ def main(grid: Grid, context: Context) -> None:
                             train_config=ConfigRecord({}), evaluate_config=ConfigRecord({}))
 
     torch.save(result.arrays.to_torch_state_dict(), run_dir / "final_model.pt")
+    if strategy.download_bytes:
+        (run_dir / "download_bytes.json").write_text(json.dumps(strategy.download_bytes), encoding="utf-8")
+        print(f"下行廣播 {len(strategy.download_bytes)} 次，每個 VD 共收 {sum(strategy.download_bytes)} bytes")
     print(f"\n實驗紀錄已寫到 {run_dir}")

@@ -19,6 +19,7 @@ from flwr.serverapp.strategy import Strategy
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from compress import quantize_update
 from secagg import drop_correction, unmask_sum
 from security import sign_model, sign_update, tamper, update_digest, verify_update
 
@@ -152,7 +153,7 @@ class GuardedStrategy(Strategy):
                  on_round: Callable[[int, dict], None] | None = None, secure_agg_clients: int = 0,
                  on_audit: Callable[[list], None] | None = None,
                  collusion_filter: CollusionFilter | None = None, replay_rate: float = 0.0,
-                 validation_filter: ValidationFilter | None = None):
+                 validation_filter: ValidationFilter | None = None, download_bits: int = 32):
         """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。"""
         self.inner = inner
         self.vd_keys = vd_keys or {}
@@ -167,6 +168,12 @@ class GuardedStrategy(Strategy):
         self.collusion_filter = collusion_filter
         self.replay_rate = replay_rate
         self.validation_filter = validation_filter
+        # 下行壓縮：只廣播「新全域模型 − VD 手上那一版」的量化差值；第一次（VD 手上沒有模型）送完整 float32
+        self.download_bits = download_bits
+        self.download_bytes: list[int] = []  # 每次實際廣播的位元組數（每個 VD 收到一樣的）
+        self._bc_src: dict | None = None  # 上次廣播對應的真正全域模型
+        self._bc: ArrayRecord | None = None  # 上次廣播出去（VD 手上）的版本
+        self._bc_rng = np.random.default_rng(seed + 104729)
         self._last: dict = {}  # 每個 VD 上一輪的訊息（模擬重送用）
         self._global: dict = {}
         self._grid: Grid | None = None
@@ -179,8 +186,23 @@ class GuardedStrategy(Strategy):
                 m.content[AUTH] = ConfigRecord({"sig": sig})
         return messages
 
+    def _broadcast(self, arrays: ArrayRecord) -> ArrayRecord:
+        if self.download_bits >= 32:
+            return arrays
+        a = arrays_of(arrays)
+        if self._bc_src is not None and all(np.array_equal(a[k], self._bc_src[k]) for k in a):
+            return self._bc  # 同一份全域模型（本輪評估 → 下一輪訓練）不重送
+        if self._bc is None:
+            q, n = quantize_update(a, a, 32, self._bc_rng)
+        else:
+            q, n = quantize_update(arrays_of(self._bc), a, self.download_bits, self._bc_rng)
+        self._bc_src, self._bc = a, _array_record(q)
+        self.download_bytes.append(n)
+        return self._bc
+
     def configure_train(self, server_round: int, arrays: ArrayRecord, config: ConfigRecord,
                         grid: Grid) -> Iterable[Message]:
+        arrays = self._broadcast(arrays)
         self._global = arrays_of(arrays)
         self._grid = grid  # 安全聚合斷線復原時要再問一次在線 VD
         return self._sign(self.inner.configure_train(server_round, arrays, config, grid), arrays, server_round)
@@ -259,6 +281,7 @@ class GuardedStrategy(Strategy):
 
     def configure_evaluate(self, server_round: int, arrays: ArrayRecord, config: ConfigRecord,
                            grid: Grid) -> Iterable[Message]:
+        arrays = self._broadcast(arrays)
         return self._sign(self.inner.configure_evaluate(server_round, arrays, config, grid),
                           arrays, server_round)
 

@@ -80,6 +80,7 @@ validation-vds = 4         # 參考 VD 數（取塞車樣本最多的）
 validation-z = 3.0         # 拒絕門檻：塞車誤差高於（中位數 + z × MAD）
 secure-agg = false         # true = 安全聚合（成對遮罩）：伺服器只看得到所有 VD 的加總（只能配 fedavg、全部參與）
 upload-bits = 32           # < 32：上傳前把更新量量化成幾位元（8、4、2；隨機捨入），模擬 LPWAN 的小頻寬
+download-bits = 32         # < 32：伺服器只廣播「新全域模型 − VD 手上那一版」的量化差值（LPWAN 下行）；第一輪送完整模型
 dropout-rate = 0.0         # 模擬 VD 斷線：每個 VD 每輪不回應的機率（可用性）
 seed = 42
 data-dir = "data/processed"
