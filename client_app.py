@@ -65,6 +65,7 @@ def _cfg(context: Context) -> dict:
         "attack_clients": int(c.get("attack-clients", 0)),
         "attack_type": str(c.get("attack-type", "flip")),
         "attack_scale": float(c.get("attack-scale", 10.0)),
+        "attack_shift_kmh": float(c.get("attack-shift-kmh", 30.0)),
         "dropout_rate": float(c.get("dropout-rate", 0.0)),
         "secure_agg": bool(c.get("secure-agg", False)),
         "upload_bits": int(c.get("upload-bits", 32)),
@@ -136,7 +137,7 @@ def train_fn(msg: Message, context: Context) -> Message:
     y_train = d["y_train"]
     if cfg["attack_type"] == "hidejam" and is_attacker(pid, int(context.node_config["num-partitions"]),
                                                        cfg["attack_clients"]):
-        y_train = hide_congestion(y_train, d["mean"], d["std"])  # 針對性攻擊：用竄改過的標籤訓練
+        y_train = hide_congestion(y_train, d["mean"], d["std"], shift_kmh=cfg["attack_shift_kmh"])  # 針對性攻擊：用竄改過的標籤訓練
     loader = make_loader(d["X_train"], y_train, cfg["batch_size"], shuffle=True,
                          seed=cfg["seed"] + 1000 * pid + rnd)
     # 每個 client 都要有同一組 metric 鍵，Flower 才能彙整（diverged 只在發散時設成 1）
