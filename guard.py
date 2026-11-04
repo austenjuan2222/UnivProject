@@ -207,10 +207,11 @@ class GuardedStrategy(Strategy):
             kept = [m for m in kept if pid[id(m)] not in flagged]
             stats["flagged"] = ";".join(str(p) for p in sorted(flagged))
         if self.validation_filter is not None and kept:
-            pid = {id(m): int(m.content["metrics"]["partition-id"]) for m in kept}
-            invalid = self.validation_filter.screen({pid[id(m)]: arrays_of(m.content["arrays"]) for m in kept})
-            kept = [m for m in kept if pid[id(m)] not in invalid]
-            stats["val_rejected"] = ";".join(str(p) for p in sorted(invalid))
+            # 以每份訊息為單位評分（不用 VD 自報的編號當鍵），同一編號送兩份也會各自被檢查
+            invalid = self.validation_filter.screen({i: arrays_of(m.content["arrays"]) for i, m in enumerate(kept)})
+            stats["val_rejected"] = ";".join(sorted(str(int(kept[i].content["metrics"]["partition-id"]))
+                                                    for i in invalid))
+            kept = [m for i, m in enumerate(kept) if i not in invalid]
         if self.on_round:
             self.on_round(server_round, stats)
         if not kept:

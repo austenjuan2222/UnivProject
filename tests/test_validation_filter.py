@@ -66,6 +66,12 @@ class GuardedStrategyValidationTest(unittest.TestCase):
         self.assertEqual(sorted(seen), [0, 1, 2, 3, 4, 5])
         self.assertEqual(stats["val_rejected"], "6")
 
+        # 惡意更新冒用誠實 VD 的編號：仍要被擋下，不能被同編號的誠實更新蓋過
+        seen.clear()
+        g.aggregate_train(2, [reply(p, 5.0 + 0.01 * p) for p in range(6)] + [reply(3, 50.0)])
+        self.assertEqual(sorted(seen), [0, 1, 2, 3, 4, 5])
+        self.assertEqual(stats["val_rejected"], "3")
+
 
 class JamScorerTest(unittest.TestCase):
     def test_model_that_hides_congestion_scores_worse(self):
