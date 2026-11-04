@@ -33,6 +33,13 @@ def upload_cost(nbytes: int, sf: int) -> tuple[int, float]:
     return packets, t
 
 
+def downlink_round_s(nbytes: int, sf: int, n_vd: int = 32, duty: float = 0.10) -> float:
+    """閘道器把全域模型逐台送給 n_vd 個 VD（Class A 沒有群播）至少要多少秒。
+    EU868 下行用 RX2（869.525 MHz）頻段，工作週期 10%，而且是整個閘道器共用，不是每台 VD 各自 1%。"""
+    _, t = upload_cost(nbytes, sf)
+    return n_vd * t / 1000 / duty
+
+
 def main() -> int:
     # 32 VD 實驗的每 VD 每輪上傳量（README 壓縮上傳一節），+32 B HMAC 標籤
     sizes = {"32 位元（不壓縮）": 6276, "8 位元": 1597, "4 位元": 809}

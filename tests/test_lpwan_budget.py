@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from lpwan_budget import time_on_air_ms, upload_cost  # noqa: E402
+from lpwan_budget import downlink_round_s, time_on_air_ms, upload_cost  # noqa: E402
 
 
 class LoraAirtimeTest(unittest.TestCase):
@@ -16,6 +16,11 @@ class LoraAirtimeTest(unittest.TestCase):
         n, t = upload_cost(243, 7)
         self.assertEqual(n, 2)
         self.assertAlmostEqual(t, time_on_air_ms(255, 7) + time_on_air_ms(14, 7))
+
+    def test_gateway_sends_to_every_vd_under_its_duty_cycle(self):
+        # 沒有群播：閘道器要逐台送，32 台的總空中時間受 RX2 頻段 10% 工作週期限制
+        _, t = upload_cost(500, 12)
+        self.assertAlmostEqual(downlink_round_s(500, 12, n_vd=32, duty=0.10), 32 * t / 1000 / 0.10)
 
 
 if __name__ == "__main__":
