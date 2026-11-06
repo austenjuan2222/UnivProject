@@ -16,7 +16,7 @@ ROUND_FIELDS = ["round", "n_train_clients", "n_eval_clients", "train_loss", "eva
 CLIENT_FIELDS = ["round", "partition", "vdid", "num_train", "train_loss", "epsilon",
                  "dp_steps", "sample_rate", "local_mae_kmh",
                  "num_test", "eval_loss", "mae_kmh", "rmse_kmh", "naive_mae_kmh",
-                 "ft_mae_kmh", "ft_epsilon", "diverged", "ft_diverged"]
+                 "ft_mae_kmh", "ft_epsilon", "diverged", "ft_diverged", "attack_alpha"]
 
 
 def _wmean(replies, key):
@@ -137,7 +137,9 @@ class RunLogger:
                        dp_steps=int(r["dp-steps"]) if "dp-steps" in r else None,
                        sample_rate=float(r["sample-rate"]) if "sample-rate" in r else None,
                        local_mae_kmh=float(r["local-mae-kmh"]) if "local-mae-kmh" in r else None,
-                       diverged=int(r.get("diverged", 0)))
+                       diverged=int(r.get("diverged", 0)),
+                       # 只供實驗分析：自適應攻擊者實際用的縮放比例（伺服器的驗證不看它）
+                       attack_alpha=float(r["attack-alpha"]) if float(r.get("attack-alpha", -1)) >= 0 else None)
         self._flush()
         return agg
 

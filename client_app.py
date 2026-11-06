@@ -20,9 +20,9 @@ from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
 from secagg import load_agreement_keys, mask_update, reveal_seeds
-from security import (drops_out, hide_congestion, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key,
+from security import (adaptive_shrink, drops_out, hide_congestion, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key,
                       poison_update, verify_model)
-from task import TrafficModel, all_finite, evaluate, make_loader, set_seed, train, unwrap
+from task import TrafficModel, all_finite, jam_scorer, evaluate, make_loader, set_seed, train, unwrap
 
 warnings.filterwarnings("ignore", category=UserWarning, module="opacus")
 logging.getLogger("flwr").setLevel(logging.INFO)
@@ -67,6 +67,7 @@ def _cfg(context: Context) -> dict:
         "attack_type": str(c.get("attack-type", "flip")),
         "attack_scale": float(c.get("attack-scale", 10.0)),
         "attack_shift_kmh": float(c.get("attack-shift-kmh", 30.0)),
+        "attack_adaptive_tol": float(c.get("attack-adaptive-tol", 0.0)),
         "dropout_rate": float(c.get("dropout-rate", 0.0)),
         "secure_agg": bool(c.get("secure-agg", False)),
         "upload_bits": int(c.get("upload-bits", 32)),
@@ -97,6 +98,24 @@ def _model(cfg: dict, msg: Message) -> TrafficModel:
     model = TrafficModel(cfg["lookback"], cfg["hidden"], cfg["residual"], n_extra)
     model.load_state_dict(msg.content["arrays"].to_torch_state_dict(), strict=True)
     return model
+
+
+_ATTACKER_SCORERS: dict = {}
+
+
+def _attacker_scorer(context: Context, cfg: dict):
+    """自適應攻擊者用的評分函式：最壞情況假設它拿得到伺服器的參考 VD（同 validation-dir 的挑法）。每個行程只建一次。"""
+    c = dict(context.run_config)
+    key = str(c.get("validation-dir", ""))
+    if not key:
+        raise ValueError("attack-adaptive-tol > 0 需要設定 validation-dir（攻擊者要模仿伺服器的檢查）")
+    if key not in _ATTACKER_SCORERS:
+        from server_app import _manifest, _reference_sets  # 只在自適應攻擊時才需要
+        fed = {x["vdid"] for x in _manifest(cfg["data_dir"]).get("clients", [])}
+        refs = _reference_sets(c, fed, int(c.get("validation-vds", 4)))
+        n_extra = n_calendar(cfg["calendar"]) + int(cfg["lag_day"])
+        _ATTACKER_SCORERS[key] = jam_scorer(refs, lambda: TrafficModel(cfg["lookback"], cfg["hidden"], cfg["residual"], n_extra))
+    return _ATTACKER_SCORERS[key]
 
 
 def _dp_history(context: Context):
@@ -161,6 +180,8 @@ def train_fn(msg: Message, context: Context) -> Message:
                          seed=cfg["seed"] + 1000 * pid + rnd)
     # 每個 client 都要有同一組 metric 鍵，Flower 才能彙整（diverged 只在發散時設成 1）
     metrics = {"num-examples": len(d["y_train"]), "round": rnd, "partition-id": pid, "diverged": 0}
+    if cfg["attack_adaptive_tol"] > 0:
+        metrics["attack-alpha"] = -1.0  # Flower 要求每個回覆的指標鍵相同；-1 表示不是攻擊者
 
     if cfg["use_dp"] and cfg["edge_runtime"] == "numpy":
         model, loss, hist, eps, steps, sample_rate = _numpy_dp_train(model, d["X_train"], y_train, cfg,
@@ -201,6 +222,8 @@ def train_fn(msg: Message, context: Context) -> Message:
                             # collude：同一輪所有被入侵 VD 共用種子，才會往同一個方向偏移
                             np.random.default_rng([cfg["seed"], rnd] if cfg["attack_type"] == "collude"
                                                   else [cfg["seed"], pid, rnd]))
+        if cfg["attack_adaptive_tol"] > 0:
+            bad, metrics["attack-alpha"] = adaptive_shrink(g, bad, _attacker_scorer(context, cfg), cfg["attack_adaptive_tol"])
         arrays = ArrayRecord({k: Array(v) for k, v in bad.items()})
     upload_bytes = None
     if cfg["upload_bits"] < 32:

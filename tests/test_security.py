@@ -186,3 +186,22 @@ class ScenarioTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AdaptiveShrinkTest(unittest.TestCase):
+    def test_picks_largest_step_that_stays_within_tolerance(self):
+        from security import adaptive_shrink
+
+        g, bad = {"w": np.zeros(2, np.float32)}, {"w": np.full(2, 4.0, np.float32)}
+        score = lambda a: 1.0 + float(a["w"][0])  # 分數隨偏移線性變差；原點 1.0
+        out, alpha = adaptive_shrink(g, bad, score, tol=1.5)  # 容許到 2.5 → α=0.25（偏移 1）可、0.5（偏移 2）不可
+        self.assertEqual(alpha, 0.25)
+        np.testing.assert_allclose(out["w"], 1.0)
+
+    def test_falls_back_to_global_when_nothing_passes(self):
+        from security import adaptive_shrink
+
+        g, bad = {"w": np.zeros(1, np.float32)}, {"w": np.full(1, 100.0, np.float32)}
+        out, alpha = adaptive_shrink(g, bad, lambda a: 1.0 + float(a["w"][0]), tol=0.01)
+        self.assertEqual(alpha, 0.0)
+        np.testing.assert_allclose(out["w"], 0.0)

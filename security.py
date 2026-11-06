@@ -169,6 +169,19 @@ def poison_update(global_arrays: dict, local_arrays: dict, kind: str, scale: flo
     return out
 
 
+def adaptive_shrink(global_arrays: dict, bad_arrays: dict, score, tol: float,
+                    alphas=(1.0, 0.5, 0.25, 0.125)) -> tuple[dict, float]:
+    """知道伺服器驗證方式的攻擊者（最壞情況：拿得到參考 VD 和評分函式）：把惡意更新縮成 g + α(bad − g)，
+    取分數不超過「全域模型本身分數 ×(1+tol)」的最大 α；都不行就送全域模型（α=0，等於不攻擊）。"""
+    g = {k: np.asarray(v, np.float32) for k, v in global_arrays.items()}
+    limit = score(g) * (1 + tol)
+    for a in alphas:
+        cand = {k: (g[k] + a * (np.asarray(bad_arrays[k], np.float32) - g[k])).astype(np.float32) for k in g}
+        if score(cand) <= limit:
+            return cand, a
+    return g, 0.0
+
+
 def hide_congestion(y: np.ndarray, mean: float, std: float, below_kmh: float = 60.0,
                     shift_kmh: float = 30.0) -> np.ndarray:
     """針對性攻擊的標籤竄改：實際車速低於 below_kmh（塞車）的樣本，標籤改高 shift_kmh，
