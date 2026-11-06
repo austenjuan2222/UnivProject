@@ -61,8 +61,9 @@ def _check_num_nodes(grid: Grid, expected: int, wait_s: float = 60.0) -> None:
         )
 
 
-def _reference_sets(cfg: dict, exclude: set, n: int) -> list[dict]:
-    """伺服器自己的參考 VD（不在聯邦裡，例如高公局自己管的路段）：取 validation-dir 裡塞車樣本最多的 n 個，只用訓練段。"""
+def _reference_sets(cfg: dict, exclude: set, n: int, offset: int = 0) -> list[dict]:
+    """伺服器自己的參考 VD（不在聯邦裡，例如高公局自己管的路段）：依塞車樣本數排序，取第 offset 起的 n 個，只用訓練段。
+    offset > 0 模擬伺服器把參考 VD 保密、不用「最明顯」的那幾個。"""
     vdir = str(cfg["validation-dir"])
     clients = _manifest(vdir).get("clients", [])
     sets = []
@@ -76,10 +77,11 @@ def _reference_sets(cfg: dict, exclude: set, n: int) -> list[dict]:
         n_jam = int(((d["y_train"] * d["std"] + d["mean"]) < JAM_KMH).sum())
         sets.append((n_jam, c["vdid"], {"X": d["X_train"], "y": d["y_train"], "mean": d["mean"], "std": d["std"]}))
     sets.sort(key=lambda t: (-t[0], t[1]))
-    if len(sets) < n:
-        raise ValueError(f"validation-dir 只有 {len(sets)} 個不在聯邦裡的 VD，不夠 validation-vds={n}")
-    print("伺服器參考 VD（塞車樣本數）：" + "、".join(f"{v}（{j}）" for j, v, _ in sets[:n]))
-    return [r for _, _, r in sets[:n]]
+    if len(sets) < offset + n:
+        raise ValueError(f"validation-dir 只有 {len(sets)} 個不在聯邦裡的 VD，不夠 offset={offset} + validation-vds={n}")
+    sets = sets[offset:offset + n]
+    print("參考 VD（塞車樣本數）：" + "、".join(f"{v}（{j}）" for j, v, _ in sets))
+    return [r for _, _, r in sets]
 
 
 @app.main()
@@ -174,7 +176,7 @@ def main(grid: Grid, context: Context) -> None:
         provision_agreement_keys(str(cfg.get("key-dir", "keys")), num_clients)
     validation_filter = None
     if str(cfg.get("validation-dir", "")):
-        refs = _reference_sets(cfg, set(vdids.values()), int(cfg.get("validation-vds", 4)))
+        refs = _reference_sets(cfg, set(vdids.values()), int(cfg.get("validation-vds", 4)), int(cfg.get("validation-offset", 0)))
         validation_filter = ValidationFilter(jam_scorer(refs, lambda: TrafficModel(
             int(cfg["lookback"]), int(cfg["hidden-size"]), bool(cfg.get("residual", False)),
             n_calendar(str(cfg.get("calendar", ""))) + int(bool(cfg.get("lag-day", False))))),

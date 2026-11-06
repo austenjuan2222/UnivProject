@@ -112,7 +112,8 @@ def _attacker_scorer(context: Context, cfg: dict):
     if key not in _ATTACKER_SCORERS:
         from server_app import _manifest, _reference_sets  # 只在自適應攻擊時才需要
         fed = {x["vdid"] for x in _manifest(cfg["data_dir"]).get("clients", [])}
-        refs = _reference_sets(c, fed, int(c.get("validation-vds", 4)))
+        # 攻擊者猜伺服器用的是塞車最多的那幾個（attack-ref-offset）；伺服器若用 validation-offset 保密，兩者就不同
+        refs = _reference_sets(c, fed, int(c.get("validation-vds", 4)), int(c.get("attack-ref-offset", 0)))
         n_extra = n_calendar(cfg["calendar"]) + int(cfg["lag_day"])
         _ATTACKER_SCORERS[key] = jam_scorer(refs, lambda: TrafficModel(cfg["lookback"], cfg["hidden"], cfg["residual"], n_extra))
     return _ATTACKER_SCORERS[key]

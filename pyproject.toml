@@ -75,6 +75,8 @@ attack-type = "flip"       # flip（反向並放大自己的更新）／noise（
 attack-scale = 10.0        # 惡意更新的放大倍數
 attack-shift-kmh = 30.0    # hidejam：塞車樣本的標籤改高幾 km/h
 attack-adaptive-tol = 0.0  # >0：攻擊者知道伺服器驗證方式，把惡意更新縮到分數不超過全域模型 ×(1+tol)
+attack-ref-offset = 0      # 自適應攻擊者以為伺服器用的參考 VD：依塞車樣本數排序第 offset 起的 validation-vds 個
+validation-offset = 0      # 伺服器實際用的參考 VD 從第幾名開始（>0：保密，不用塞車最多的那幾個）
 tamper-rate = 0.0          # 模擬網路中間人：每個上傳更新被竄改的機率
 replay-rate = 0.0          # 模擬網路中間人：把 VD 上一輪的整份訊息（參數＋簽章）再送一次的機率
 collusion-filter = false   # true = 跨輪偵測串通：更新方向一直和別人特別像的 VD 被剔除
