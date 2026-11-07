@@ -72,14 +72,23 @@ def provision_keys(key_dir, num_clients: int) -> None:
 
 def _revoked(key_dir) -> set[int]:
     p = Path(key_dir) / "server" / "revoked.json"
-    return set(json.loads(p.read_text(encoding="utf-8"))) if p.exists() else set()
+    return {int(x) for x in json.loads(p.read_text(encoding="utf-8"))} if p.exists() else set()  # 讀不到就報錯（fail closed）
 
 
 def revoke_vd(key_dir, pid: int) -> None:
     """伺服器端撤銷（寫進 server/revoked.json，重開後仍有效）：之後載入的驗證表與公鑰表都不含這台 VD，
-    它（或偷到它金鑰的人）送的更新 HMAC／簽章即使正確也會被拒絕。要重新加入需配發新金鑰並從清單移除。"""
-    p = Path(key_dir) / "server" / "revoked.json"
-    _write_secret(p, json.dumps(sorted(_revoked(key_dir) | {int(pid)})))
+    它（或偷到它金鑰的人）送的更新 HMAC／簽章即使正確也會被拒絕。舊金鑰同時刪除；要重新加入需從清單移除，再執行 provision_keys 配發新金鑰。"""
+    key_dir, pid = Path(key_dir), int(pid)
+    _write_secret(key_dir / "server" / "revoked.json", json.dumps(sorted(_revoked(key_dir) | {pid})))
+    # 舊金鑰可能已外洩：一併刪掉，之後就算從清單移除，provision_keys 也只會配發新的
+    for table_path, secret in ((key_dir / "server" / "vd_keys.json", True), (key_dir / "vd_sign_pub.json", False)):
+        if table_path.exists():
+            table = json.loads(table_path.read_text(encoding="utf-8"))
+            table.pop(str(pid), None)
+            (_write_secret(table_path, json.dumps(table)) if secret
+             else table_path.write_text(json.dumps(table), encoding="utf-8"))
+    for f in (key_dir / f"vd-{pid}.key", key_dir / f"vd-{pid}.ed25519"):
+        f.unlink(missing_ok=True)
 
 
 def load_vd_key(key_dir, pid: int) -> bytes:

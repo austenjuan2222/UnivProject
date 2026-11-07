@@ -218,6 +218,18 @@ class PersistentRevocationTest(unittest.TestCase):
             revoke_vd(d, 1)  # 重複撤銷不出錯
             self.assertEqual(sorted(load_server_secrets(d)[1]), [0, 2])
 
+    def test_readmitting_a_revoked_vd_needs_new_keys(self):
+        from security import revoke_vd
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 3)
+            old = load_server_secrets(d)[1][1]
+            old_pub = load_vd_verify_keys(d)[1].public_bytes_raw()
+            revoke_vd(d, 1)
+            (Path(d) / "server" / "revoked.json").unlink()  # 管理者把它從撤銷清單拿掉
+            provision_keys(d, 3)
+            self.assertNotEqual(load_server_secrets(d)[1][1], old)  # 舊（可能已外洩的）金鑰不能復活
+            self.assertNotEqual(load_vd_verify_keys(d)[1].public_bytes_raw(), old_pub)
+
 
 if __name__ == "__main__":
     unittest.main()
