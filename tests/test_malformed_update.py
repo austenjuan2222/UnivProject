@@ -54,6 +54,16 @@ class MalformedUpdateTest(unittest.TestCase):
         self.g.aggregate_train(1, [self.reply(0, [1, 1]), self.reply(1, [1, 1], n=10**12)])
         self.assertEqual(self.seen[-1], [0])
 
+    def test_audit_reflects_final_decision(self):
+        # 可歸責性：HMAC 對但後面的檢查擋掉的（這裡是 NaN、筆數灌水），稽核紀錄不能寫成「採用」
+        audits = []
+        self.g.on_audit = audits.extend
+        self.keys[3] = bytes([4]) * 32
+        self.g.vd_keys[3] = self.keys[3]
+        self.g.aggregate_train(1, [self.reply(0, [1, 1]), self.reply(1, [np.nan, 1]), self.reply(2, [1, 1], n=10**6),
+                                   self.reply(3, [1, 1])])
+        self.assertEqual([(a["pid"], a["accepted"]) for a in audits], [(0, True), (1, False), (2, False), (3, True)])
+
     def test_malformed_audit_keeps_vd_id(self):
         audits = []
         self.g.on_audit = audits.extend

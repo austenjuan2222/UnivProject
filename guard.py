@@ -347,8 +347,6 @@ class GuardedStrategy(Strategy):
                     stats["n_rejected"] += 1
                 else:
                     self._node_of_pid[pid], self._pid_of_node[node] = node, pid
-        if self.on_audit and self.verify_updates:
-            self.on_audit(audit)
         kept = [m for m, k in zip(ok_replies, keep) if k]
         if kept and self._global:
             # 可用性：合法金鑰送來的 NaN／inf 或形狀不符的更新會讓全域模型變 NaN 或聚合當掉，一律不聚合
@@ -401,6 +399,12 @@ class GuardedStrategy(Strategy):
                     stats["n_clipped"] += 1
             stats["clipped"] = ";".join(sorted(str(int(m.content["metrics"]["partition-id"]))
                                                for m in kept if norms[id(m)] > limit))
+        if self.on_audit and self.verify_updates:
+            # 所有檢查跑完才寫：HMAC 對、但被格式／筆數／串通／驗證檢查擋掉的，也要記成沒採用
+            final = {id(m) for m in kept}
+            for i, m in enumerate(ok_replies):
+                audit[i]["accepted"] = audit[i]["accepted"] and id(m) in final
+            self.on_audit(audit)
         if self.on_round:
             self.on_round(server_round, stats)
         if not kept:
