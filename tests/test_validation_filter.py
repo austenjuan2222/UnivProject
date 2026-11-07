@@ -118,6 +118,13 @@ class ValidationFilterTest(unittest.TestCase):
         ups[17] = {"s": np.array([6.0])}
         self.assertEqual(g.screen(ups, ids), {17})
 
+    def test_too_small_stratum_is_checked_against_everyone(self):
+        # 這輪某類只來了 2 份（太少無法自己判斷）：不能就此不檢查，要併回全部一起比
+        ups = {p: {"s": np.array([5.0 + 0.01 * p])} for p in range(10)} | {10: {"s": np.array([5.0])}, 11: {"s": np.array([50.0])}}
+        strata = {p: ("small" if p >= 10 else "big") for p in ups}
+        g = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, strata=strata)
+        self.assertEqual(g.screen(ups, {p: p for p in ups}), {11})
+
     def test_strata_need_vd_ids_and_cannot_be_combined_with_groups(self):
         g = ValidationFilter(lambda a: float(a["s"][0]), strata={0: "a"})
         with self.assertRaises(ValueError):

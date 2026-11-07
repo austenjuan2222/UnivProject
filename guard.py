@@ -165,10 +165,14 @@ class ValidationFilter:
             return self._outliers(self.last_scores, mem_ids)
         if ids is None:
             raise ValueError("分層檢查需要每份訊息的 VD 編號（ids）")
-        out = set()
+        out, pooled = set(), None
         for label in {self.strata.get(ids[p]) for p in self.last_scores}:  # 不在表上的 VD 自成一類
             sub = {p: s for p, s in self.last_scores.items() if self.strata.get(ids[p]) == label}
-            out |= self._outliers(sub, mem_ids)
+            if sum(np.isfinite(v) for v in sub.values()) >= self.min_updates:
+                out |= self._outliers(sub, mem_ids)
+            else:  # 這類這輪太少份、自己判斷不了：併回全部一起比，不能就此不檢查（這幾份不記跨輪歷史）
+                pooled = self._outliers(self.last_scores) if pooled is None else pooled
+                out |= pooled & set(sub)
         return out
 
     def _outliers(self, scores: dict, ids: dict | None = None) -> set:
