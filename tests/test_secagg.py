@@ -82,15 +82,19 @@ class SecAggTest(unittest.TestCase):
         self.assertNotEqual(pair_seed(p0, pubs[1], 0, 1, 5, run=1), pair_seed(p0, pubs[1], 0, 1, 5, run=2))
 
     def test_sealed_seeds_open_only_on_server(self):
-        # 復原用的種子加密給伺服器：沒有 TLS 時中間人攔下更新、再讀回覆也拿不到種子
-        from secagg import load_server_agreement_key, seal_seeds
+        # 復原用的種子加密給伺服器：沒有 TLS 時中間人攔下更新、再讀回覆也拿不到種子；改過的密文要被發現
+        from secagg import load_agreement_pubs, load_server_agreement_key, open_seeds, seal_seeds
         p0, pubs = load_agreement_keys(self.dir, 0)
+        spub = load_agreement_pubs(self.dir)["server"]
         spriv = load_server_agreement_key(self.dir)
         plain = reveal_seeds(0, [3], p0, pubs, 2, run=9)
-        sealed = seal_seeds(plain, 0, p0, pubs["server"], 2, run=9)
+        sealed = seal_seeds(plain, 0, p0, spub, 2, run=9)
         self.assertNotEqual(sealed, plain)
-        self.assertEqual(seal_seeds(sealed, 0, spriv, pubs[0], 2, run=9), plain)
-        self.assertNotEqual(seal_seeds(sealed, 0, spriv, pubs[0], 3, run=9), plain)  # 別輪的金鑰流不同
+        self.assertEqual(open_seeds(sealed, 0, spriv, pubs[0], 2, run=9), plain)
+        self.assertIsNone(open_seeds(sealed, 0, spriv, pubs[0], 3, run=9))  # 別輪
+        bad = {3: ("0" if sealed[3][0] != "0" else "1") + sealed[3][1:]}
+        self.assertIsNone(open_seeds(bad, 0, spriv, pubs[0], 2, run=9))  # 被改過
+        self.assertIsNone(open_seeds({3: "zz"}, 0, spriv, pubs[0], 2, run=9))  # 格式錯
 
 
 class SecureAverageTest(unittest.TestCase):

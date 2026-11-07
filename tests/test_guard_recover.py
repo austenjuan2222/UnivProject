@@ -64,16 +64,22 @@ class SignedQueryTest(unittest.TestCase):
 class SealedSeedsTest(unittest.TestCase):
     def test_server_opens_sealed_seeds(self):
         import tempfile
-        from secagg import load_agreement_keys, load_server_agreement_key, provision_agreement_keys, seal_seeds
+        from secagg import load_agreement_pubs, load_agreement_keys, load_server_agreement_key, provision_agreement_keys, seal_seeds
         with tempfile.TemporaryDirectory() as d:
             provision_agreement_keys(d, 3)
-            _, pubs = load_agreement_keys(d, 0)
+            pubs = load_agreement_pubs(d)
             privs = {p: load_agreement_keys(d, p)[0] for p in (0, 1)}
             g = GuardedStrategy(object(), None, None, secure_agg_clients=3,
                                 secagg_keys=(load_server_agreement_key(d), pubs))
             g._grid = FakeGrid(lambda p: {"pid": p, "dropped": [2],
                                           "seeds": list(seal_seeds({2: SEED}, p, privs[p], pubs["server"], 1).values())})
             self.assertEqual(g._recover(1, [_kept(0), _kept(1)]), {0: {2: SEED}, 1: {2: SEED}})
+            # 中間人改一個位元：不能默默解出錯的種子（會讓全域模型壞掉），整輪復原放棄
+            def flip(p):
+                x = seal_seeds({2: SEED}, p, privs[p], pubs["server"], 1)[2]
+                return {"pid": p, "dropped": [2], "seeds": [("0" if x[0] != "0" else "1") + x[1:]]}
+            g._grid = FakeGrid(flip)
+            self.assertIsNone(g._recover(1, [_kept(0), _kept(1)]))
 
 
 if __name__ == "__main__":

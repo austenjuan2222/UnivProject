@@ -19,7 +19,10 @@ import os
 from pathlib import Path
 
 import numpy as np
-from cryptography.hazmat.primitives import serialization
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
 _RAW = serialization.Encoding.Raw
@@ -41,6 +44,7 @@ def provision_agreement_keys(key_dir, num_clients: int) -> None:
     伺服器也有一把（server/agree.x25519，公鑰 x25519_server.pub），VD 交出的復原種子加密給它。"""
     key_dir = Path(key_dir)
     (key_dir / "server").mkdir(parents=True, exist_ok=True)
+    os.chmod(key_dir / "server", 0o700)
     spub = _new_x25519(key_dir / "server" / "agree.x25519").public_key()
     (key_dir / "x25519_server.pub").write_text(spub.public_bytes(_RAW, serialization.PublicFormat.Raw).hex(),
                                                encoding="utf-8")
@@ -63,8 +67,9 @@ def load_agreement_pubs(key_dir) -> dict:
     key_dir = Path(key_dir)
     pubs = json.loads((key_dir / "x25519_pub.json").read_text(encoding="utf-8"))
     out = {int(k): X25519PublicKey.from_public_bytes(bytes.fromhex(v)) for k, v in pubs.items()}
-    out["server"] = X25519PublicKey.from_public_bytes(
-        bytes.fromhex((key_dir / "x25519_server.pub").read_text(encoding="utf-8").strip()))
+    server = key_dir / "x25519_server.pub"
+    if server.exists():  # 只有斷線復原要用；VD 訓練不因少這個檔案而失敗
+        out["server"] = X25519PublicKey.from_public_bytes(bytes.fromhex(server.read_text(encoding="utf-8").strip()))
     return out
 
 
@@ -73,14 +78,42 @@ def load_server_agreement_key(key_dir) -> X25519PrivateKey:
         bytes.fromhex((Path(key_dir) / "server" / "agree.x25519").read_text().strip()))
 
 
-def seal_seeds(seeds: dict, me: int, my_priv: X25519PrivateKey, their_pub: X25519PublicKey, rnd: int,
-               run: int = 0) -> dict[int, str]:
-    """VD 用和伺服器的 X25519 共享金鑰把種子 XOR 加密（伺服器用同一函式、換成自己的私鑰和 VD 公鑰解開）。
-    金鑰流綁執行、輪次、這對 VD，每個只用一次。沒有 TLS 時中間人讀回覆也拿不到種子。"""
+def _seal_aead(my_priv: X25519PrivateKey, their_pub: X25519PublicKey) -> ChaCha20Poly1305:
     shared = my_priv.exchange(their_pub)
-    def pad(j):
-        return hashlib.sha256(shared + f"secagg-seal|{int(run)}|{int(rnd)}|{int(me)}|{int(j)}".encode()).digest()
-    return {int(j): bytes(a ^ b for a, b in zip(bytes.fromhex(x), pad(j))).hex() for j, x in seeds.items()}
+    return ChaCha20Poly1305(HKDF(hashes.SHA256(), 32, None, b"secagg-seal").derive(shared))
+
+
+def _seal_aad(me: int, j: int, rnd: int, run: int) -> bytes:
+    return f"secagg-seal|{int(run)}|{int(rnd)}|{int(me)}|{int(j)}".encode()
+
+
+def seal_seeds(seeds: dict, me: int, my_priv: X25519PrivateKey, server_pub: X25519PublicKey, rnd: int,
+               run: int = 0) -> dict[int, str]:
+    """VD 把復原種子加密給伺服器（X25519 共享金鑰 → ChaCha20-Poly1305）：沒有 TLS 時中間人讀不到，
+    改過也會被發現（不然改一個位元就會默默算錯遮罩、毀掉全域模型）。執行、輪次、這對 VD 放在 AAD。"""
+    aead = _seal_aead(my_priv, server_pub)
+    # 每把金鑰對每個 (執行, 輪次, VD 對) 只加密同一份明文；用 AAD 綁定，nonce 取 AAD 的雜湊前 12 bytes
+    return {int(j): aead.encrypt(_nonce(me, j, rnd, run), bytes.fromhex(x), _seal_aad(me, j, rnd, run)).hex()
+            for j, x in seeds.items()}
+
+
+def _nonce(me, j, rnd, run) -> bytes:
+    return hashlib.sha256(_seal_aad(me, j, rnd, run)).digest()[:12]
+
+
+def open_seeds(sealed: dict, me: int, server_priv: X25519PrivateKey, vd_pub: X25519PublicKey, rnd: int,
+               run: int = 0) -> dict[int, str] | None:
+    """伺服器端解開；任何一個密文格式錯或驗不過就回傳 None（整輪復原放棄）。"""
+    aead, out = _seal_aead(server_priv, vd_pub), {}
+    for j, x in sealed.items():
+        try:
+            seed = aead.decrypt(_nonce(me, j, rnd, run), bytes.fromhex(str(x)), _seal_aad(me, j, rnd, run))
+        except (InvalidTag, ValueError, TypeError):
+            return None
+        if len(seed) != 32:
+            return None
+        out[int(j)] = seed.hex()
+    return out
 
 
 def pair_seed(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, me: int, other: int, rnd: int,

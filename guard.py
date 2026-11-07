@@ -20,7 +20,7 @@ from flwr.serverapp.strategy import Strategy
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from compress import quantize_update
-from secagg import drop_correction, seal_seeds, unmask_sum
+from secagg import drop_correction, open_seeds, unmask_sum
 from security import canonical_metrics, sign_model, sign_recover, sign_update, tamper, update_digest, verify_update
 
 AUTH = "auth"
@@ -454,6 +454,9 @@ class GuardedStrategy(Strategy):
             return arrays, metrics
         return self.inner.aggregate_train(server_round, kept)
 
+    def _run_id(self) -> int:
+        return int(getattr(getattr(self._grid, "run", None), "run_id", 0))
+
     def _recover(self, rnd: int, kept: list[Message]) -> dict | None:
         """向還在線的 VD 要它們和斷線 VD 之間的成對種子；任何一台沒回應就放棄（回傳 None）。"""
         alive = {int(m.content["metrics"]["partition-id"]): m.metadata.src_node_id for m in kept}
@@ -462,7 +465,7 @@ class GuardedStrategy(Strategy):
             return None
         ask = {"dropped": dropped, "round": int(rnd)}
         if self._priv is not None:  # 沒簽的話，沒有 TLS 時中間人可以假造「某台斷線」來解開它已送達的遮罩
-            ask["sig"] = sign_recover(self._priv, rnd, dropped, self._grid.run.run_id)
+            ask["sig"] = sign_recover(self._priv, rnd, dropped, self._run_id())
         q = RecordDict({"secagg": ConfigRecord(ask)})
         replies = list(self._grid.send_and_receive(
             [Message(content=q, message_type="query", dst_node_id=n) for n in alive.values()], timeout=120))
@@ -476,15 +479,18 @@ class GuardedStrategy(Strategy):
                 pid, js, seeds = int(c["pid"]), [int(j) for j in c["dropped"]], [str(x) for x in c["seeds"]]
             except (KeyError, TypeError, ValueError):
                 return None
-            # 回覆要來自它自稱的 VD、涵蓋整份斷線名單，種子是 32 bytes 的十六進位
-            if (pid_of.get(r.metadata.src_node_id) != pid or sorted(js) != dropped or len(seeds) != len(js)
-                    or not all(re.fullmatch(r"[0-9a-f]{64}", x) for x in seeds)):
+            # 回覆要來自它自稱的 VD、涵蓋整份斷線名單；加密的種子要解得開，明文的要是 32 bytes 的十六進位
+            if pid_of.get(r.metadata.src_node_id) != pid or sorted(js) != dropped or len(seeds) != len(js):
                 return None
-            revealed[pid] = dict(zip(js, seeds))
-            if self.secagg_keys is not None:  # VD 加密給伺服器的種子：用伺服器私鑰解開
+            got = dict(zip(js, seeds))
+            if self.secagg_keys is not None:
                 spriv, pubs = self.secagg_keys
-                revealed[pid] = seal_seeds(revealed[pid], pid, spriv, pubs[pid], rnd,
-                                           getattr(getattr(self._grid, "run", None), "run_id", 0))
+                got = open_seeds(got, pid, spriv, pubs[pid], rnd, self._run_id()) if pid in pubs else None
+                if got is None:
+                    return None
+            elif not all(re.fullmatch(r"[0-9a-f]{64}", x) for x in seeds):
+                return None
+            revealed[pid] = got
         return revealed if set(revealed) == set(alive) else None
 
     def configure_evaluate(self, server_round: int, arrays: ArrayRecord, config: ConfigRecord,
