@@ -132,7 +132,7 @@ def _mask(seed: bytes, shape) -> np.ndarray:
 def self_seed(my_priv: X25519PrivateKey, me: int, rnd: int, run: int = 0) -> bytes:
     """雙重遮罩的自我遮罩種子：只有這台 VD 算得出來（從自己的私鑰導出），每輪、每次執行不同。"""
     raw = my_priv.private_bytes(_RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption())
-    return hashlib.sha256(raw + f"secagg-self|{int(run)}|{int(me)}|{int(rnd)}".encode()).digest()
+    return HKDF(hashes.SHA256(), 32, None, f"secagg-self|{int(run)}|{int(me)}|{int(rnd)}".encode()).derive(raw)
 
 
 def mask_update(update: dict, n: int, me: int, pids, my_priv, pubs: dict, rnd: int, run: int = 0,

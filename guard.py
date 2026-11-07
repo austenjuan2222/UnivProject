@@ -446,9 +446,14 @@ class GuardedStrategy(Strategy):
             rejected = len(ok_replies) > len(kept)
             # 雙重遮罩時每輪都要復原（收自我遮罩種子），沒有就不能還原加總
             need = len(kept) < self.secure_agg_clients or self.secagg_self_mask
-            revealed = self._recover(server_round, kept) if need and not rejected else None
-            stats["secagg_recovered"] = int(revealed is not None)
-            arrays = (None if self.secagg_self_mask and revealed is None
+            # 雙重遮罩時被拒絕的 VD 可以當成斷線：它的自我遮罩種子不會交出，交出成對種子也解不開它的更新
+            ok_to_reveal = self.secagg_self_mask or not rejected
+            # VD 和伺服器的雙重遮罩設定不一致時，扣遮罩會默默算錯：整輪放棄
+            same = all(bool(float(m.content["metrics"].get("secagg-self-mask", 0))) == self.secagg_self_mask
+                       for m in kept)
+            revealed = self._recover(server_round, kept) if need and ok_to_reveal and same else None
+            stats["secagg_recovered"] = int(revealed is not None and len(kept) < self.secure_agg_clients)
+            arrays = (None if not same or (self.secagg_self_mask and revealed is None)
                       else secure_average([m.content for m in kept], self.secure_agg_clients, revealed))
             stats["secagg_failed"] = int(arrays is None)
             if self.on_round:

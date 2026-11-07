@@ -240,6 +240,7 @@ def train_fn(msg: Message, context: Context) -> Message:
                              self_mask=cfg["secagg_self_mask"])
         context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": -1})
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
+        metrics["secagg-self-mask"] = int(cfg["secagg_self_mask"])  # 伺服器比對設定一致（HMAC 有涵蓋）
     # Edge 運算成本：上傳量（模型參數）vs. 若把原始訓練資料傳上雲的量
     metrics["upload-bytes"] = (upload_bytes if upload_bytes is not None
                                else int(sum(a.numpy().nbytes for a in arrays.values())))
@@ -281,10 +282,11 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
     seeds = seal_seeds(reveal_seeds(pid, dropped, priv, pubs, rnd, context.run_id), pid, priv, pubs["server"], rnd,
                        context.run_id)
     # 雙重遮罩：自己在線（不在斷線名單）才交出自我遮罩種子，同樣加密給伺服器
-    own = seal_seeds({pid: self_seed(priv, pid, rnd, context.run_id).hex()}, pid, priv, pubs["server"], rnd,
-                     context.run_id)[pid]
-    return Message(content=RecordDict({"secagg": ConfigRecord(
-        {"pid": pid, "dropped": list(seeds), "seeds": list(seeds.values()), "self": own})}), reply_to=msg)
+    reply = {"pid": pid, "dropped": list(seeds), "seeds": list(seeds.values())}
+    if bool(context.run_config.get("secagg-self-mask", True)):
+        reply["self"] = seal_seeds({pid: self_seed(priv, pid, rnd, context.run_id).hex()}, pid, priv, pubs["server"],
+                                   rnd, context.run_id)[pid]
+    return Message(content=RecordDict({"secagg": ConfigRecord(reply)}), reply_to=msg)
 
 
 @app.evaluate()

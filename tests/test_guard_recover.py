@@ -98,5 +98,44 @@ class SealedSeedsTest(unittest.TestCase):
             self.assertIsNone(g._recover(1, [_kept(0), _kept(1)]))
 
 
+class SelfMaskRoundTest(unittest.TestCase):
+    """雙重遮罩時，被拒絕的回覆當成斷線處理（它的自我遮罩種子不會交出，更新仍解不開），整輪不作廢。"""
+    def _reply(self, pid, arrays, flag=1, n=1):
+        import numpy as np
+        from flwr.app import Array, ArrayRecord
+        sent = Message(content=RecordDict(), dst_node_id=100 + pid, message_type="train")
+        return Message(content=RecordDict({"arrays": ArrayRecord({"w": Array(np.asarray(arrays, dtype=np.float64))}),
+                                           "metrics": MetricRecord({"partition-id": pid, "num-examples": n,
+                                                                    "secagg-self-mask": flag})}), reply_to=sent)
+
+    def _run(self, replies, self_mask=True):
+        class Inner:
+            def aggregate_train(self, rnd, kept):
+                return None, MetricRecord({})
+        stats, calls = {}, []
+        g = GuardedStrategy(Inner(), None, None, secure_agg_clients=3, secagg_self_mask=self_mask,
+                            on_round=lambda r, st: stats.update(st))
+        g._recover = lambda rnd, kept: calls.append(len(kept)) or {0: {}, 1: {}}
+        arrays, _ = g.aggregate_train(1, replies)
+        return arrays, stats, calls
+
+    def test_rejected_reply_is_treated_as_dropped(self):
+        bad = self._reply(2, [2.0], n=0)  # 格式不合被拒
+        arrays, stats, calls = self._run([self._reply(0, [1.0]), self._reply(1, [3.0]), bad])
+        self.assertEqual(calls, [2])
+        self.assertIsNotNone(arrays)
+        self.assertEqual(stats["secagg_failed"], 0)
+
+    def test_flag_mismatch_fails_the_round(self):
+        # VD 沒加自我遮罩、伺服器卻去扣：加總會默默壞掉，要整輪放棄
+        arrays, stats, _ = self._run([self._reply(0, [1.0]), self._reply(1, [3.0], flag=0), self._reply(2, [2.0])])
+        self.assertIsNone(arrays)
+        self.assertEqual(stats["secagg_failed"], 1)
+
+    def test_recovered_counts_only_real_dropout(self):
+        _, stats, _ = self._run([self._reply(0, [1.0]), self._reply(1, [3.0]), self._reply(2, [2.0])])
+        self.assertEqual(stats["secagg_recovered"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
