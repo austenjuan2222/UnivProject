@@ -119,8 +119,9 @@ class ValidationFilter:
     margin > 0：另外要求至少比中位數差 margin（比例）才拒絕，避免多數更新擠在一起、MAD 很小時誤擋只差一點的 VD。
     group > 1：每輪把更新隨機分成每組 group 份，只看各組的平均（模擬「組內安全聚合、伺服器只看得到小組加總」），
     整組一起採用或拒絕；最後一組不足 group 份時併進前一組。
-    memory > 0：記住每個 VD 每輪的可疑程度（(分數 − 中位數) / (1.4826 × MAD)），看過至少 3 輪、平均超過 memory 的也拒絕，
-    用來抓每輪都只差一點、單輪門檻抓不到的攻擊者（只用在 group = 1）。"""
+    memory > 0：記住每個 VD 每輪的可疑程度（(分數 − 中位數) / (1.4826 × MAD)，截在 0～z，好的輪次不能抵銷壞的），
+    看過至少 3 輪、平均超過 memory 的也拒絕，用來抓每輪都只差一點、單輪門檻抓不到的攻擊者（只用在 group = 1）。
+    歷史要用穩定的 VD 身分記：screen 的 ids 把每份訊息對應到它的 VD（伺服器驗過 HMAC 的編號）；同一 VD 同輪多份取最可疑的。"""
 
     def __init__(self, score: Callable[[dict], float], z: float = 3.0, min_updates: int = 3, margin: float = 0.0,
                  group: int = 1, seed: int = 0, memory: float = 0.0):
@@ -135,7 +136,7 @@ class ValidationFilter:
         except (RuntimeError, ValueError, KeyError, TypeError):  # 形狀或參數名稱不符
             return float("nan")
 
-    def screen(self, updates: dict[int, dict]) -> set[int]:
+    def screen(self, updates: dict[int, dict], ids: dict | None = None) -> set[int]:
         if self.group > 1 and len(updates) >= 2 * self.group:
             keys = [list(updates)[i] for i in self.rng.permutation(len(updates))]
             groups = [keys[i:i + self.group] for i in range(0, len(keys), self.group)]
@@ -153,9 +154,9 @@ class ValidationFilter:
             self.last_scores = {m: gs[g] for g, members in enumerate(groups) for m in members}
             return {m for g in self._outliers(gs) for m in groups[g]}
         self.last_scores = {p: self._score(a) for p, a in updates.items()}
-        return self._outliers(self.last_scores, remember=self.memory > 0)
+        return self._outliers(self.last_scores, ids if self.memory > 0 else None)
 
-    def _outliers(self, scores: dict, remember: bool = False) -> set:
+    def _outliers(self, scores: dict, ids: dict | None = None) -> set:
         bad = {p for p, s in scores.items() if not np.isfinite(s)}
         v = np.array([s for p, s in scores.items() if p not in bad])
         if len(v) < self.min_updates:  # 太少份無法判斷誰是離群值，只拒絕壞掉的
@@ -164,11 +165,15 @@ class ValidationFilter:
         mad = float(np.median(np.abs(v - med))) * 1.4826 + 1e-9
         limit = med + max(self.z * mad, self.margin * abs(med))
         out = bad | {p for p, s in scores.items() if p not in bad and s > limit}
-        if remember:
+        if ids is not None:
+            now: dict = {}
             for p, s in scores.items():
-                if p not in bad:
-                    self.history.setdefault(p, []).append((s - med) / mad)
-            out |= {p for p in scores if len(self.history.get(p, [])) >= 3 and np.mean(self.history[p]) > self.memory}
+                zp = self.z if p in bad else min(max((s - med) / mad, 0.0), self.z)
+                now[ids[p]] = max(now.get(ids[p], 0.0), zp)
+            for vd, zp in now.items():
+                self.history.setdefault(vd, []).append(zp)
+            out |= {p for p in scores
+                    if len(self.history[ids[p]]) >= 3 and np.mean(self.history[ids[p]]) > self.memory}
         return out
 
 
@@ -267,7 +272,8 @@ class GuardedStrategy(Strategy):
             stats["flagged"] = ";".join(str(p) for p in sorted(flagged))
         if self.validation_filter is not None and kept:
             # 以每份訊息為單位評分（不用 VD 自報的編號當鍵），同一編號送兩份也會各自被檢查
-            invalid = self.validation_filter.screen({i: arrays_of(m.content["arrays"]) for i, m in enumerate(kept)})
+            invalid = self.validation_filter.screen({i: arrays_of(m.content["arrays"]) for i, m in enumerate(kept)},
+                                                    {i: int(m.content["metrics"]["partition-id"]) for i, m in enumerate(kept)})
             stats["val_rejected"] = ";".join(sorted(str(int(kept[i].content["metrics"]["partition-id"]))
                                                     for i in invalid))
             self.validation_scores.append((server_round, [(int(kept[i].content["metrics"]["partition-id"]), v)

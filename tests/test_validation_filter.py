@@ -79,17 +79,27 @@ class ValidationFilterTest(unittest.TestCase):
         base = [5.0, 5.1, 4.9, 5.05, 4.95, 5.0, 5.1, 4.9, 5.0]
         rounds = []
         for r in range(3):
-            ups = {p: {"s": np.array([v])} for p, v in enumerate(base)} | {9: {"s": np.array([5.25])}}
-            rounds.append(f.screen(ups))
+            # 每輪訊息的鍵（順序）不同，但 ids 對到穩定的 VD 編號：歷史要跟著 VD 走
+            ups = {(p + r) % 10: {"s": np.array([v])} for p, v in enumerate(base)} | {(9 + r) % 10: {"s": np.array([5.25])}}
+            rounds.append(f.screen(ups, {(p + r) % 10: p for p in range(10)}))
         self.assertEqual(rounds[0], set())
-        self.assertIn(9, rounds[2])
-        self.assertTrue(all(p == 9 for p in rounds[2]))
+        self.assertEqual(rounds[2], {(9 + 2) % 10})
+
+    def test_memory_good_rounds_do_not_offset_bad_ones(self):
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, memory=1.5)
+        base = [5.0, 5.1, 4.9, 5.05, 4.95, 5.0, 5.1, 4.9, 5.0]
+        ids = {p: p for p in range(10)}
+        f.screen({p: {"s": np.array([v])} for p, v in enumerate(base)} | {9: {"s": np.array([2.0])}}, ids)  # 很好的一輪
+        for _ in range(3):
+            bad = f.screen({p: {"s": np.array([v])} for p, v in enumerate(base)} | {9: {"s": np.array([5.3])}}, ids)
+        self.assertIn(9, bad)  # 負的可疑程度截成 0，不能存起來抵銷之後的可疑輪次
 
     def test_memory_off_by_default(self):
         f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0)
         base = [5.0, 5.1, 4.9, 5.05, 4.95, 5.0, 5.1, 4.9, 5.0]
         for _ in range(5):
-            bad = f.screen({p: {"s": np.array([v])} for p, v in enumerate(base)} | {9: {"s": np.array([5.25])}})
+            bad = f.screen({p: {"s": np.array([v])} for p, v in enumerate(base)} | {9: {"s": np.array([5.25])}},
+                           {p: p for p in range(10)})
         self.assertEqual(bad, set())
 
     def test_group_mode_falls_back_when_too_few_updates(self):
