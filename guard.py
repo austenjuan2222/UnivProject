@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from compress import quantize_update
 from secagg import drop_correction, unmask_sum
-from security import sign_model, sign_update, tamper, update_digest, verify_update
+from security import canonical_metrics, sign_model, sign_update, tamper, update_digest, verify_update
 
 AUTH = "auth"
 
@@ -36,8 +36,25 @@ def _array_record(arrays: dict) -> ArrayRecord:
 
 def attach_update_tag(content: RecordDict, key: bytes, rnd: int, pid: int) -> None:
     """VD 端：替要上傳的模型參數加上 HMAC。"""
-    n = content["metrics"]["num-examples"]
-    content[AUTH] = ConfigRecord({"tag": sign_update(key, arrays_of(content["arrays"]), rnd, pid, n)})
+    content[AUTH] = ConfigRecord({"tag": sign_update(key, _arrays_or_empty(content), rnd, pid, _meta(content))})
+
+
+def _arrays_or_empty(c: RecordDict) -> dict:
+    return arrays_of(c["arrays"]) if "arrays" in c else {}
+
+
+def _meta(c: RecordDict) -> str:
+    # 訓練和評估分開標示，評估的簽章不能拿去當訓練的用（反之亦然）
+    return ("train|" if "arrays" in c else "eval|") + canonical_metrics(dict(c["metrics"]))
+
+
+def verify_reply(c: RecordDict, rnd: int, vd_keys: dict) -> bool:
+    """驗證並移除 auth 紀錄；驗證表沒有的 VD、沒附簽章、或參數／指標被改過都回傳 False。"""
+    tag = str(c[AUTH]["tag"]) if AUTH in c else ""
+    c.pop(AUTH, None)
+    pid = int(c["metrics"]["partition-id"])
+    key = vd_keys.get(pid)
+    return bool(tag) and key is not None and verify_update(key, _arrays_or_empty(c), rnd, pid, tag, _meta(c))
 
 
 def _well_formed_metrics(c: RecordDict) -> bool:
@@ -88,8 +105,7 @@ def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: 
         ok = True
         if verify:
             key = vd_keys.get(pid)  # 驗證表裡沒有的 VD 一律拒絕
-            ok = bool(tag) and key is not None and verify_update(key, arrays_of(c["arrays"]), rnd, pid, tag,
-                                                                       c["metrics"]["num-examples"])
+            ok = bool(tag) and key is not None and verify_update(key, arrays_of(c["arrays"]), rnd, pid, tag, _meta(c))
         n_rejected += int(not ok)
         keep.append(ok)
         # 稽核紀錄：哪個 VD、哪一輪、送了什麼（內容雜湊）、附了什麼簽章、有沒有被採用
@@ -458,8 +474,13 @@ class GuardedStrategy(Strategy):
 
     def aggregate_evaluate(self, server_round: int, replies: Iterable[Message]) -> MetricRecord | None:
         # 評估的 num-examples 是紀錄加權用：NaN 會讓紀錄程式當掉。誤差本身可以是 NaN（模型發散時要照實記錄）
-        return self.inner.aggregate_evaluate(
-            server_round, [m for m in replies if not m.has_error() and _well_formed_metrics(m.content)])
+        ok = [m for m in replies if not m.has_error() and _well_formed_metrics(m.content)]
+        if self.verify_updates:
+            # 評估指標也要驗：不然中間人改誤差就能讓紀錄（和根據紀錄下的結論）失真。編號也要是綁定的節點
+            ok = [m for m in ok if verify_reply(m.content, server_round, self.vd_keys)
+                  and self._node_of_pid.get(int(m.content["metrics"]["partition-id"]), m.metadata.src_node_id)
+                  == m.metadata.src_node_id]
+        return self.inner.aggregate_evaluate(server_round, ok)
 
     def summary(self) -> None:
         self.inner.summary()

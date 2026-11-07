@@ -104,6 +104,7 @@ class MalformedUpdateTest(unittest.TestCase):
         self.g.inner.aggregate_evaluate = lambda rnd, replies: got.append(len(replies))
         def ev(n):
             c = RecordDict({"metrics": MetricRecord({"partition-id": 0, "num-examples": n, "eval-loss": float("nan")})})
+            attach_update_tag(c, self.keys[0], 1, 0)
             return Message(content=c, reply_to=Message(content=RecordDict(), dst_node_id=100, message_type="evaluate"))
         self.g.aggregate_evaluate(1, [ev(10), ev(float("nan")), ev(0)])
         self.assertEqual(got, [1])  # 誤差是 NaN 的照樣留（模型發散要記錄），只擋加權壞掉的

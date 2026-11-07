@@ -246,10 +246,13 @@ def train_fn(msg: Message, context: Context) -> Message:
     metrics["train-seconds"] = time.perf_counter() - t0
     content = RecordDict({"arrays": arrays, "metrics": MetricRecord(metrics)})
     if cfg["verify_updates"]:
-        key = (load_vd_signing_key(cfg["key_dir"], pid) if cfg["update_auth"] == "ed25519"
-               else load_vd_key(cfg["key_dir"], pid))  # 只讀自己的金鑰
-        attach_update_tag(content, key, rnd, pid)
+        attach_update_tag(content, _vd_key(cfg, pid), rnd, pid)
     return Message(content=content, reply_to=msg)
+
+
+def _vd_key(cfg, pid):
+    return (load_vd_signing_key(cfg["key_dir"], pid) if cfg["update_auth"] == "ed25519"
+            else load_vd_key(cfg["key_dir"], pid))  # 只讀自己的金鑰
 
 
 @app.query()
@@ -295,7 +298,10 @@ def evaluate_fn(msg: Message, context: Context) -> Message:
     }
     if cfg["ft_epochs"] > 0 and rnd == cfg["rounds"]:
         metrics.update(_finetune(model, d, cfg, context, pid))
-    return Message(content=RecordDict({"metrics": MetricRecord(metrics)}), reply_to=msg)
+    content = RecordDict({"metrics": MetricRecord(metrics)})
+    if cfg["verify_updates"]:
+        attach_update_tag(content, _vd_key(cfg, pid), rnd, pid)  # 評估指標也簽，中間人改誤差會被發現
+    return Message(content=content, reply_to=msg)
 
 
 def _finetune(model, d, cfg: dict, context: Context, pid: int) -> dict:

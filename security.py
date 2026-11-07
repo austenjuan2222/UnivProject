@@ -137,31 +137,36 @@ def update_digest(arrays: dict, rnd: int, pid: int) -> str:
     return _payload(arrays, f"update|{rnd}|{pid}").hex()
 
 
-def _update_header(rnd: int, pid: int, n) -> str:
-    # n 是 FedAvg 的加權（num-examples）：不簽進去的話，中間人改它就能讓模型變 NaN 或讓一台 VD 蓋過全部
-    if n is None:
-        return f"update|{rnd}|{pid}"
-    n = float(n)
-    return f"update|{rnd}|{pid}|n=" + (str(int(n)) if n.is_integer() else repr(n))
+def canonical_metrics(metrics: dict) -> str:
+    """VD 回報指標的固定序列化（整數與浮點一律轉 float，傳輸時型別改變也對得上）。"""
+    def f(v):
+        return "[" + ",".join(repr(float(x)) for x in v) + "]" if isinstance(v, (list, tuple)) else repr(float(v))
+    return ";".join(f"{k}={f(v)}" for k, v in sorted(metrics.items()))
 
 
-def sign_update(key, arrays: dict, rnd: int, pid: int, n=None) -> str:
+def _update_header(rnd: int, pid: int, meta) -> str:
+    # meta 是指標的序列化（含 FedAvg 的加權 num-examples）：不簽進去的話，中間人改它就能讓模型變 NaN、
+    # 讓一台 VD 蓋過全部，或改 train-loss／誤差讓紀錄失真
+    return f"update|{rnd}|{pid}" + ("" if meta is None else "|" + str(meta))
+
+
+def sign_update(key, arrays: dict, rnd: int, pid: int, meta=None) -> str:
     """key 是 bytes：HMAC-SHA256（完整性、鑑別性）；是 Ed25519 私鑰：數位簽章（再加上不可否認性）。"""
-    msg = _payload(arrays, _update_header(rnd, pid, n))
+    msg = _payload(arrays, _update_header(rnd, pid, meta))
     if isinstance(key, Ed25519PrivateKey):
         return key.sign(msg).hex()
     return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
-def verify_update(key, arrays: dict, rnd: int, pid: int, tag: str, n=None) -> bool:
+def verify_update(key, arrays: dict, rnd: int, pid: int, tag: str, meta=None) -> bool:
     """key 是 bytes：比對 HMAC；是 Ed25519 公鑰：驗簽章。"""
     if isinstance(key, Ed25519PublicKey):
         try:
-            key.verify(bytes.fromhex(str(tag)), _payload(arrays, _update_header(rnd, pid, n)))
+            key.verify(bytes.fromhex(str(tag)), _payload(arrays, _update_header(rnd, pid, meta)))
             return True
         except (InvalidSignature, ValueError):
             return False
-    return hmac.compare_digest(sign_update(key, arrays, rnd, pid, n), str(tag))
+    return hmac.compare_digest(sign_update(key, arrays, rnd, pid, meta), str(tag))
 
 
 def sign_model(priv: Ed25519PrivateKey, arrays: dict, rnd: int) -> str:
