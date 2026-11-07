@@ -185,5 +185,30 @@ class SecureAverageTest(unittest.TestCase):
         self.assertIsNone(secure_average(self._contents([0, 1]), expected=3))
 
 
+
+class IntegerOnlyTest(unittest.TestCase):
+    def test_unmask_sum_rejects_non_uint32(self):
+        import numpy as np
+        from secagg import unmask_sum
+        with self.assertRaises(ValueError):
+            unmask_sum([{"w": np.zeros(2, np.uint32)}, {"w": np.zeros(2, np.float32)}], 1.0)
+
+    def test_tamper_keeps_uint32_and_moves_by_lsb_scale(self):
+        import numpy as np
+        from security import tamper
+        a = {"w": np.zeros(1000, np.uint32)}
+        out = tamper(a, magnitude=1.0, rng=np.random.default_rng(0))["w"]
+        self.assertEqual(out.dtype, np.uint32)
+        # magnitude 是實際數值的單位：定點數要放大 2^12 倍才算數
+        self.assertGreater(np.abs(out.view(np.int32)).mean(), 1000)
+
+    def test_mask_is_shake256_stream(self):
+        import hashlib, numpy as np
+        from secagg import _mask
+        seed = bytes(range(32))
+        want = np.frombuffer(hashlib.shake_256(seed).digest(4 * 6), "<u4").reshape(2, 3)
+        np.testing.assert_array_equal(_mask(seed, (2, 3)), want)
+
+
 if __name__ == "__main__":
     unittest.main()

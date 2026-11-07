@@ -266,7 +266,10 @@ def secure_average(contents: list[RecordDict], expected: int, revealed: dict | N
         return None
     masked = [arrays_of(c["arrays"]) for c in contents]
     total = sum(float(c["metrics"]["num-examples"]) for c in contents)
-    avg = unmask_sum(masked, total, drop_correction(revealed, masked[0]) if revealed else None)
+    try:
+        avg = unmask_sum(masked, total, drop_correction(revealed, masked[0]) if revealed else None)
+    except ValueError:
+        return None
     if base:  # VD 上傳的是相對於全域模型的差值
         avg = {k: avg[k] + np.asarray(base[k], dtype=np.float64) for k in avg}
     return _array_record({k: avg[k].astype(np.float32) for k in masked[0]})
@@ -456,7 +459,9 @@ class GuardedStrategy(Strategy):
             # 雙重遮罩時被拒絕的 VD 可以當成斷線：它的自我遮罩種子不會交出，交出成對種子也解不開它的更新
             ok_to_reveal = self.secagg_self_mask or not rejected
             # VD 和伺服器的雙重遮罩設定不一致時，扣遮罩會默默算錯：整輪放棄
+            # VD 數（num-partitions）也要一致：不一致時成對遮罩對不上、定點範圍也可能溢位
             same = all(bool(float(m.content["metrics"].get("secagg-self-mask", 0))) == self.secagg_self_mask
+                       and int(float(m.content["metrics"].get("secagg-num-vd", -1))) == self.secure_agg_clients
                        for m in kept)
             revealed = self._recover(server_round, kept) if need and ok_to_reveal and same else None
             stats["secagg_recovered"] = int(revealed is not None and len(kept) < self.secure_agg_clients)

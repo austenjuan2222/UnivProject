@@ -245,7 +245,13 @@ def hide_congestion(y: np.ndarray, mean: float, std: float, below_kmh: float = 6
 
 
 def tamper(arrays: dict, magnitude: float, rng: np.random.Generator) -> dict:
-    """網路中間人竄改：在傳輸中替參數加上偏移（不改動原本的陣列）。"""
+    """網路中間人竄改：在傳輸中替參數加上偏移（不改動原本的陣列）。
+    安全聚合的 uint32 定點數：偏移換算成定點單位（2^12），結果仍是 uint32（mod 2^32）。"""
+    if any(np.asarray(v).dtype == np.uint32 for v in arrays.values()):
+        from secagg import FRAC_BITS
+        return {k: (np.asarray(v, dtype=np.uint32)
+                    + np.rint(magnitude * 2 ** FRAC_BITS * rng.standard_normal(np.shape(v))).astype(np.int64)
+                    .astype(np.uint32)) for k, v in arrays.items()}
     return {k: (np.asarray(v, dtype=np.float32) + magnitude * rng.standard_normal(np.shape(v)))
             .astype(np.float32) for k, v in arrays.items()}
 

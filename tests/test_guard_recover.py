@@ -100,13 +100,14 @@ class SealedSeedsTest(unittest.TestCase):
 
 class SelfMaskRoundTest(unittest.TestCase):
     """雙重遮罩時，被拒絕的回覆當成斷線處理（它的自我遮罩種子不會交出，更新仍解不開），整輪不作廢。"""
-    def _reply(self, pid, arrays, flag=1, n=1):
+    def _reply(self, pid, arrays, flag=1, n=1, num_vd=3, dtype=None):
         import numpy as np
         from flwr.app import Array, ArrayRecord
         sent = Message(content=RecordDict(), dst_node_id=100 + pid, message_type="train")
-        return Message(content=RecordDict({"arrays": ArrayRecord({"w": Array(np.asarray(arrays, dtype=np.uint32))}),
+        return Message(content=RecordDict({"arrays": ArrayRecord({"w": Array(np.asarray(arrays, dtype=dtype or np.uint32))}),
                                            "metrics": MetricRecord({"partition-id": pid, "num-examples": n,
-                                                                    "secagg-self-mask": flag})}), reply_to=sent)
+                                                                    "secagg-self-mask": flag,
+                                                                    "secagg-num-vd": num_vd})}), reply_to=sent)
 
     def _run(self, replies, self_mask=True):
         class Inner:
@@ -129,6 +130,12 @@ class SelfMaskRoundTest(unittest.TestCase):
     def test_flag_mismatch_fails_the_round(self):
         # VD 沒加自我遮罩、伺服器卻去扣：加總會默默壞掉，要整輪放棄
         arrays, stats, _ = self._run([self._reply(0, [1.0]), self._reply(1, [3.0], flag=0), self._reply(2, [2.0])])
+        self.assertIsNone(arrays)
+        self.assertEqual(stats["secagg_failed"], 1)
+
+    def test_num_vd_mismatch_fails_the_round(self):
+        # VD 的 num-partitions 和伺服器不同：成對遮罩對不上、定點範圍也可能溢位，要整輪放棄
+        arrays, stats, _ = self._run([self._reply(0, [1.0]), self._reply(1, [3.0], num_vd=2), self._reply(2, [2.0])])
         self.assertIsNone(arrays)
         self.assertEqual(stats["secagg_failed"], 1)
 

@@ -244,6 +244,7 @@ def train_fn(msg: Message, context: Context) -> Message:
                              self_mask=cfg["secagg_self_mask"])
         context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": -1})
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
+        metrics["secagg-num-vd"] = n
         metrics["secagg-self-mask"] = int(cfg["secagg_self_mask"])  # 伺服器比對設定一致（HMAC 有涵蓋）
     # Edge 運算成本：上傳量（模型參數）vs. 若把原始訓練資料傳上雲的量
     metrics["upload-bytes"] = (upload_bytes if upload_bytes is not None

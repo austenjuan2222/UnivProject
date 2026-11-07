@@ -143,8 +143,9 @@ def pair_seed(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, me: int, ot
 
 
 def _mask(seed: bytes, shape) -> np.ndarray:
-    rng = np.random.default_rng(np.frombuffer(seed, dtype=np.uint32))
-    return rng.integers(0, 2 ** 32, size=shape, dtype=np.uint64).astype(np.uint32)
+    # SHAKE-256 當密碼學 PRG（numpy 的 PCG64 不是），每個值是均勻的 uint32
+    size = int(np.prod(shape))
+    return np.frombuffer(hashlib.shake_256(seed).digest(4 * size), "<u4").reshape(shape).astype(np.uint32)
 
 
 def self_seed(my_priv: X25519PrivateKey, me: int, rnd: int, run: int = 0) -> bytes:
@@ -197,7 +198,9 @@ def unmask_sum(masked: list[dict], total_n: float, correction: dict | None = Non
     for k in masked[0]:
         acc = np.zeros(np.shape(masked[0][k]), dtype=np.uint32)
         for m in masked:
-            acc = acc + np.asarray(m[k]).astype(np.uint32)
+            if np.asarray(m[k]).dtype != np.uint32:  # 浮點數硬轉 uint32 會默默截斷（甚至未定義）
+                raise ValueError(f"安全聚合只收 uint32，{k} 是 {np.asarray(m[k]).dtype}")
+            acc = acc + np.asarray(m[k])
         if correction:
             acc = acc - correction[k]
         out[k] = acc.view(np.int32).astype(np.float64) / 2 ** FRAC_BITS / total_n
