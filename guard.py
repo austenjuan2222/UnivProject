@@ -239,6 +239,9 @@ class GuardedStrategy(Strategy):
         self._bc: ArrayRecord | None = None  # 上次廣播出去（VD 手上）的版本
         self._bc_rng = np.random.default_rng(seed + 104729)
         self._last: dict = {}  # 每個 VD 上一輪的訊息（模擬重送用）
+        # VD 編號 ↔ 送出它的節點：第一次通過 HMAC 時綁定（TOFU），之後別的節點拿同一編號（偷來的金鑰）或同節點換編號都拒絕
+        self._node_of_pid: dict = {}
+        self._pid_of_node: dict = {}
         self._global: dict = {}
         self._grid: Grid | None = None
 
@@ -271,6 +274,11 @@ class GuardedStrategy(Strategy):
         self._grid = grid  # 安全聚合斷線復原時要再問一次在線 VD
         return self._sign(self.inner.configure_train(server_round, arrays, config, grid), arrays, server_round)
 
+    def revoke(self, pid: int) -> None:
+        """應用層撤銷：移除該 VD 的驗證金鑰，之後它（或偷到金鑰的人）送的更新一律拒絕；
+        傳輸層的撤銷（flwr supernode unregister）只切斷節點，金鑰仍有效，兩者要一起做。"""
+        self.vd_keys.pop(pid, None)
+
     def aggregate_train(self, server_round: int, replies: Iterable[Message]
                         ) -> tuple[ArrayRecord | None, MetricRecord | None]:
         replies = list(replies)
@@ -280,6 +288,14 @@ class GuardedStrategy(Strategy):
                                      self.replay_rate, self._last if self.replay_rate > 0 else None)
         stats["n_dropped"] = len(replies) - len(ok_replies)
         audit = stats.pop("audit")
+        if self.verify_updates:
+            for i, m in enumerate(ok_replies):
+                if not keep[i]:
+                    continue
+                pid, node = int(m.content["metrics"]["partition-id"]), m.metadata.src_node_id
+                if self._node_of_pid.setdefault(pid, node) != node or self._pid_of_node.setdefault(node, pid) != pid:
+                    keep[i] = audit[i]["accepted"] = False
+                    stats["n_rejected"] += 1
         if self.on_audit and self.verify_updates:
             self.on_audit(audit)
         kept = [m for m, k in zip(ok_replies, keep) if k]
