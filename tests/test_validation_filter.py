@@ -99,6 +99,10 @@ class ValidationFilterTest(unittest.TestCase):
         ups = {p: {"s": np.array([5.0 + 0.01 * p])} for p in range(10)}
         self.assertEqual(f.screen(ups, {p: (3 if p == 7 else p) for p in range(10)}), {3, 7})
 
+    def test_memory_and_group_cannot_be_combined(self):
+        with self.assertRaises(ValueError):
+            ValidationFilter(lambda a: 0.0, memory=1.0, group=2)
+
     def test_memory_off_by_default(self):
         f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0)
         base = [5.0, 5.1, 4.9, 5.05, 4.95, 5.0, 5.1, 4.9, 5.0]

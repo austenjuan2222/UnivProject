@@ -127,6 +127,8 @@ class ValidationFilter:
                  group: int = 1, seed: int = 0, memory: float = 0.0):
         self.score, self.z, self.min_updates, self.margin, self.group = score, z, min_updates, margin, group
         self.memory, self.history = memory, {}
+        if memory > 0 and group > 1:
+            raise ValueError("validation-memory 只能搭配 validation-group = 1（分組時看不到個別 VD）")
         self.rng = np.random.default_rng(seed + 31337)
         self.last_scores: dict = {}
 
