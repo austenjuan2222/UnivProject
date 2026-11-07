@@ -184,8 +184,6 @@ class ScenarioTest(unittest.TestCase):
         self.assertFalse(any(drops_out(42, p, 1, 0.0) for p in range(50)))
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class AdaptiveShrinkTest(unittest.TestCase):
@@ -205,3 +203,21 @@ class AdaptiveShrinkTest(unittest.TestCase):
         out, alpha = adaptive_shrink(g, bad, lambda a: 1.0 + float(a["w"][0]), tol=0.01)
         self.assertEqual(alpha, 0.0)
         np.testing.assert_allclose(out["w"], 0.0)
+
+
+class PersistentRevocationTest(unittest.TestCase):
+    def test_revoked_vd_stays_revoked_after_server_restart(self):
+        from security import revoke_vd
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 3)
+            revoke_vd(d, 1)
+            provision_keys(d, 3)  # 重新執行配發（例如伺服器重開）不能把撤銷的 VD 加回來
+            _, table = load_server_secrets(d)
+            self.assertEqual(sorted(table), [0, 2])
+            self.assertEqual(sorted(load_vd_verify_keys(d)), [0, 2])
+            revoke_vd(d, 1)  # 重複撤銷不出錯
+            self.assertEqual(sorted(load_server_secrets(d)[1]), [0, 2])
+
+
+if __name__ == "__main__":
+    unittest.main()

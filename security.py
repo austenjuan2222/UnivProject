@@ -70,6 +70,18 @@ def provision_keys(key_dir, num_clients: int) -> None:
     _write_secret(table_path, json.dumps(table))
 
 
+def _revoked(key_dir) -> set[int]:
+    p = Path(key_dir) / "server" / "revoked.json"
+    return set(json.loads(p.read_text(encoding="utf-8"))) if p.exists() else set()
+
+
+def revoke_vd(key_dir, pid: int) -> None:
+    """伺服器端撤銷（寫進 server/revoked.json，重開後仍有效）：之後載入的驗證表與公鑰表都不含這台 VD，
+    它（或偷到它金鑰的人）送的更新 HMAC／簽章即使正確也會被拒絕。要重新加入需配發新金鑰並從清單移除。"""
+    p = Path(key_dir) / "server" / "revoked.json"
+    _write_secret(p, json.dumps(sorted(_revoked(key_dir) | {int(pid)})))
+
+
 def load_vd_key(key_dir, pid: int) -> bytes:
     """VD 端：只讀自己的金鑰。"""
     return bytes.fromhex((Path(key_dir) / f"vd-{pid}.key").read_text().strip())
@@ -83,7 +95,8 @@ def load_vd_signing_key(key_dir, pid: int) -> Ed25519PrivateKey:
 def load_vd_verify_keys(key_dir) -> dict:
     """伺服器端：各 VD 的簽章公鑰（只能驗證，不能簽）。"""
     table = json.loads((Path(key_dir) / "vd_sign_pub.json").read_text(encoding="utf-8"))
-    return {int(k): Ed25519PublicKey.from_public_bytes(bytes.fromhex(v)) for k, v in table.items()}
+    revoked = _revoked(key_dir)
+    return {int(k): Ed25519PublicKey.from_public_bytes(bytes.fromhex(v)) for k, v in table.items() if int(k) not in revoked}
 
 
 def load_server_public_key(key_dir) -> Ed25519PublicKey:
@@ -95,7 +108,8 @@ def load_server_secrets(key_dir) -> tuple[Ed25519PrivateKey, dict]:
     server = Path(key_dir) / "server"
     priv = Ed25519PrivateKey.from_private_bytes(bytes.fromhex((server / "ed25519.key").read_text().strip()))
     table = json.loads((server / "vd_keys.json").read_text(encoding="utf-8"))
-    return priv, {int(k): bytes.fromhex(v) for k, v in table.items()}
+    revoked = _revoked(key_dir)
+    return priv, {int(k): bytes.fromhex(v) for k, v in table.items() if int(k) not in revoked}
 
 
 def _payload(arrays: dict, header: str) -> bytes:
