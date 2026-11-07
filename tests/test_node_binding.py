@@ -49,6 +49,18 @@ class NodeBindingTest(unittest.TestCase):
         self.assertEqual(self.seen[-1], [2])
         self.assertEqual(self.stats["n_rejected"], 1)
 
+    def test_rejected_claim_does_not_bind_the_victim_id(self):
+        # 節點 101 已綁 1 號；它冒用還沒出現過的 0 號被拒絕後，不能順便把 0 號綁到自己，鎖住真正的 0 號
+        self.g.aggregate_train(1, [self.reply(101, 1, 1)])
+        self.g.aggregate_train(2, [self.reply(101, 0, 2, key_of=0)])
+        self.g.aggregate_train(3, [self.reply(100, 0, 3), self.reply(101, 1, 3)])
+        self.assertEqual(self.seen[-1], [0, 1])
+
+    def test_two_nodes_claiming_same_unbound_id_in_one_round_are_both_rejected(self):
+        self.g.aggregate_train(1, [self.reply(100, 0, 1), self.reply(105, 0, 1), self.reply(102, 2, 1)])
+        self.assertEqual(self.seen[-1], [2])
+        self.g.aggregate_train(2, [self.reply(100, 0, 2), self.reply(102, 2, 2)])
+        self.assertEqual(self.seen[-1], [0, 2])  # 沒有被搶先綁走：下一輪單獨出現時才綁
 
 if __name__ == "__main__":
     unittest.main()

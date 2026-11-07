@@ -278,6 +278,9 @@ class GuardedStrategy(Strategy):
         """應用層撤銷：移除該 VD 的驗證金鑰，之後它（或偷到金鑰的人）送的更新一律拒絕；
         傳輸層的撤銷（flwr supernode unregister）只切斷節點，金鑰仍有效，兩者要一起做。"""
         self.vd_keys.pop(pid, None)
+        node = self._node_of_pid.pop(pid, None)  # 綁定也一起清掉；重新配發金鑰後由下一次通過驗證的節點重新綁定
+        if node is not None:
+            self._pid_of_node.pop(node, None)
 
     def aggregate_train(self, server_round: int, replies: Iterable[Message]
                         ) -> tuple[ArrayRecord | None, MetricRecord | None]:
@@ -289,13 +292,20 @@ class GuardedStrategy(Strategy):
         stats["n_dropped"] = len(replies) - len(ok_replies)
         audit = stats.pop("audit")
         if self.verify_updates:
-            for i, m in enumerate(ok_replies):
-                if not keep[i]:
-                    continue
-                pid, node = int(m.content["metrics"]["partition-id"]), m.metadata.src_node_id
-                if self._node_of_pid.setdefault(pid, node) != node or self._pid_of_node.setdefault(node, pid) != pid:
+            claims = [(i, int(m.content["metrics"]["partition-id"]), m.metadata.src_node_id)
+                      for i, m in enumerate(ok_replies) if keep[i]]
+            nodes_of: dict = {}
+            for _, pid, node in claims:
+                nodes_of.setdefault(pid, set()).add(node)
+            for i, pid, node in claims:
+                bn, bp = self._node_of_pid.get(pid), self._pid_of_node.get(node)
+                # 先檢查兩邊再寫入：被拒絕的訊息不能留下綁定（否則可以搶先綁走別人的編號）；
+                # 同一輪多個節點搶同一個編號時全部拒絕，不讓先到的贏
+                if (bn is not None and bn != node) or (bp is not None and bp != pid) or len(nodes_of[pid]) > 1:
                     keep[i] = audit[i]["accepted"] = False
                     stats["n_rejected"] += 1
+                else:
+                    self._node_of_pid[pid], self._pid_of_node[node] = node, pid
         if self.on_audit and self.verify_updates:
             self.on_audit(audit)
         kept = [m for m, k in zip(ok_replies, keep) if k]
