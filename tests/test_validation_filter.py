@@ -149,6 +149,13 @@ class GuardedStrategyValidationTest(unittest.TestCase):
         self.assertEqual(sorted(seen), [0, 1, 2, 3, 4, 5])
         self.assertEqual(stats["val_rejected"], "3")
 
+        # 開跨輪記憶時：誠實更新被原封不動重送一份，不能讓它被當成「同編號送兩份」而拒絕
+        seen.clear()
+        g.validation_filter = ValidationFilter(lambda a: float(a["s"][0]), memory=1.5)
+        g.aggregate_train(3, [reply(p, 5.0 + 0.01 * p) for p in range(6)] + [reply(2, 5.02)])
+        self.assertEqual(sorted(seen), [0, 1, 2, 3, 4, 5])
+        self.assertEqual(stats["val_rejected"], "")
+
 
 class JamScorerTest(unittest.TestCase):
     def test_model_that_hides_congestion_scores_worse(self):

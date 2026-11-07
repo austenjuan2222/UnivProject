@@ -274,6 +274,15 @@ class GuardedStrategy(Strategy):
             kept = [m for m in kept if pid[id(m)] not in flagged]
             stats["flagged"] = ";".join(str(p) for p in sorted(flagged))
         if self.validation_filter is not None and kept:
+            # 內容完全相同的重複訊息（例如網路上被重送一份）只留一份，避免被當成「同一編號送兩份」而連帶拒絕誠實 VD
+            seen, uniq = set(), []
+            for m in kept:
+                pid_m = int(m.content["metrics"]["partition-id"])
+                d = update_digest(arrays_of(m.content["arrays"]), server_round, pid_m)
+                if (pid_m, d) not in seen:
+                    seen.add((pid_m, d))
+                    uniq.append(m)
+            kept = uniq
             # 以每份訊息為單位評分（不用 VD 自報的編號當鍵），同一編號送兩份也會各自被檢查
             invalid = self.validation_filter.screen({i: arrays_of(m.content["arrays"]) for i, m in enumerate(kept)},
                                                     {i: int(m.content["metrics"]["partition-id"]) for i, m in enumerate(kept)})
