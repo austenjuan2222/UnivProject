@@ -399,6 +399,8 @@ class GuardedStrategy(Strategy):
                     m.content["arrays"] = _array_record(
                         {k: (self._global[k] + s * (local[k] - self._global[k])).astype(np.float32) for k in local})
                     stats["n_clipped"] += 1
+            stats["clipped"] = ";".join(sorted(str(int(m.content["metrics"]["partition-id"]))
+                                               for m in kept if norms[id(m)] > limit))
         if self.on_round:
             self.on_round(server_round, stats)
         if not kept:

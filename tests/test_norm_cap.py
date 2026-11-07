@@ -43,6 +43,7 @@ class NormCapTest(unittest.TestCase):
         np.testing.assert_allclose(self.got[-1][3], self.G + [1.2, 1.6], rtol=1e-6)
         np.testing.assert_allclose(self.got[-1][0], self.G + [1, 0])
         self.assertEqual(self.stats["n_clipped"], 1)
+        self.assertEqual(self.stats["clipped"], "3")
 
     def test_zero_updates_do_not_drag_median_down(self):
         # 攻擊者一直送回全域模型（長度 0）：不能因此把誠實 VD 的更新縮小
