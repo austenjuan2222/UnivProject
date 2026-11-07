@@ -24,7 +24,8 @@ class MetricsAuthTest(unittest.TestCase):
             def aggregate_evaluate(self, rnd, replies):
                 outer.evals.append(sorted(int(m.content["metrics"]["partition-id"]) for m in replies))
 
-        self.g = GuardedStrategy(Inner(), None, dict(self.keys))
+        self.stats = {}
+        self.g = GuardedStrategy(Inner(), None, dict(self.keys), on_round=lambda r, st: self.stats.update(st))
         self.g.configure_train(1, ArrayRecord({"s": Array(np.zeros(2, np.float32))}), ConfigRecord(), None)
 
     def train_reply(self, pid, after=None):
@@ -35,14 +36,15 @@ class MetricsAuthTest(unittest.TestCase):
             after(c)
         return Message(content=c, reply_to=Message(content=RecordDict(), dst_node_id=100 + pid, message_type="train"))
 
-    def eval_reply(self, pid, sign=True, after=None):
+    def eval_reply(self, pid, sign=True, after=None, node=None):
         c = RecordDict({"metrics": MetricRecord({"partition-id": pid, "num-examples": 5, "round": 1,
                                                  "eval-loss": 0.2, "mae-kmh": 3.0, "mse-kmh": 9.0})})
         if sign:
             attach_update_tag(c, self.keys[pid], 1, pid)
         if after:
             after(c)
-        return Message(content=c, reply_to=Message(content=RecordDict(), dst_node_id=100 + pid, message_type="evaluate"))
+        return Message(content=c, reply_to=Message(content=RecordDict(), dst_node_id=node or 100 + pid,
+                                                   message_type="evaluate"))
 
     def test_tampered_train_metric_is_rejected(self):
         def lie(c):
@@ -59,6 +61,49 @@ class MetricsAuthTest(unittest.TestCase):
     def test_eval_tag_cannot_be_reused_for_another_round(self):
         self.g.aggregate_evaluate(2, [self.eval_reply(0)])  # 第 1 輪簽的，第 2 輪拿來用
         self.assertEqual(self.evals[-1], [])
+
+    def test_auth_without_tag_does_not_crash(self):
+        def strip(c):
+            c["auth"] = ConfigRecord({"x": 1})
+        self.g.aggregate_train(1, [self.train_reply(0), self.train_reply(1, strip), self.train_reply(2)])
+        self.assertEqual(self.train[-1], [0, 2])
+        self.g.aggregate_evaluate(1, [self.eval_reply(0), self.eval_reply(1, after=strip)])
+        self.assertEqual(self.evals[-1], [0])
+
+    def test_eval_with_extra_records_is_rejected(self):
+        def arrays(c):
+            c["arrays"] = ArrayRecord({"s": Array(np.array(["a"]))})
+        def extra(c):
+            c["extra"] = MetricRecord({"z": 1.0})
+        self.g.aggregate_evaluate(1, [self.eval_reply(0), self.eval_reply(1, after=arrays), self.eval_reply(2, after=extra)])
+        self.assertEqual(self.evals[-1], [0])
+        self.assertEqual(self.stats["n_eval_rejected"], 2)
+
+    def test_train_with_extra_record_is_rejected(self):
+        def extra(c):
+            c["extra"] = MetricRecord({"z": 1.0})
+        self.g.aggregate_train(1, [self.train_reply(0), self.train_reply(1, extra), self.train_reply(2)])
+        self.assertEqual(self.train[-1], [0, 2])
+
+    def test_metric_keys_cannot_be_merged(self):
+        # 中間人把兩個欄位併成一個（"eval-loss=0.2;mae-kmh"），序列化不能剛好一樣
+        def merge(c):
+            m = dict(c["metrics"])
+            v = m.pop("mae-kmh"); m.pop("eval-loss")
+            m["eval-loss=0.2;mae-kmh"] = v
+            c["metrics"] = MetricRecord(m)
+        self.g.aggregate_evaluate(1, [self.eval_reply(0), self.eval_reply(1, after=merge)])
+        self.assertEqual(self.evals[-1], [0])
+
+    def test_train_reply_is_not_accepted_as_eval(self):
+        self.g.aggregate_evaluate(1, [self.eval_reply(0), self.train_reply(1)])
+        self.assertEqual(self.evals[-1], [0])
+
+    def test_eval_counts_one_reply_per_node_and_respects_binding(self):
+        self.g.aggregate_train(1, [self.train_reply(0), self.train_reply(1)])  # 0→100、1→101
+        self.g.aggregate_evaluate(1, [self.eval_reply(0), self.eval_reply(0),  # 重送一份
+                                      self.eval_reply(2, node=101)])           # 101 已綁 1 號，拿 2 號的金鑰
+        self.assertEqual(self.evals[-1], [0])
 
 
 if __name__ == "__main__":

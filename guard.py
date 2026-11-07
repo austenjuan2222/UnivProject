@@ -48,9 +48,22 @@ def _meta(c: RecordDict) -> str:
     return ("train|" if "arrays" in c else "eval|") + canonical_metrics(dict(c["metrics"]))
 
 
+def _tag(c: RecordDict) -> str:
+    # 沒驗過簽章的內容不能讓伺服器當掉：auth 少了 tag 或型別不對都當成沒簽
+    try:
+        return str(c[AUTH]["tag"]) if AUTH in c else ""
+    except (KeyError, TypeError):
+        return ""
+
+
+def _has_records(c: RecordDict, *names: str) -> bool:
+    # 只接受預期的紀錄：多出來的紀錄沒簽到，還會讓 Flower 的一致性檢查當掉
+    return set(c.keys()) - {AUTH} == set(names)
+
+
 def verify_reply(c: RecordDict, rnd: int, vd_keys: dict) -> bool:
     """驗證並移除 auth 紀錄；驗證表沒有的 VD、沒附簽章、或參數／指標被改過都回傳 False。"""
-    tag = str(c[AUTH]["tag"]) if AUTH in c else ""
+    tag = _tag(c)
     c.pop(AUTH, None)
     pid = int(c["metrics"]["partition-id"])
     key = vd_keys.get(pid)
@@ -71,9 +84,9 @@ def _well_formed(c: RecordDict) -> bool:
     """可用性：指標合格、參數都是浮點數。不合格的連 HMAC 都不算（字串陣列會讓驗證本身當掉）。"""
     try:
         kinds = {v.numpy().dtype.kind for v in c["arrays"].values()}
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, AttributeError):
         return False
-    return _well_formed_metrics(c) and kinds <= {"f"}
+    return _has_records(c, "arrays", "metrics") and _well_formed_metrics(c) and kinds <= {"f"}
 
 
 def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: bool,
@@ -91,7 +104,7 @@ def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: 
             audit.append({"round": int(rnd), "pid": pid, "accepted": False, "digest": "", "tag": ""})
             continue
         pid = int(c["metrics"]["partition-id"])
-        tag = str(c[AUTH]["tag"]) if AUTH in c else ""
+        tag = _tag(c)
         if last is not None:
             prev, last[pid] = last.get(pid), (c["arrays"], tag)
             if prev is not None and replay_rate > 0 and rng.random() < replay_rate:
@@ -474,12 +487,23 @@ class GuardedStrategy(Strategy):
 
     def aggregate_evaluate(self, server_round: int, replies: Iterable[Message]) -> MetricRecord | None:
         # 評估的 num-examples 是紀錄加權用：NaN 會讓紀錄程式當掉。誤差本身可以是 NaN（模型發散時要照實記錄）
-        ok = [m for m in replies if not m.has_error() and _well_formed_metrics(m.content)]
+        replies = [m for m in replies if not m.has_error()]
+        ok = [m for m in replies if _has_records(m.content, "metrics") and _well_formed_metrics(m.content)]
         if self.verify_updates:
-            # 評估指標也要驗：不然中間人改誤差就能讓紀錄（和根據紀錄下的結論）失真。編號也要是綁定的節點
-            ok = [m for m in ok if verify_reply(m.content, server_round, self.vd_keys)
-                  and self._node_of_pid.get(int(m.content["metrics"]["partition-id"]), m.metadata.src_node_id)
-                  == m.metadata.src_node_id]
+            # 評估指標也要驗：不然中間人改誤差就能讓紀錄（和根據紀錄下的結論）失真。
+            # 編號和節點要雙向符合訓練時的綁定，每個節點只算第一份（重送不能讓它多算幾次）
+            seen, good = set(), []
+            for m in ok:
+                node = m.metadata.src_node_id
+                if not verify_reply(m.content, server_round, self.vd_keys) or node in seen:
+                    continue
+                pid = int(m.content["metrics"]["partition-id"])
+                if self._node_of_pid.get(pid, node) == node and self._pid_of_node.get(node, pid) == pid:
+                    seen.add(node)
+                    good.append(m)
+            ok = good
+        if self.on_round:
+            self.on_round(server_round, {"n_eval_rejected": len(replies) - len(ok)})
         return self.inner.aggregate_evaluate(server_round, ok)
 
     def summary(self) -> None:

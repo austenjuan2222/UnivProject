@@ -138,10 +138,11 @@ def update_digest(arrays: dict, rnd: int, pid: int) -> str:
 
 
 def canonical_metrics(metrics: dict) -> str:
-    """VD 回報指標的固定序列化（整數與浮點一律轉 float，傳輸時型別改變也對得上）。"""
+    """VD 回報指標的固定序列化（整數與浮點一律轉 float，傳輸時型別改變也對得上）。
+    用 JSON：欄位名稱會加引號跳脫，中間人不能把兩個欄位併成一個而序列化剛好一樣。"""
     def f(v):
-        return "[" + ",".join(repr(float(x)) for x in v) + "]" if isinstance(v, (list, tuple)) else repr(float(v))
-    return ";".join(f"{k}={f(v)}" for k, v in sorted(metrics.items()))
+        return [float(x) for x in v] if isinstance(v, (list, tuple)) else float(v)
+    return json.dumps({str(k): f(v) for k, v in metrics.items()}, sort_keys=True, separators=(",", ":"))
 
 
 def _update_header(rnd: int, pid: int, meta) -> str:
