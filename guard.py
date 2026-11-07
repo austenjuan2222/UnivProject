@@ -277,10 +277,11 @@ class GuardedStrategy(Strategy):
     def revoke(self, pid: int) -> None:
         """應用層撤銷：移除該 VD 的驗證金鑰，之後它（或偷到金鑰的人）送的更新一律拒絕；
         傳輸層的撤銷（flwr supernode unregister）只切斷節點，金鑰仍有效，兩者要一起做。"""
+        if not self.verify_updates:
+            raise ValueError("revoke 需要 verify-updates=true（沒有驗證時撤銷不會有任何效果）")
         self.vd_keys.pop(pid, None)
-        node = self._node_of_pid.pop(pid, None)  # 綁定也一起清掉；重新配發金鑰後由下一次通過驗證的節點重新綁定
-        if node is not None:
-            self._pid_of_node.pop(node, None)
+        # 只放開「編號 → 節點」（重新配發金鑰後可由新節點綁定）；被撤銷的節點仍綁在這個已無金鑰的編號上，不能改用別的編號
+        self._node_of_pid.pop(pid, None)
 
     def aggregate_train(self, server_round: int, replies: Iterable[Message]
                         ) -> tuple[ArrayRecord | None, MetricRecord | None]:
@@ -295,13 +296,18 @@ class GuardedStrategy(Strategy):
             claims = [(i, int(m.content["metrics"]["partition-id"]), m.metadata.src_node_id)
                       for i, m in enumerate(ok_replies) if keep[i]]
             nodes_of: dict = {}
+            first: dict = {}  # 每個節點每輪只算第一份；同一節點多送的不聚合（避免同一份更新被算兩次）
+            for i, pid, node in claims:
+                first.setdefault(node, i)
             for _, pid, node in claims:
-                nodes_of.setdefault(pid, set()).add(node)
+                if self._pid_of_node.get(node, pid) == pid:  # 已綁別的編號的節點不算數，不能拿來擋別人
+                    nodes_of.setdefault(pid, set()).add(node)
             for i, pid, node in claims:
                 bn, bp = self._node_of_pid.get(pid), self._pid_of_node.get(node)
                 # 先檢查兩邊再寫入：被拒絕的訊息不能留下綁定（否則可以搶先綁走別人的編號）；
-                # 同一輪多個節點搶同一個編號時全部拒絕，不讓先到的贏
-                if (bn is not None and bn != node) or (bp is not None and bp != pid) or len(nodes_of[pid]) > 1:
+                # 還沒綁的編號同一輪有多個節點搶時全部拒絕，不讓先到的贏；已綁的只認綁定的節點
+                if (first[node] != i or (bn is not None and bn != node) or (bp is not None and bp != pid)
+                        or (bn is None and len(nodes_of[pid]) > 1)):
                     keep[i] = audit[i]["accepted"] = False
                     stats["n_rejected"] += 1
                 else:

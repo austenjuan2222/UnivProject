@@ -42,6 +42,31 @@ class NodeBindingTest(unittest.TestCase):
         self.g.aggregate_train(2, [self.reply(100 + p, p, 2) for p in range(4)])
         self.assertEqual(self.seen[-1], [1, 2, 3])
 
+    def test_impostor_cannot_get_bound_vd_rejected_by_claiming_its_id(self):
+        self.g.aggregate_train(1, [self.reply(100, 0, 1), self.reply(101, 1, 1), self.reply(105, 3, 1)])
+        # 已綁的 0 號照常送；101（已綁 1 號）和 105 也送 0 號，不能讓真正的 0 號被當成「同輪搶編號」而拒絕
+        self.g.aggregate_train(2, [self.reply(100, 0, 2), self.reply(101, 0, 2), self.reply(105, 0, 2)])
+        self.assertEqual(self.seen[-1], [0])
+        # 還沒綁的 2 號：已綁別的編號的節點來搶，也不能擋掉真正的 2 號
+        self.g.aggregate_train(3, [self.reply(102, 2, 3), self.reply(101, 2, 3)])
+        self.assertEqual(self.seen[-1], [2])
+
+    def test_one_node_counts_once_per_round(self):
+        self.g.aggregate_train(1, [self.reply(100, 0, 1), self.reply(100, 0, 1), self.reply(101, 1, 1)])
+        self.assertEqual(self.seen[-1], [0, 1])
+
+    def test_revoke_without_verification_is_an_error(self):
+        g = GuardedStrategy(None, None, None)
+        with self.assertRaises(ValueError):
+            g.revoke(0)
+
+    def test_revoked_node_cannot_take_another_id(self):
+        self.g.aggregate_train(1, [self.reply(100, 0, 1)])
+        self.g.revoke(0)
+        # 被撤銷的節點 100 拿偷來的 3 號金鑰（3 號還沒出現過）也不行
+        self.g.aggregate_train(2, [self.reply(100, 3, 2), self.reply(102, 2, 2)])
+        self.assertEqual(self.seen[-1], [2])
+
     def test_first_contact_binds_node(self):
         # 第一次看到的節點與編號就綁定（TOFU）；之後同一節點換編號也拒絕
         self.g.aggregate_train(1, [self.reply(100, 0, 1)])
