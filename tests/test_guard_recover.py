@@ -61,5 +61,20 @@ class SignedQueryTest(unittest.TestCase):
             self.assertTrue(verify_recover(load_server_public_key(d), 1, [2], str(q["sig"]), run=7))
 
 
+class SealedSeedsTest(unittest.TestCase):
+    def test_server_opens_sealed_seeds(self):
+        import tempfile
+        from secagg import load_agreement_keys, load_server_agreement_key, provision_agreement_keys, seal_seeds
+        with tempfile.TemporaryDirectory() as d:
+            provision_agreement_keys(d, 3)
+            _, pubs = load_agreement_keys(d, 0)
+            privs = {p: load_agreement_keys(d, p)[0] for p in (0, 1)}
+            g = GuardedStrategy(object(), None, None, secure_agg_clients=3,
+                                secagg_keys=(load_server_agreement_key(d), pubs))
+            g._grid = FakeGrid(lambda p: {"pid": p, "dropped": [2],
+                                          "seeds": list(seal_seeds({2: SEED}, p, privs[p], pubs["server"], 1).values())})
+            self.assertEqual(g._recover(1, [_kept(0), _kept(1)]), {0: {2: SEED}, 1: {2: SEED}})
+
+
 if __name__ == "__main__":
     unittest.main()

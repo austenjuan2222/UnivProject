@@ -19,7 +19,7 @@ from flwr.serverapp.strategy import (DifferentialPrivacyServerSideAdaptiveClippi
 
 from data import load_client_arrays, n_calendar
 from guard import CollusionFilter, GuardedStrategy, ValidationFilter
-from secagg import provision_agreement_keys
+from secagg import load_agreement_pubs, load_server_agreement_key, provision_agreement_keys
 from security import load_server_secrets, load_vd_verify_keys, provision_keys
 from privacy import client_level_epsilon
 from results_log import RunLogger, make_run_name
@@ -217,7 +217,9 @@ def main(grid: Grid, context: Context) -> None:
                                replay_rate=float(cfg.get("replay-rate", 0.0)),
                                validation_filter=validation_filter,
                                download_bits=int(cfg.get("download-bits", 32)),
-                               norm_cap=float(cfg.get("norm-cap", 0.0)))
+                               norm_cap=float(cfg.get("norm-cap", 0.0)),
+                               secagg_keys=(load_server_agreement_key(key_dir), load_agreement_pubs(key_dir))
+                               if secure_agg else None)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))

@@ -19,7 +19,7 @@ from flwr.clientapp import ClientApp
 from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
-from secagg import load_agreement_keys, mask_update, reveal_seeds
+from secagg import load_agreement_keys, mask_update, reveal_seeds, seal_seeds
 from security import (adaptive_shrink, drops_out, hide_congestion, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key, verify_recover,
                       poison_update, verify_model)
 from task import TrafficModel, all_finite, jam_scorer, evaluate, make_loader, set_seed, train, unwrap
@@ -276,7 +276,8 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
     # shortcut: 伺服器仍可謊稱「某一台」斷線而解開它的遮罩；完整 SecAgg+ 用雙重遮罩＋秘密分享防止
     context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": rnd})
     priv, pubs = load_agreement_keys(str(context.run_config.get("key-dir", "keys")), pid)
-    seeds = reveal_seeds(pid, dropped, priv, pubs, rnd, context.run_id)
+    seeds = seal_seeds(reveal_seeds(pid, dropped, priv, pubs, rnd, context.run_id), pid, priv, pubs["server"], rnd,
+                       context.run_id)
     return Message(content=RecordDict({"secagg": ConfigRecord(
         {"pid": pid, "dropped": list(seeds), "seeds": list(seeds.values())})}), reply_to=msg)
 

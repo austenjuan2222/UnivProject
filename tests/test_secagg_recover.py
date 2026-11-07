@@ -63,8 +63,11 @@ class SignedRecoverTest(unittest.TestCase):
         return secagg_recover_fn(Message(content=q, dst_node_id=1, message_type="query"), self.ctx)
 
     def test_signed_request_is_answered(self):
+        from secagg import load_agreement_keys, reveal_seeds
         out = self._ask(3, [5], sign_recover(self.priv, 3, [5], run=1)).content["secagg"]
         self.assertEqual(list(out["dropped"]), [5])
+        p0, pubs = load_agreement_keys(self.tmp.name, 0)
+        self.assertNotEqual(list(out["seeds"]), list(reveal_seeds(0, [5], p0, pubs, 3, run=1).values()))  # 不是明文
 
     def test_unsigned_or_forged_request_is_refused(self):
         for sig in [None, "", "00" * 64, sign_recover(self.priv, 3, [4], run=1), sign_recover(self.priv, 2, [5], run=1),

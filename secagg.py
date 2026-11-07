@@ -5,7 +5,7 @@
 i < j 時 i 加上 r_ij、j 減去 r_ij，加總時全部抵銷。每輪遮罩不同（種子含輪次）。
 
 限制（如實記錄）：
-- 斷線復原：在線 VD 交出和斷線 VD 之間的成對種子，伺服器扣掉這些遮罩（reveal_seeds、drop_correction）。
+- 斷線復原：在線 VD 交出和斷線 VD 之間的成對種子，伺服器扣掉這些遮罩（reveal_seeds、drop_correction）；種子加密給伺服器（seal_seeds），中間人讀不到。
   這是簡化版：沒有雙重遮罩與秘密分享，若斷線 VD 的更新事後又送到，伺服器就看得到它（完整的 SecAgg+ 解決這點）。
 - 伺服器看不到個別更新，所以不能和「伺服器端裁剪的 client-level DP」或中位數聚合一起用；
   可以和 record-level DP（在 VD 本地加噪）一起用。
@@ -26,21 +26,28 @@ _RAW = serialization.Encoding.Raw
 MASK_RANGE = 1e3  # 遮罩的均勻分布範圍 ±1000，遠大於模型參數的尺度
 
 
+def _new_x25519(path: Path) -> X25519PrivateKey:
+    if not path.exists():
+        raw = X25519PrivateKey.generate().private_bytes(_RAW, serialization.PrivateFormat.Raw,
+                                                        serialization.NoEncryption())
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(raw.hex())
+    return X25519PrivateKey.from_private_bytes(bytes.fromhex(path.read_text().strip()))
+
+
 def provision_agreement_keys(key_dir, num_clients: int) -> None:
-    """每個 VD 一把 X25519 私鑰（vd-<編號>.x25519），公鑰表 x25519_pub.json 給所有 VD 看。"""
+    """每個 VD 一把 X25519 私鑰（vd-<編號>.x25519），公鑰表 x25519_pub.json 給所有 VD 看。
+    伺服器也有一把（server/agree.x25519，公鑰 x25519_server.pub），VD 交出的復原種子加密給它。"""
     key_dir = Path(key_dir)
-    key_dir.mkdir(parents=True, exist_ok=True)
+    (key_dir / "server").mkdir(parents=True, exist_ok=True)
+    spub = _new_x25519(key_dir / "server" / "agree.x25519").public_key()
+    (key_dir / "x25519_server.pub").write_text(spub.public_bytes(_RAW, serialization.PublicFormat.Raw).hex(),
+                                               encoding="utf-8")
     pub_path = key_dir / "x25519_pub.json"
     pubs = json.loads(pub_path.read_text(encoding="utf-8")) if pub_path.exists() else {}
     for pid in range(num_clients):
-        path = key_dir / f"vd-{pid}.x25519"
-        if not path.exists():
-            raw = X25519PrivateKey.generate().private_bytes(
-                _RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption())
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(raw.hex())
-        priv = X25519PrivateKey.from_private_bytes(bytes.fromhex(path.read_text().strip()))
+        priv = _new_x25519(key_dir / f"vd-{pid}.x25519")
         pubs[str(pid)] = priv.public_key().public_bytes(_RAW, serialization.PublicFormat.Raw).hex()
     pub_path.write_text(json.dumps(pubs), encoding="utf-8")
 
@@ -48,8 +55,32 @@ def provision_agreement_keys(key_dir, num_clients: int) -> None:
 def load_agreement_keys(key_dir, pid: int) -> tuple[X25519PrivateKey, dict]:
     key_dir = Path(key_dir)
     priv = X25519PrivateKey.from_private_bytes(bytes.fromhex((key_dir / f"vd-{pid}.x25519").read_text().strip()))
+    return priv, load_agreement_pubs(key_dir)
+
+
+def load_agreement_pubs(key_dir) -> dict:
+    """公鑰表（VD 編號 → 公鑰，另有 "server"）；伺服器只需要這個，不讀任何 VD 私鑰。"""
+    key_dir = Path(key_dir)
     pubs = json.loads((key_dir / "x25519_pub.json").read_text(encoding="utf-8"))
-    return priv, {int(k): X25519PublicKey.from_public_bytes(bytes.fromhex(v)) for k, v in pubs.items()}
+    out = {int(k): X25519PublicKey.from_public_bytes(bytes.fromhex(v)) for k, v in pubs.items()}
+    out["server"] = X25519PublicKey.from_public_bytes(
+        bytes.fromhex((key_dir / "x25519_server.pub").read_text(encoding="utf-8").strip()))
+    return out
+
+
+def load_server_agreement_key(key_dir) -> X25519PrivateKey:
+    return X25519PrivateKey.from_private_bytes(
+        bytes.fromhex((Path(key_dir) / "server" / "agree.x25519").read_text().strip()))
+
+
+def seal_seeds(seeds: dict, me: int, my_priv: X25519PrivateKey, their_pub: X25519PublicKey, rnd: int,
+               run: int = 0) -> dict[int, str]:
+    """VD 用和伺服器的 X25519 共享金鑰把種子 XOR 加密（伺服器用同一函式、換成自己的私鑰和 VD 公鑰解開）。
+    金鑰流綁執行、輪次、這對 VD，每個只用一次。沒有 TLS 時中間人讀回覆也拿不到種子。"""
+    shared = my_priv.exchange(their_pub)
+    def pad(j):
+        return hashlib.sha256(shared + f"secagg-seal|{int(run)}|{int(rnd)}|{int(me)}|{int(j)}".encode()).digest()
+    return {int(j): bytes(a ^ b for a, b in zip(bytes.fromhex(x), pad(j))).hex() for j, x in seeds.items()}
 
 
 def pair_seed(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, me: int, other: int, rnd: int,

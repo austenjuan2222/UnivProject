@@ -20,7 +20,7 @@ from flwr.serverapp.strategy import Strategy
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from compress import quantize_update
-from secagg import drop_correction, unmask_sum
+from secagg import drop_correction, seal_seeds, unmask_sum
 from security import canonical_metrics, sign_model, sign_recover, sign_update, tamper, update_digest, verify_update
 
 AUTH = "auth"
@@ -276,7 +276,7 @@ class GuardedStrategy(Strategy):
                  on_audit: Callable[[list], None] | None = None,
                  collusion_filter: CollusionFilter | None = None, replay_rate: float = 0.0,
                  validation_filter: ValidationFilter | None = None, download_bits: int = 32,
-                 norm_cap: float = 0.0):
+                 norm_cap: float = 0.0, secagg_keys: tuple | None = None):
         """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。
         norm_cap > 0：更新長度超過這輪中位數 norm_cap 倍的，縮回 norm_cap 倍。"""
         if norm_cap and (norm_cap < 1 or secure_agg_clients):
@@ -288,6 +288,7 @@ class GuardedStrategy(Strategy):
         self.tamper_rate = tamper_rate
         self.rng = np.random.default_rng(seed + 7919)
         self.on_round = on_round
+        self.secagg_keys = secagg_keys
         self._priv = signing_key
         # > 0：安全聚合，需要這麼多個 VD 全部回覆遮罩後的更新（基本版不容許斷線）
         self.secure_agg_clients = secure_agg_clients
@@ -480,6 +481,10 @@ class GuardedStrategy(Strategy):
                     or not all(re.fullmatch(r"[0-9a-f]{64}", x) for x in seeds)):
                 return None
             revealed[pid] = dict(zip(js, seeds))
+            if self.secagg_keys is not None:  # VD 加密給伺服器的種子：用伺服器私鑰解開
+                spriv, pubs = self.secagg_keys
+                revealed[pid] = seal_seeds(revealed[pid], pid, spriv, pubs[pid], rnd,
+                                           getattr(getattr(self._grid, "run", None), "run_id", 0))
         return revealed if set(revealed) == set(alive) else None
 
     def configure_evaluate(self, server_round: int, arrays: ArrayRecord, config: ConfigRecord,

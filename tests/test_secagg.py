@@ -81,6 +81,17 @@ class SecAggTest(unittest.TestCase):
         p0, pubs = load_agreement_keys(self.dir, 0)
         self.assertNotEqual(pair_seed(p0, pubs[1], 0, 1, 5, run=1), pair_seed(p0, pubs[1], 0, 1, 5, run=2))
 
+    def test_sealed_seeds_open_only_on_server(self):
+        # 復原用的種子加密給伺服器：沒有 TLS 時中間人攔下更新、再讀回覆也拿不到種子
+        from secagg import load_server_agreement_key, seal_seeds
+        p0, pubs = load_agreement_keys(self.dir, 0)
+        spriv = load_server_agreement_key(self.dir)
+        plain = reveal_seeds(0, [3], p0, pubs, 2, run=9)
+        sealed = seal_seeds(plain, 0, p0, pubs["server"], 2, run=9)
+        self.assertNotEqual(sealed, plain)
+        self.assertEqual(seal_seeds(sealed, 0, spriv, pubs[0], 2, run=9), plain)
+        self.assertNotEqual(seal_seeds(sealed, 0, spriv, pubs[0], 3, run=9), plain)  # 別輪的金鑰流不同
+
 
 class SecureAverageTest(unittest.TestCase):
     """伺服器端：把遮罩後的 RecordDict 加總成全域模型；少了任何一個 VD 就放棄這一輪。"""
