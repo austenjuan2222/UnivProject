@@ -103,6 +103,28 @@ class ValidationFilterTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             ValidationFilter(lambda a: 0.0, memory=1.0, group=2)
 
+    def test_strata_compare_each_vd_only_with_its_own_kind_of_road(self):
+        # 0～3 號是幾乎不塞車的路段，參考資料的塞車時段本來就預測得比較差（約 6.0）；4～17 號常塞車（約 5.0）
+        free = {p: 6.0 + 0.01 * (p % 3) for p in range(4)}
+        jam = {p: 5.0 + 0.01 * (p % 3) for p in range(4, 18)}
+        ups = {p: {"s": np.array([s])} for p, s in (free | jam).items()}
+        ids = {p: 100 + p for p in ups}  # 訊息鍵與 VD 編號不同：分層要看 VD 編號
+        strata = {100 + p: ("free" if p < 4 else "jam") for p in ups}
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0)
+        self.assertEqual(f.screen(ups, ids), set(range(4)))  # 不分層：整段順暢路段都被當成可疑
+        g = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, strata=strata)
+        self.assertEqual(g.screen(ups, ids), set())
+        # 常塞車路段裡出現藏塞車的更新（分數像順暢路段），分層後反而更明顯
+        ups[17] = {"s": np.array([6.0])}
+        self.assertEqual(g.screen(ups, ids), {17})
+
+    def test_strata_need_vd_ids_and_cannot_be_combined_with_groups(self):
+        g = ValidationFilter(lambda a: float(a["s"][0]), strata={0: "a"})
+        with self.assertRaises(ValueError):
+            g.screen({p: {"s": np.array([5.0])} for p in range(5)})
+        with self.assertRaises(ValueError):
+            ValidationFilter(lambda a: 0.0, strata={0: "a"}, group=2)
+
     def test_memory_off_by_default(self):
         f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0)
         base = [5.0, 5.1, 4.9, 5.05, 4.95, 5.0, 5.1, 4.9, 5.0]

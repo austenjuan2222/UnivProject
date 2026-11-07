@@ -61,6 +61,18 @@ def _check_num_nodes(grid: Grid, expected: int, wait_s: float = 60.0) -> None:
         )
 
 
+def _strata(data_dir: str, vdids: dict, cutoff: float) -> dict:
+    """partition → 路段類別：歷史塞車比例（車速 < 60 km/h 的比例）≥ cutoff 為 "jam"，否則 "free"。
+    模擬交通單位手上的歷史統計（不是 VD 這一輪自報的數字）；這裡直接用該 VD 的整段資料估計。"""
+    import pandas as pd
+
+    out = {}
+    for pid, vd in vdids.items():
+        sp = pd.read_csv(Path(data_dir) / f"{vd}.csv", usecols=["speed"])["speed"].dropna()
+        out[int(pid)] = "jam" if len(sp) and float((sp < 60).mean()) >= cutoff else "free"
+    return out
+
+
 def _reference_sets(cfg: dict, exclude: set, n: int, offset: int = 0) -> list[dict]:
     """伺服器自己的參考 VD（不在聯邦裡，例如高公局自己管的路段）：依塞車樣本數排序，取第 offset 起的 n 個，只用訓練段。
     offset > 0 模擬伺服器把參考 VD 保密、不用「最明顯」的那幾個。"""
@@ -177,6 +189,10 @@ def main(grid: Grid, context: Context) -> None:
     if float(cfg.get("validation-memory", 0.0)) > 0 and not verify:
         # 跨輪歷史用 VD 編號記；沒驗 HMAC 時編號是自報的，攻擊者可以冒用別人的編號汙染對方的歷史
         raise ValueError("validation-memory > 0 需要 verify-updates=true（VD 編號要經過 HMAC 驗證）")
+    strata_cut = float(cfg.get("validation-strata", 0.0))
+    if strata_cut > 0 and not verify:
+        # 分層看 VD 編號；沒驗 HMAC 時攻擊者可以冒用別類路段的編號，換到對自己有利的比較對象
+        raise ValueError("validation-strata > 0 需要 verify-updates=true（VD 編號要經過 HMAC 驗證）")
     validation_filter = None
     if str(cfg.get("validation-dir", "")):
         refs = _reference_sets(cfg, set(vdids.values()), int(cfg.get("validation-vds", 4)), int(cfg.get("validation-offset", 0)))
@@ -185,7 +201,11 @@ def main(grid: Grid, context: Context) -> None:
             n_calendar(str(cfg.get("calendar", ""))) + int(bool(cfg.get("lag-day", False))))),
             float(cfg.get("validation-z", 3.0)), margin=float(cfg.get("validation-margin", 0.0)),
             group=int(cfg.get("validation-group", 1)), seed=int(cfg["seed"]),
-            memory=float(cfg.get("validation-memory", 0.0)))
+            memory=float(cfg.get("validation-memory", 0.0)),
+            strata=_strata(str(cfg["data-dir"]), vdids, strata_cut) if strata_cut > 0 else None)
+        if validation_filter.strata:
+            print("路段分層：", {k: sorted(p for p, v in validation_filter.strata.items() if v == k)
+                              for k in ("jam", "free")})
     strategy = GuardedStrategy(strategy, priv if sign else None, vd_keys if verify else None,
                                float(cfg.get("tamper-rate", 0.0)), int(cfg["seed"]), logger.on_security,
                                secure_agg_clients=num_clients if secure_agg else 0, on_audit=logger.on_audit,

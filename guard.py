@@ -121,12 +121,16 @@ class ValidationFilter:
     整組一起採用或拒絕；最後一組不足 group 份時併進前一組。
     memory > 0：記住每個 VD 每輪的可疑程度（(分數 − 中位數) / (1.4826 × MAD)，截在 0～z，好的輪次不能抵銷壞的），
     看過至少 3 輪、平均超過 memory 的也拒絕，用來抓每輪都只差一點、單輪門檻抓不到的攻擊者（只用在 group = 1）。
-    歷史要用穩定的 VD 身分記：screen 的 ids 把每份訊息對應到它的 VD（伺服器驗過 HMAC 的編號）；同一 VD 同輪多份取最可疑的。"""
+    歷史要用穩定的 VD 身分記：screen 的 ids 把每份訊息對應到它的 VD（伺服器驗過 HMAC 的編號）；同一 VD 同輪多份取最可疑的。
+    strata：VD 編號 → 路段類別（例如依交通單位的歷史塞車比例分成「常塞車／順暢」），每類各自算中位數與門檻，
+    避免幾乎不塞車的誠實路段只因為本地沒看過塞車就被當成可疑。需要 ids，只用在 group = 1。"""
 
     def __init__(self, score: Callable[[dict], float], z: float = 3.0, min_updates: int = 3, margin: float = 0.0,
-                 group: int = 1, seed: int = 0, memory: float = 0.0):
+                 group: int = 1, seed: int = 0, memory: float = 0.0, strata: dict | None = None):
         self.score, self.z, self.min_updates, self.margin, self.group = score, z, min_updates, margin, group
-        self.memory, self.history = memory, {}
+        self.memory, self.history, self.strata = memory, {}, strata
+        if strata and group > 1:
+            raise ValueError("validation-strata 只能搭配 validation-group = 1")
         if memory > 0 and group > 1:
             raise ValueError("validation-memory 只能搭配 validation-group = 1（分組時看不到個別 VD）")
         self.rng = np.random.default_rng(seed + 31337)
@@ -156,7 +160,16 @@ class ValidationFilter:
             self.last_scores = {m: gs[g] for g, members in enumerate(groups) for m in members}
             return {m for g in self._outliers(gs) for m in groups[g]}
         self.last_scores = {p: self._score(a) for p, a in updates.items()}
-        return self._outliers(self.last_scores, ids if self.memory > 0 else None)
+        mem_ids = ids if self.memory > 0 else None
+        if not self.strata:
+            return self._outliers(self.last_scores, mem_ids)
+        if ids is None:
+            raise ValueError("分層檢查需要每份訊息的 VD 編號（ids）")
+        out = set()
+        for label in {self.strata.get(ids[p]) for p in self.last_scores}:  # 不在表上的 VD 自成一類
+            sub = {p: s for p, s in self.last_scores.items() if self.strata.get(ids[p]) == label}
+            out |= self._outliers(sub, mem_ids)
+        return out
 
     def _outliers(self, scores: dict, ids: dict | None = None) -> set:
         bad = {p for p, s in scores.items() if not np.isfinite(s)}
