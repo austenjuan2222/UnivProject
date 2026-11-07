@@ -361,18 +361,6 @@ class GuardedStrategy(Strategy):
             cap = 10 * float(np.median(list(n.values())))
             stats["n_rejected"] += sum(v > cap for v in n.values())
             kept = [m for m in kept if n[id(m)] <= cap]
-        if self.norm_cap and len(kept) >= 3 and self._global:
-            norms = {id(m): float(np.linalg.norm(deltas[id(m)])) for m in kept}
-            limit = self.norm_cap * float(np.median(list(norms.values())))
-            stats["n_clipped"] = 0
-            for m in kept:
-                if norms[id(m)] > limit > 0:
-                    s = limit / norms[id(m)]
-                    local = arrays_of(m.content["arrays"])
-                    m.content["arrays"] = _array_record(
-                        {k: (self._global[k] + s * (local[k] - self._global[k])).astype(np.float32) for k in local})
-                    deltas[id(m)] = deltas[id(m)] * s
-                    stats["n_clipped"] += 1
         if self.collusion_filter is not None and kept:
             pid = {id(m): int(m.content["metrics"]["partition-id"]) for m in kept}
             flagged = self.collusion_filter.update({pid[id(m)]: deltas[id(m)] for m in kept})
@@ -396,6 +384,21 @@ class GuardedStrategy(Strategy):
             self.validation_scores.append((server_round, [(int(kept[i].content["metrics"]["partition-id"]), v)
                                                           for i, v in self.validation_filter.last_scores.items()]))
             kept = [m for i, m in enumerate(kept) if i not in invalid]
+        if self.norm_cap and self._global:
+            # 放在驗證檢查之後：先用原始更新評分，放大的惡意更新整份被擋；縮小只套在通過的更新上
+            # 送回全域模型（長度 0）不算進中位數，不然攻擊者可以一直送 0 把中位數往下拉、讓誠實 VD 被縮
+            norms = {id(m): float(np.linalg.norm(deltas[id(m)])) for m in kept}
+            ref = [v for v in norms.values() if v > 0]
+            stats["n_clipped"] = 0
+            # shortcut: 少於 3 份非零更新時不縮（沒有可信的中位數）；要更穩可改用前幾輪中位數的移動平均
+            limit = self.norm_cap * float(np.median(ref)) if len(ref) >= 3 else float("inf")
+            for m in kept:
+                if norms[id(m)] > limit:
+                    s = limit / norms[id(m)]
+                    local = arrays_of(m.content["arrays"])
+                    m.content["arrays"] = _array_record(
+                        {k: (self._global[k] + s * (local[k] - self._global[k])).astype(np.float32) for k in local})
+                    stats["n_clipped"] += 1
         if self.on_round:
             self.on_round(server_round, stats)
         if not kept:

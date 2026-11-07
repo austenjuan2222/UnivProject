@@ -8,6 +8,7 @@ from guard import GuardedStrategy, arrays_of, attach_update_tag
 
 
 class NormCapTest(unittest.TestCase):
+    G = np.array([5.0, -3.0], np.float32)
     def make(self, cap):
         self.keys = {p: bytes([p + 1]) * 32 for p in range(4)}
         self.got = []
@@ -22,13 +23,15 @@ class NormCapTest(unittest.TestCase):
                                   for m in replies})
                 return None, None
 
-        g = GuardedStrategy(Inner(), None, dict(self.keys), norm_cap=cap)
-        g.configure_train(1, ArrayRecord({"s": Array(np.zeros(2, np.float32))}), ConfigRecord(), None)
+        self.stats = {}
+        g = GuardedStrategy(Inner(), None, dict(self.keys), norm_cap=cap, on_round=lambda r, st: self.stats.update(st))
+        # 全域模型不是 0：要縮的是「更新減全域」，不是參數本身
+        g.configure_train(1, ArrayRecord({"s": Array(self.G)}), ConfigRecord(), None)
         return g
 
     def reply(self, pid, value):
         sent = Message(content=RecordDict(), dst_node_id=100 + pid, message_type="train")
-        c = RecordDict({"arrays": ArrayRecord({"s": Array(np.asarray(value, np.float32))}),
+        c = RecordDict({"arrays": ArrayRecord({"s": Array(self.G + np.asarray(value, np.float32))}),
                         "metrics": MetricRecord({"partition-id": pid, "num-examples": 10})})
         attach_update_tag(c, self.keys[pid], 1, pid)
         return Message(content=c, reply_to=sent)
@@ -37,13 +40,21 @@ class NormCapTest(unittest.TestCase):
         g = self.make(2.0)
         g.aggregate_train(1, [self.reply(0, [1, 0]), self.reply(1, [0, 1]), self.reply(2, [-1, 0]),
                               self.reply(3, [30, 40])])  # 長度 50，中位數 1 → 縮成長度 2
-        np.testing.assert_allclose(self.got[-1][3], [1.2, 1.6], rtol=1e-6)
-        np.testing.assert_allclose(self.got[-1][0], [1, 0])
+        np.testing.assert_allclose(self.got[-1][3], self.G + [1.2, 1.6], rtol=1e-6)
+        np.testing.assert_allclose(self.got[-1][0], self.G + [1, 0])
+        self.assertEqual(self.stats["n_clipped"], 1)
+
+    def test_zero_updates_do_not_drag_median_down(self):
+        # 攻擊者一直送回全域模型（長度 0）：不能因此把誠實 VD 的更新縮小
+        g = self.make(2.0)
+        g.aggregate_train(1, [self.reply(0, [0, 0]), self.reply(1, [0, 0]), self.reply(2, [1, 0]),
+                              self.reply(3, [0, 1.5])])
+        self.assertEqual(self.stats["n_clipped"], 0)
 
     def test_off_by_default(self):
         g = self.make(0.0)
         g.aggregate_train(1, [self.reply(0, [1, 0]), self.reply(1, [0, 1]), self.reply(3, [30, 40])])
-        np.testing.assert_allclose(self.got[-1][3], [30, 40])
+        np.testing.assert_allclose(self.got[-1][3], self.G + [30, 40])
 
     def test_cap_must_be_at_least_one_and_not_with_secure_agg(self):
         with self.assertRaises(ValueError):
