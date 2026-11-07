@@ -246,8 +246,13 @@ class GuardedStrategy(Strategy):
                  on_round: Callable[[int, dict], None] | None = None, secure_agg_clients: int = 0,
                  on_audit: Callable[[list], None] | None = None,
                  collusion_filter: CollusionFilter | None = None, replay_rate: float = 0.0,
-                 validation_filter: ValidationFilter | None = None, download_bits: int = 32):
-        """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。"""
+                 validation_filter: ValidationFilter | None = None, download_bits: int = 32,
+                 norm_cap: float = 0.0):
+        """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。
+        norm_cap > 0：更新長度超過這輪中位數 norm_cap 倍的，縮回 norm_cap 倍。"""
+        if norm_cap and (norm_cap < 1 or secure_agg_clients):
+            raise ValueError("norm-cap 要 ≥ 1（小於 1 連中位數的誠實 VD 都會被縮），且不能和 secure-agg 一起用（伺服器看不到個別更新）")
+        self.norm_cap = norm_cap
         self.inner = inner
         self.vd_keys = vd_keys or {}
         self.verify_updates = vd_keys is not None
@@ -356,6 +361,18 @@ class GuardedStrategy(Strategy):
             cap = 10 * float(np.median(list(n.values())))
             stats["n_rejected"] += sum(v > cap for v in n.values())
             kept = [m for m in kept if n[id(m)] <= cap]
+        if self.norm_cap and len(kept) >= 3 and self._global:
+            norms = {id(m): float(np.linalg.norm(deltas[id(m)])) for m in kept}
+            limit = self.norm_cap * float(np.median(list(norms.values())))
+            stats["n_clipped"] = 0
+            for m in kept:
+                if norms[id(m)] > limit > 0:
+                    s = limit / norms[id(m)]
+                    local = arrays_of(m.content["arrays"])
+                    m.content["arrays"] = _array_record(
+                        {k: (self._global[k] + s * (local[k] - self._global[k])).astype(np.float32) for k in local})
+                    deltas[id(m)] = deltas[id(m)] * s
+                    stats["n_clipped"] += 1
         if self.collusion_filter is not None and kept:
             pid = {id(m): int(m.content["metrics"]["partition-id"]) for m in kept}
             flagged = self.collusion_filter.update({pid[id(m)]: deltas[id(m)] for m in kept})

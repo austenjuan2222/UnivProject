@@ -213,7 +213,8 @@ def main(grid: Grid, context: Context) -> None:
                                if bool(cfg.get("collusion-filter", False)) else None,
                                replay_rate=float(cfg.get("replay-rate", 0.0)),
                                validation_filter=validation_filter,
-                               download_bits=int(cfg.get("download-bits", 32)))
+                               download_bits=int(cfg.get("download-bits", 32)),
+                               norm_cap=float(cfg.get("norm-cap", 0.0)))
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))

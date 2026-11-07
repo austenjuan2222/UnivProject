@@ -80,6 +80,7 @@ validation-offset = 0      # 伺服器實際用的參考 VD 從第幾名開始�
 tamper-rate = 0.0          # 模擬網路中間人：每個上傳更新被竄改的機率
 replay-rate = 0.0          # 模擬網路中間人：把 VD 上一輪的整份訊息（參數＋簽章）再送一次的機率
 collusion-filter = false   # true = 跨輪偵測串通：更新方向一直和別人特別像的 VD 被剔除
+norm-cap = 0.0              # > 0：更新長度超過該輪中位數這麼多倍的縮回這個倍數（≥ 1；不能和 secure-agg 一起用）
 collusion-z = 3.0          # 標記門檻：相似度高於（中位數 + z × MAD）
 validation-dir = ""         # 非空：伺服器用這個資料夾裡不在聯邦中的參考 VD 檢查每份更新在塞車時段的誤差（絕對路徑）
 validation-vds = 4         # 參考 VD 數（取塞車樣本最多的）
