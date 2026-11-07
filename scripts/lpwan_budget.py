@@ -49,7 +49,9 @@ def expected_sends(packets: int, loss: float, mode: str) -> float:
 
 def main() -> int:
     # 32 VD 實驗的每 VD 每輪上傳量（README 壓縮上傳一節），+32 B HMAC 標籤
-    sizes = {"32 位元（不壓縮）": 6276, "8 位元": 1597, "4 位元": 809}
+    sizes = {"32 位元（不壓縮）": 6276, "8 位元": 1597, "4 位元": 809,
+             # 安全聚合（定點數整數遮罩）：32 位元環和 float32 一樣大，16 位元環減半（README 第 36、37 項）
+             "安全聚合 32 位元環": 6276, "安全聚合 16 位元環": 3138}
     print("| 上傳 | SF | 封包數 | 空中時間 | 1% 工作週期下每輪至少 |")
     print("|---|---|---|---|---|")
     for name, b in sizes.items():
