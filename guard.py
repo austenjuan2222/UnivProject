@@ -259,7 +259,7 @@ class ValidationFilter:
 
 
 def secure_average(contents: list[RecordDict], expected: int, revealed: dict | None = None,
-                   base: dict | None = None) -> ArrayRecord | None:
+                   base: dict | None = None, frac_bits: int = 12) -> ArrayRecord | None:
     """安全聚合：加總遮罩後的更新再除以總樣本數。少了 VD 時，需要在線 VD 交出的成對種子（revealed）
     才能扣掉沒抵銷的遮罩；拿不到就回傳 None 放棄這一輪。"""
     if not contents or (len(contents) != expected and revealed is None):
@@ -267,7 +267,7 @@ def secure_average(contents: list[RecordDict], expected: int, revealed: dict | N
     masked = [arrays_of(c["arrays"]) for c in contents]
     total = sum(float(c["metrics"]["num-examples"]) for c in contents)
     try:
-        avg = unmask_sum(masked, total, drop_correction(revealed, masked[0]) if revealed else None)
+        avg = unmask_sum(masked, total, drop_correction(revealed, masked[0]) if revealed else None, frac_bits)
     except ValueError:
         return None
     if base:  # VD 上傳的是相對於全域模型的差值
@@ -283,7 +283,7 @@ class GuardedStrategy(Strategy):
                  collusion_filter: CollusionFilter | None = None, replay_rate: float = 0.0,
                  validation_filter: ValidationFilter | None = None, download_bits: int = 32,
                  norm_cap: float = 0.0, secagg_keys: tuple | None = None,
-                 secagg_self_mask: bool = False):
+                 secagg_self_mask: bool = False, secagg_bits: int = 32, secagg_frac_bits: int = 12):
         """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。
         norm_cap > 0：更新長度超過這輪中位數 norm_cap 倍的，縮回 norm_cap 倍。"""
         if norm_cap and (norm_cap < 1 or secure_agg_clients):
@@ -297,6 +297,7 @@ class GuardedStrategy(Strategy):
         self.on_round = on_round
         self.secagg_keys = secagg_keys
         self.secagg_self_mask = secagg_self_mask
+        self.secagg_ring = (int(secagg_bits), int(secagg_frac_bits))
         self._priv = signing_key
         # > 0：安全聚合，需要這麼多個 VD 全部回覆遮罩後的更新（基本版不容許斷線）
         self.secure_agg_clients = secure_agg_clients
@@ -462,12 +463,14 @@ class GuardedStrategy(Strategy):
             # VD 數（num-partitions）也要一致：不一致時成對遮罩對不上、定點範圍也可能溢位
             same = all(bool(float(m.content["metrics"].get("secagg-self-mask", 0))) == self.secagg_self_mask
                        and int(float(m.content["metrics"].get("secagg-num-vd", -1))) == self.secure_agg_clients
+                       and (int(float(m.content["metrics"].get("secagg-bits", -1))),
+                            int(float(m.content["metrics"].get("secagg-frac-bits", -99)))) == self.secagg_ring
                        for m in kept)
             revealed = self._recover(server_round, kept) if need and ok_to_reveal and same else None
             stats["secagg_recovered"] = int(revealed is not None and len(kept) < self.secure_agg_clients)
             arrays = (None if not same or (self.secagg_self_mask and revealed is None)
                       else secure_average([m.content for m in kept], self.secure_agg_clients, revealed,
-                                          base=self._global))
+                                          base=self._global, frac_bits=self.secagg_ring[1]))
             stats["secagg_failed"] = int(arrays is None)
             if self.on_round:
                 self.on_round(server_round, stats)

@@ -185,6 +185,8 @@ def main(grid: Grid, context: Context) -> None:
                 or str(cfg.get("validation-dir", ""))):
             raise ValueError("secure-agg 只能搭配 aggregator='fedavg'、client-fraction=1、不開 client-level DP、"
                              "upload-bits=32、collusion-filter=false、不設 validation-dir（可以和 record-level DP 一起用）")
+        if int(cfg.get("secagg-bits", 32)) not in (16, 32):
+            raise ValueError("secagg-bits 只能是 16 或 32")
         if not sign:
             # 斷線復原請求要伺服器簽章，VD 才不會被中間人假造的「某台斷線」騙去交出種子
             raise ValueError("secure-agg 需要 sign-models=true")
@@ -220,7 +222,9 @@ def main(grid: Grid, context: Context) -> None:
                                norm_cap=float(cfg.get("norm-cap", 0.0)),
                                secagg_keys=(load_server_agreement_key(key_dir), load_agreement_pubs(key_dir))
                                if secure_agg else None,
-                               secagg_self_mask=secure_agg and bool(cfg.get("secagg-self-mask", True)))
+                               secagg_self_mask=secure_agg and bool(cfg.get("secagg-self-mask", True)),
+                               secagg_bits=int(cfg.get("secagg-bits", 32)),
+                               secagg_frac_bits=int(cfg.get("secagg-frac-bits", 12)))
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))

@@ -112,6 +112,34 @@ class SecAggTest(unittest.TestCase):
         avg = unmask_sum(m, 40)
         self.assertTrue(np.all(np.isfinite(avg["w"])) and np.all(avg["w"] > 0))  # 飽和，不會溢位成負數
 
+    def test_16bit_ring_halves_upload_and_cancels_with_dropout(self):
+        # LPWAN：Z_{2^16}，上傳是 uint16（float32 的一半）；小數位數可設，斷線復原照樣成立
+        ups = {p: _update(0.1 * (p + 1)) for p in self.pids}
+        masked = []
+        for p in (0, 1, 2):
+            priv, pubs = load_agreement_keys(self.dir, p)
+            masked.append(mask_update(ups[p], 10, p, self.pids, priv, pubs, 1, bits=16, frac_bits=6, self_mask=True))
+        self.assertTrue(all(v.dtype == np.uint16 for m in masked for v in m.values()))
+        from secagg import self_seed
+        revealed = {}
+        for p in (0, 1, 2):
+            priv, pubs = load_agreement_keys(self.dir, p)
+            revealed[p] = {**reveal_seeds(p, [3], priv, pubs, 1), p: self_seed(priv, p, 1).hex()}
+        avg = unmask_sum(masked, 30, drop_correction(revealed, masked[0]), frac_bits=6)
+        expect = {k: sum(10 * ups[p][k].astype(np.float64) for p in (0, 1, 2)) / 30 for k in SHAPES}
+        for k in SHAPES:
+            np.testing.assert_allclose(avg[k], expect[k], atol=3 * 2 ** -6 / 30 + 1e-9)
+
+    def test_16bit_clip_limit_uses_16bit_range(self):
+        from secagg import count_clipped
+        up = {"w": np.array([0.5, 2.0], dtype=np.float32)}  # n=1、4 台、小數 12 位：上限 32767//4/4096 ≈ 2.0
+        self.assertEqual(count_clipped(up, 1, 4, bits=16, frac_bits=12), 1)
+        self.assertEqual(count_clipped(up, 1, 4), 0)
+
+    def test_mixed_ring_widths_rejected(self):
+        with self.assertRaises(ValueError):
+            unmask_sum([{"w": np.zeros(2, np.uint32)}, {"w": np.zeros(2, np.uint16)}], 1.0)
+
     def test_revealed_seeds_only_cover_dropped_pairs(self):
         priv, pubs = load_agreement_keys(self.dir, 0)
         self.assertEqual(set(reveal_seeds(0, [2, 3], priv, pubs, 1)), {2, 3})

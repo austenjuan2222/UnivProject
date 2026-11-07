@@ -71,6 +71,8 @@ def _cfg(context: Context) -> dict:
         "dropout_rate": float(c.get("dropout-rate", 0.0)),
         "secure_agg": bool(c.get("secure-agg", False)),
         "secagg_self_mask": bool(c.get("secagg-self-mask", True)),
+        "secagg_bits": int(c.get("secagg-bits", 32)),
+        "secagg_frac_bits": int(c.get("secagg-frac-bits", 12)),
         "upload_bits": int(c.get("upload-bits", 32)),
         "update_auth": str(c.get("update-auth", "hmac")),
         "edge_runtime": str(c.get("edge-runtime", "torch")),
@@ -239,12 +241,14 @@ def train_fn(msg: Message, context: Context) -> Message:
         # 上傳相對於（簽過名的）全域模型的差值：數值小，定點數範圍才夠；伺服器還原後加回全域模型
         g = arrays_of(msg.content["arrays"])
         delta = {k: np.asarray(v, dtype=np.float64) - g[k] for k, v in arrays_of(arrays).items()}
-        metrics["secagg-clipped"] = count_clipped(delta, len(d["y_train"]), n)
+        ring = {"bits": cfg["secagg_bits"], "frac_bits": cfg["secagg_frac_bits"]}
+        metrics["secagg-clipped"] = count_clipped(delta, len(d["y_train"]), n, **ring)
         masked = mask_update(delta, len(d["y_train"]), pid, range(n), priv, pubs, rnd, context.run_id,
-                             self_mask=cfg["secagg_self_mask"])
+                             self_mask=cfg["secagg_self_mask"], **ring)
         context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": -1})
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
         metrics["secagg-num-vd"] = n
+        metrics["secagg-bits"], metrics["secagg-frac-bits"] = cfg["secagg_bits"], cfg["secagg_frac_bits"]
         metrics["secagg-self-mask"] = int(cfg["secagg_self_mask"])  # 伺服器比對設定一致（HMAC 有涵蓋）
     # Edge 運算成本：上傳量（模型參數）vs. 若把原始訓練資料傳上雲的量
     metrics["upload-bytes"] = (upload_bytes if upload_bytes is not None

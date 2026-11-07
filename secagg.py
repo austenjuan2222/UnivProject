@@ -28,22 +28,25 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X
 _RAW = serialization.Encoding.Raw
 # 有限體 Z_{2^32} 上的定點數：小數 12 位元。遮罩是 [0, 2^32) 的均勻整數，加總後完全抵銷（沒有浮點誤差），
 # 上傳和 float32 一樣大。每台 VD 把 n×值限制在 ±2^31 / 2^12 / VD 數以內，加總才不會溢位。
+# LPWAN 可改用 Z_{2^16}（bits=16）：上傳再減半，但範圍只有 ±2^15 / VD 數，小數位數要跟著調低（可以是負的）。
 FRAC_BITS = 12
+_RING = {32: (np.uint32, np.int32), 16: (np.uint16, np.int16)}
 
 
-def _limit(num_vd: int) -> int:
-    return (2 ** 31 - 1) // max(int(num_vd), 1)
+def _limit(num_vd: int, bits: int = 32) -> int:
+    return (2 ** (bits - 1) - 1) // max(int(num_vd), 1)
 
 
-def _encode(x: np.ndarray, num_vd: int) -> np.ndarray:
-    q = np.clip(np.rint(np.asarray(x, dtype=np.float64) * 2 ** FRAC_BITS), -_limit(num_vd), _limit(num_vd))
-    return q.astype(np.int64).astype(np.uint32)  # 負數取 2 的補數（mod 2^32）
+def _encode(x: np.ndarray, num_vd: int, bits: int = 32, frac_bits: int = FRAC_BITS) -> np.ndarray:
+    lim = _limit(num_vd, bits)
+    q = np.clip(np.rint(np.asarray(x, dtype=np.float64) * 2.0 ** frac_bits), -lim, lim)
+    return q.astype(np.int64).astype(_RING[bits][0])  # 負數取 2 的補數（mod 2^bits）
 
 
-def count_clipped(update: dict, n: int, num_vd: int) -> int:
+def count_clipped(update: dict, n: int, num_vd: int, bits: int = 32, frac_bits: int = FRAC_BITS) -> int:
     """這份更新有多少個值超出定點範圍、會被截到上限（VD 自己回報，伺服器看不到個別更新）。"""
-    lim = _limit(num_vd)
-    return int(sum(np.sum(np.abs(np.rint(n * np.asarray(v, dtype=np.float64) * 2 ** FRAC_BITS)) > lim)
+    lim = _limit(num_vd, bits)
+    return int(sum(np.sum(np.abs(np.rint(n * np.asarray(v, dtype=np.float64) * 2.0 ** frac_bits)) > lim)
                    for v in update.values()))
 
 
@@ -142,10 +145,11 @@ def pair_seed(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, me: int, ot
     return hashlib.sha256(shared + f"secagg|{int(run)}|{a}|{b}|{rnd}".encode()).digest()
 
 
-def _mask(seed: bytes, shape) -> np.ndarray:
-    # SHAKE-256 當密碼學 PRG（numpy 的 PCG64 不是），每個值是均勻的 uint32
+def _mask(seed: bytes, shape, dtype=np.uint32) -> np.ndarray:
+    # SHAKE-256 當密碼學 PRG（numpy 的 PCG64 不是），每個值是均勻的 uint32（或 uint16）
+    dt = np.dtype(dtype).newbyteorder("<")
     size = int(np.prod(shape))
-    return np.frombuffer(hashlib.shake_256(seed).digest(4 * size), "<u4").reshape(shape).astype(np.uint32)
+    return np.frombuffer(hashlib.shake_256(seed).digest(dt.itemsize * size), dt).reshape(shape).astype(dtype)
 
 
 def self_seed(my_priv: X25519PrivateKey, me: int, rnd: int, run: int = 0) -> bytes:
@@ -155,23 +159,24 @@ def self_seed(my_priv: X25519PrivateKey, me: int, rnd: int, run: int = 0) -> byt
 
 
 def mask_update(update: dict, n: int, me: int, pids, my_priv, pubs: dict, rnd: int, run: int = 0,
-                self_mask: bool = False) -> dict:
+                self_mask: bool = False, bits: int = 32, frac_bits: int = FRAC_BITS) -> dict:
     """回傳 n × 更新（定點數，mod 2^32 的 uint32）＋ 成對遮罩。伺服器把所有 VD 的結果加總後除以總樣本數即得加權平均。
     self_mask：再加一層只有自己知道的遮罩（雙重遮罩），在線時才交出它的種子；伺服器宣布某台斷線、
     拿到所有和它配對的種子後，就算它的更新遲到送達也解不開。"""
     pids = list(pids)
-    out = {k: _encode(n * np.asarray(v, dtype=np.float64), len(pids)) for k, v in update.items()}
+    out = {k: _encode(n * np.asarray(v, dtype=np.float64), len(pids), bits, frac_bits) for k, v in update.items()}
+    dt = _RING[bits][0]
     if self_mask:
         seed = self_seed(my_priv, me, rnd, run)
         for i, k in enumerate(sorted(out)):
-            out[k] += _mask(seed + i.to_bytes(4, "little"), out[k].shape)
+            out[k] += _mask(seed + i.to_bytes(4, "little"), out[k].shape, dt)
     for other in pids:
         if other == me:
             continue
         seed = pair_seed(my_priv, pubs[other], me, other, rnd, run)
         for i, k in enumerate(sorted(out)):
-            m = _mask(seed + i.to_bytes(4, "little"), out[k].shape)
-            out[k] = out[k] + m if me < other else out[k] - m  # uint32 運算自動 mod 2^32
+            m = _mask(seed + i.to_bytes(4, "little"), out[k].shape, dt)
+            out[k] = out[k] + m if me < other else out[k] - m  # 無號整數運算自動 mod 2^bits
     return out
 
 
@@ -183,25 +188,30 @@ def reveal_seeds(me: int, dropped, my_priv, pubs: dict, rnd: int, run: int = 0) 
 def drop_correction(revealed: dict, like: dict) -> dict:
     """revealed[i][j] = VD i 交出的 (i, j) 種子；回傳在線 VD 為了斷線 VD 加上、卻沒被抵銷的遮罩總和。
     revealed[i][i] 是 VD i 自己的自我遮罩種子（雙重遮罩），一律是加上去的。"""
-    out = {k: np.zeros(np.shape(v), dtype=np.uint32) for k, v in like.items()}
+    out = {k: np.zeros(np.shape(v), dtype=np.asarray(v).dtype) for k, v in like.items()}
     for i, seeds in revealed.items():
         for j, seed in seeds.items():
             for idx, k in enumerate(sorted(out)):
-                m = _mask(bytes.fromhex(seed) + idx.to_bytes(4, "little"), out[k].shape)
+                m = _mask(bytes.fromhex(seed) + idx.to_bytes(4, "little"), out[k].shape, out[k].dtype)
                 out[k] = out[k] + m if int(i) <= int(j) else out[k] - m
     return out
 
 
-def unmask_sum(masked: list[dict], total_n: float, correction: dict | None = None) -> dict:
-    """加總（mod 2^32）、扣掉沒抵銷的遮罩，再解回浮點數並除以總樣本數。"""
+def unmask_sum(masked: list[dict], total_n: float, correction: dict | None = None,
+               frac_bits: int = FRAC_BITS) -> dict:
+    """加總（mod 2^bits）、扣掉沒抵銷的遮罩，再解回浮點數並除以總樣本數。"""
+    ring = {np.dtype(u): s for u, s in _RING.values()}
     out = {}
     for k in masked[0]:
-        acc = np.zeros(np.shape(masked[0][k]), dtype=np.uint32)
+        dt = np.asarray(masked[0][k]).dtype
+        if dt not in ring:
+            raise ValueError(f"安全聚合只收 uint32／uint16，{k} 是 {dt}")
+        acc = np.zeros(np.shape(masked[0][k]), dtype=dt)
         for m in masked:
-            if np.asarray(m[k]).dtype != np.uint32:  # 浮點數硬轉 uint32 會默默截斷（甚至未定義）
-                raise ValueError(f"安全聚合只收 uint32，{k} 是 {np.asarray(m[k]).dtype}")
+            if np.asarray(m[k]).dtype != dt:  # 浮點數或不同寬度硬轉會默默截斷
+                raise ValueError(f"安全聚合的 {k} 寬度不一致：{dt} 和 {np.asarray(m[k]).dtype}")
             acc = acc + np.asarray(m[k])
         if correction:
             acc = acc - correction[k]
-        out[k] = acc.view(np.int32).astype(np.float64) / 2 ** FRAC_BITS / total_n
+        out[k] = acc.view(ring[dt]).astype(np.float64) / 2.0 ** frac_bits / total_n
     return out
