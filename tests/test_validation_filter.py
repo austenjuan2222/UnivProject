@@ -73,6 +73,25 @@ class ValidationFilterTest(unittest.TestCase):
         self.assertEqual(set(f.last_scores), set(ups))  # 每一份都有被評分（沒有整組被吃掉）
         self.assertEqual(len(sizes), 2)
 
+    def test_memory_rejects_consistently_suspicious_update_below_single_round_threshold(self):
+        # 9 號每輪都只比多數差一點（單輪 z 約 2，低於 3），累積幾輪後平均可疑程度超過 memory 就拒絕
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, memory=1.5)
+        base = [5.0, 5.1, 4.9, 5.05, 4.95, 5.0, 5.1, 4.9, 5.0]
+        rounds = []
+        for r in range(3):
+            ups = {p: {"s": np.array([v])} for p, v in enumerate(base)} | {9: {"s": np.array([5.25])}}
+            rounds.append(f.screen(ups))
+        self.assertEqual(rounds[0], set())
+        self.assertIn(9, rounds[2])
+        self.assertTrue(all(p == 9 for p in rounds[2]))
+
+    def test_memory_off_by_default(self):
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0)
+        base = [5.0, 5.1, 4.9, 5.05, 4.95, 5.0, 5.1, 4.9, 5.0]
+        for _ in range(5):
+            bad = f.screen({p: {"s": np.array([v])} for p, v in enumerate(base)} | {9: {"s": np.array([5.25])}})
+        self.assertEqual(bad, set())
+
     def test_group_mode_falls_back_when_too_few_updates(self):
         f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, group=4)
         ups = {p: {"s": np.array([5.0 + 0.01 * p])} for p in range(6)} | {6: {"s": np.array([50.0])}}

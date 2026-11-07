@@ -87,6 +87,7 @@ validation-z = 3.0         # 拒絕門檻：塞車誤差高於（中位數 + z �
 validation-margin = 0.0    # 另外要求至少比中位數差這個比例才拒絕（0 = 不設）
 validation-group = 1       # > 1：只檢查每組這麼多份更新的平均（模擬組內安全聚合），整組採用或拒絕
 validation-match = ""        # 參考 VD 編號要包含這段字（例如 "-N-" 只用北向）；空字串＝不限
+validation-memory = 0.0    # > 0：VD 歷輪平均可疑程度（robust z）超過這個值也拒絕（看過至少 3 輪）；0 = 不用
 secure-agg = false         # true = 安全聚合（成對遮罩）：伺服器只看得到所有 VD 的加總（只能配 fedavg、全部參與）
 upload-bits = 32           # < 32：上傳前把更新量量化成幾位元（8、4、2；隨機捨入），模擬 LPWAN 的小頻寬
 download-bits = 32         # < 32：伺服器只廣播「新全域模型 − VD 手上那一版」的量化差值（LPWAN 下行）；第一輪送完整模型

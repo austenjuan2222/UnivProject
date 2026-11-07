@@ -118,11 +118,14 @@ class ValidationFilter:
     只拒絕「變差」的一側；分數不是有限值的也拒絕。需要伺服器看得到個別更新，不能和安全聚合一起用。
     margin > 0：另外要求至少比中位數差 margin（比例）才拒絕，避免多數更新擠在一起、MAD 很小時誤擋只差一點的 VD。
     group > 1：每輪把更新隨機分成每組 group 份，只看各組的平均（模擬「組內安全聚合、伺服器只看得到小組加總」），
-    整組一起採用或拒絕；最後一組不足 group 份時併進前一組。"""
+    整組一起採用或拒絕；最後一組不足 group 份時併進前一組。
+    memory > 0：記住每個 VD 每輪的可疑程度（(分數 − 中位數) / (1.4826 × MAD)），看過至少 3 輪、平均超過 memory 的也拒絕，
+    用來抓每輪都只差一點、單輪門檻抓不到的攻擊者（只用在 group = 1）。"""
 
     def __init__(self, score: Callable[[dict], float], z: float = 3.0, min_updates: int = 3, margin: float = 0.0,
-                 group: int = 1, seed: int = 0):
+                 group: int = 1, seed: int = 0, memory: float = 0.0):
         self.score, self.z, self.min_updates, self.margin, self.group = score, z, min_updates, margin, group
+        self.memory, self.history = memory, {}
         self.rng = np.random.default_rng(seed + 31337)
         self.last_scores: dict = {}
 
@@ -150,9 +153,9 @@ class ValidationFilter:
             self.last_scores = {m: gs[g] for g, members in enumerate(groups) for m in members}
             return {m for g in self._outliers(gs) for m in groups[g]}
         self.last_scores = {p: self._score(a) for p, a in updates.items()}
-        return self._outliers(self.last_scores)
+        return self._outliers(self.last_scores, remember=self.memory > 0)
 
-    def _outliers(self, scores: dict) -> set:
+    def _outliers(self, scores: dict, remember: bool = False) -> set:
         bad = {p for p, s in scores.items() if not np.isfinite(s)}
         v = np.array([s for p, s in scores.items() if p not in bad])
         if len(v) < self.min_updates:  # 太少份無法判斷誰是離群值，只拒絕壞掉的
@@ -160,7 +163,13 @@ class ValidationFilter:
         med = float(np.median(v))
         mad = float(np.median(np.abs(v - med))) * 1.4826 + 1e-9
         limit = med + max(self.z * mad, self.margin * abs(med))
-        return bad | {p for p, s in scores.items() if p not in bad and s > limit}
+        out = bad | {p for p, s in scores.items() if p not in bad and s > limit}
+        if remember:
+            for p, s in scores.items():
+                if p not in bad:
+                    self.history.setdefault(p, []).append((s - med) / mad)
+            out |= {p for p in scores if len(self.history.get(p, [])) >= 3 and np.mean(self.history[p]) > self.memory}
+        return out
 
 
 def secure_average(contents: list[RecordDict], expected: int, revealed: dict | None = None) -> ArrayRecord | None:
