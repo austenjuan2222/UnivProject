@@ -235,7 +235,7 @@ def train_fn(msg: Message, context: Context) -> Message:
     if cfg["secure_agg"]:
         # 安全聚合：上傳「樣本數 × 參數 ＋ 成對遮罩」，伺服器只能還原所有 VD 的加總
         priv, pubs = load_agreement_keys(cfg["key_dir"], pid)
-        masked = mask_update(arrays_of(arrays), len(d["y_train"]), pid, range(n), priv, pubs, rnd)
+        masked = mask_update(arrays_of(arrays), len(d["y_train"]), pid, range(n), priv, pubs, rnd, context.run_id)
         context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": -1})
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
     # Edge 運算成本：上傳量（模型參數）vs. 若把原始訓練資料傳上雲的量
@@ -268,15 +268,15 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
     if (st is None or int(st["masked-round"]) != rnd or int(st["revealed-round"]) == rnd or pid in dropped
             or any(not 0 <= j < n for j in dropped) or 3 * (n - len(dropped)) < 2 * n):
         raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪的斷線復原請求")
-    if bool(context.run_config.get("sign-models", False)):
-        sig = str(q["sig"]) if "sig" in q else ""
-        if not (sig and verify_recover(load_server_public_key(str(context.run_config.get("key-dir", "keys"))),
-                                       rnd, dropped, sig)):
-            raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪沒有伺服器簽章的斷線復原請求")
+    # 一律要伺服器簽章（不論 sign-models）：不然中間人可以假稱某台斷線來解開它已送達的遮罩
+    sig = str(q["sig"]) if "sig" in q else ""
+    if not (sig and verify_recover(load_server_public_key(str(context.run_config.get("key-dir", "keys"))),
+                                   rnd, dropped, sig, context.run_id)):
+        raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪沒有伺服器簽章的斷線復原請求")
     # shortcut: 伺服器仍可謊稱「某一台」斷線而解開它的遮罩；完整 SecAgg+ 用雙重遮罩＋秘密分享防止
     context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": rnd})
     priv, pubs = load_agreement_keys(str(context.run_config.get("key-dir", "keys")), pid)
-    seeds = reveal_seeds(pid, dropped, priv, pubs, rnd)
+    seeds = reveal_seeds(pid, dropped, priv, pubs, rnd, context.run_id)
     return Message(content=RecordDict({"secagg": ConfigRecord(
         {"pid": pid, "dropped": list(seeds), "seeds": list(seeds.values())})}), reply_to=msg)
 

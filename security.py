@@ -182,18 +182,18 @@ def verify_model(pub: Ed25519PublicKey, arrays: dict, rnd: int, sig: str) -> boo
         return False
 
 
-def _recover_header(rnd: int, dropped) -> bytes:
-    return f"secagg-recover|{int(rnd)}|{sorted(int(j) for j in dropped)}".encode()
+def _recover_header(rnd: int, dropped, run: int) -> bytes:
+    return f"secagg-recover|{int(run)}|{int(rnd)}|{sorted({int(j) for j in dropped})}".encode()
 
 
-def sign_recover(priv: Ed25519PrivateKey, rnd: int, dropped) -> str:
-    """安全聚合斷線復原請求的伺服器簽章：涵蓋輪次與斷線名單。"""
-    return priv.sign(_recover_header(rnd, dropped)).hex()
+def sign_recover(priv: Ed25519PrivateKey, rnd: int, dropped, run: int = 0) -> str:
+    """安全聚合斷線復原請求的伺服器簽章：涵蓋執行編號、輪次與斷線名單（別次執行的請求不能重送）。"""
+    return priv.sign(_recover_header(rnd, dropped, run)).hex()
 
 
-def verify_recover(pub: Ed25519PublicKey, rnd: int, dropped, sig: str) -> bool:
+def verify_recover(pub: Ed25519PublicKey, rnd: int, dropped, sig: str, run: int = 0) -> bool:
     try:
-        pub.verify(bytes.fromhex(sig), _recover_header(rnd, dropped))
+        pub.verify(bytes.fromhex(sig), _recover_header(rnd, dropped, run))
         return True
     except (InvalidSignature, ValueError):
         return False

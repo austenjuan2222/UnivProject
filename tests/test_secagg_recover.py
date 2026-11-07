@@ -15,6 +15,8 @@ class RecoverTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         provision_agreement_keys(self.tmp.name, 6)
+        provision_keys(self.tmp.name, 6)
+        self.priv, _ = load_server_secrets(self.tmp.name)
         self.ctx = Context(run_id=1, node_id=1, node_config={"partition-id": 0, "num-partitions": 6},
                            state=RecordDict(), run_config={"key-dir": self.tmp.name})
         self.ctx.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": 3, "revealed-round": -1})
@@ -23,7 +25,8 @@ class RecoverTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _ask(self, rnd, dropped):
-        q = RecordDict({"secagg": ConfigRecord({"round": rnd, "dropped": dropped})})
+        q = RecordDict({"secagg": ConfigRecord({"round": rnd, "dropped": dropped,
+                                                "sig": sign_recover(self.priv, rnd, dropped, run=1)})})
         return secagg_recover_fn(Message(content=q, dst_node_id=1, message_type="query"), self.ctx)
 
     def test_reveals_once_for_current_round(self):
@@ -39,14 +42,14 @@ class RecoverTest(unittest.TestCase):
 
 
 class SignedRecoverTest(unittest.TestCase):
-    """開了 sign-models：斷線復原請求也要有伺服器簽章，中間人不能假造「某台斷線」來解開它的遮罩。"""
+    """斷線復原請求一律要有伺服器簽章（不論 sign-models），中間人不能假造「某台斷線」來解開它的遮罩。"""
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         provision_agreement_keys(self.tmp.name, 6)
         provision_keys(self.tmp.name, 6)
         self.priv, _ = load_server_secrets(self.tmp.name)
         self.ctx = Context(run_id=1, node_id=1, node_config={"partition-id": 0, "num-partitions": 6},
-                           state=RecordDict(), run_config={"key-dir": self.tmp.name, "sign-models": True})
+                           state=RecordDict(), run_config={"key-dir": self.tmp.name})
         self.ctx.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": 3, "revealed-round": -1})
 
     def tearDown(self):
@@ -60,15 +63,16 @@ class SignedRecoverTest(unittest.TestCase):
         return secagg_recover_fn(Message(content=q, dst_node_id=1, message_type="query"), self.ctx)
 
     def test_signed_request_is_answered(self):
-        out = self._ask(3, [5], sign_recover(self.priv, 3, [5])).content["secagg"]
+        out = self._ask(3, [5], sign_recover(self.priv, 3, [5], run=1)).content["secagg"]
         self.assertEqual(list(out["dropped"]), [5])
 
     def test_unsigned_or_forged_request_is_refused(self):
-        for sig in [None, "", "00" * 64, sign_recover(self.priv, 3, [4]), sign_recover(self.priv, 2, [5])]:
+        for sig in [None, "", "00" * 64, sign_recover(self.priv, 3, [4], run=1), sign_recover(self.priv, 2, [5], run=1),
+                    sign_recover(self.priv, 3, [5], run=2)]:  # 別次執行的合法簽章也不能重送
             with self.subTest(sig=sig), self.assertRaises(RuntimeError):
                 self._ask(3, [5], sig)
         # 被拒絕的假請求不能用掉這一輪唯一一次的回答機會
-        self.assertEqual(list(self._ask(3, [5], sign_recover(self.priv, 3, [5])).content["secagg"]["dropped"]), [5])
+        self.assertEqual(list(self._ask(3, [5], sign_recover(self.priv, 3, [5], run=1)).content["secagg"]["dropped"]), [5])
 
 
 if __name__ == "__main__":

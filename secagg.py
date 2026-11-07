@@ -52,10 +52,12 @@ def load_agreement_keys(key_dir, pid: int) -> tuple[X25519PrivateKey, dict]:
     return priv, {int(k): X25519PublicKey.from_public_bytes(bytes.fromhex(v)) for k, v in pubs.items()}
 
 
-def pair_seed(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, me: int, other: int, rnd: int) -> bytes:
+def pair_seed(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, me: int, other: int, rnd: int,
+              run: int = 0) -> bytes:
+    # 綁執行編號：金鑰跨次執行保留，不綁的話上一次執行交出的種子能解開這次同一輪的遮罩
     shared = my_priv.exchange(their_pub)
     a, b = sorted((me, other))
-    return hashlib.sha256(shared + f"secagg|{a}|{b}|{rnd}".encode()).digest()
+    return hashlib.sha256(shared + f"secagg|{int(run)}|{a}|{b}|{rnd}".encode()).digest()
 
 
 def _mask(seed: bytes, shape) -> np.ndarray:
@@ -63,22 +65,22 @@ def _mask(seed: bytes, shape) -> np.ndarray:
     return rng.uniform(-MASK_RANGE, MASK_RANGE, size=shape)
 
 
-def mask_update(update: dict, n: int, me: int, pids, my_priv, pubs: dict, rnd: int) -> dict:
+def mask_update(update: dict, n: int, me: int, pids, my_priv, pubs: dict, rnd: int, run: int = 0) -> dict:
     """回傳 n × 更新 ＋ 成對遮罩（float64）。伺服器把所有 VD 的結果加總後除以總樣本數即得加權平均。"""
     out = {k: n * np.asarray(v, dtype=np.float64) for k, v in update.items()}
     for other in pids:
         if other == me:
             continue
-        seed = pair_seed(my_priv, pubs[other], me, other, rnd)
+        seed = pair_seed(my_priv, pubs[other], me, other, rnd, run)
         sign = 1.0 if me < other else -1.0
         for i, k in enumerate(sorted(out)):
             out[k] += sign * _mask(seed + i.to_bytes(4, "little"), out[k].shape)
     return out
 
 
-def reveal_seeds(me: int, dropped, my_priv, pubs: dict, rnd: int) -> dict[int, str]:
+def reveal_seeds(me: int, dropped, my_priv, pubs: dict, rnd: int, run: int = 0) -> dict[int, str]:
     """斷線復原：還在線的 VD 交出自己和每個斷線 VD 之間的成對種子（只有這幾對，伺服器還是解不開在線 VD 的遮罩）。"""
-    return {int(j): pair_seed(my_priv, pubs[int(j)], me, int(j), rnd).hex() for j in dropped if int(j) != me}
+    return {int(j): pair_seed(my_priv, pubs[int(j)], me, int(j), rnd, run).hex() for j in dropped if int(j) != me}
 
 
 def drop_correction(revealed: dict, like: dict) -> dict:

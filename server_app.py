@@ -185,6 +185,9 @@ def main(grid: Grid, context: Context) -> None:
                 or str(cfg.get("validation-dir", ""))):
             raise ValueError("secure-agg 只能搭配 aggregator='fedavg'、client-fraction=1、不開 client-level DP、"
                              "upload-bits=32、collusion-filter=false、不設 validation-dir（可以和 record-level DP 一起用）")
+        if not sign:
+            # 斷線復原請求要伺服器簽章，VD 才不會被中間人假造的「某台斷線」騙去交出種子
+            raise ValueError("secure-agg 需要 sign-models=true")
         provision_agreement_keys(str(cfg.get("key-dir", "keys")), num_clients)
     if float(cfg.get("validation-memory", 0.0)) > 0 and not verify:
         # 跨輪歷史用 VD 編號記；沒驗 HMAC 時編號是自報的，攻擊者可以冒用別人的編號汙染對方的歷史

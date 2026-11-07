@@ -461,7 +461,7 @@ class GuardedStrategy(Strategy):
             return None
         ask = {"dropped": dropped, "round": int(rnd)}
         if self._priv is not None:  # 沒簽的話，沒有 TLS 時中間人可以假造「某台斷線」來解開它已送達的遮罩
-            ask["sig"] = sign_recover(self._priv, rnd, dropped)
+            ask["sig"] = sign_recover(self._priv, rnd, dropped, self._grid.run.run_id)
         q = RecordDict({"secagg": ConfigRecord(ask)})
         replies = list(self._grid.send_and_receive(
             [Message(content=q, message_type="query", dst_node_id=n) for n in alive.values()], timeout=120))

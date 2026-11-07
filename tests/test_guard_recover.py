@@ -55,9 +55,10 @@ class SignedQueryTest(unittest.TestCase):
                     return super().send_and_receive(messages, timeout)
             g = GuardedStrategy(object(), priv, None, secure_agg_clients=3)
             g._grid = Grid(lambda p: {"pid": p, "dropped": [2], "seeds": [SEED]})
+            g._grid.run = type("Run", (), {"run_id": 7})()
             g._recover(1, [_kept(0), _kept(1)])
             q = sent[0].content["secagg"]
-            self.assertTrue(verify_recover(load_server_public_key(d), 1, [2], str(q["sig"])))
+            self.assertTrue(verify_recover(load_server_public_key(d), 1, [2], str(q["sig"]), run=7))
 
 
 if __name__ == "__main__":

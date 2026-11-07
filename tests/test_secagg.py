@@ -75,6 +75,12 @@ class SecAggTest(unittest.TestCase):
         p1, _ = load_agreement_keys(self.dir, 1)
         self.assertEqual(pair_seed(p0, pubs[1], 0, 1, 5), pair_seed(p1, pubs[0], 1, 0, 5))
 
+    def test_pair_seed_depends_on_run(self):
+        # 金鑰跨次執行保留：種子不綁執行編號的話，上一次執行交出的種子能解開這次同一輪的遮罩
+        from secagg import pair_seed
+        p0, pubs = load_agreement_keys(self.dir, 0)
+        self.assertNotEqual(pair_seed(p0, pubs[1], 0, 1, 5, run=1), pair_seed(p0, pubs[1], 0, 1, 5, run=2))
+
 
 class SecureAverageTest(unittest.TestCase):
     """伺服器端：把遮罩後的 RecordDict 加總成全域模型；少了任何一個 VD 就放棄這一輪。"""
