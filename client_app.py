@@ -20,7 +20,7 @@ from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
 from secagg import load_agreement_keys, mask_update, reveal_seeds
-from security import (adaptive_shrink, drops_out, hide_congestion, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key,
+from security import (adaptive_shrink, drops_out, hide_congestion, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key, verify_recover,
                       poison_update, verify_model)
 from task import TrafficModel, all_finite, jam_scorer, evaluate, make_loader, set_seed, train, unwrap
 
@@ -268,6 +268,11 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
     if (st is None or int(st["masked-round"]) != rnd or int(st["revealed-round"]) == rnd or pid in dropped
             or any(not 0 <= j < n for j in dropped) or 3 * (n - len(dropped)) < 2 * n):
         raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪的斷線復原請求")
+    if bool(context.run_config.get("sign-models", False)):
+        sig = str(q["sig"]) if "sig" in q else ""
+        if not (sig and verify_recover(load_server_public_key(str(context.run_config.get("key-dir", "keys"))),
+                                       rnd, dropped, sig)):
+            raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪沒有伺服器簽章的斷線復原請求")
     # shortcut: 伺服器仍可謊稱「某一台」斷線而解開它的遮罩；完整 SecAgg+ 用雙重遮罩＋秘密分享防止
     context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": rnd})
     priv, pubs = load_agreement_keys(str(context.run_config.get("key-dir", "keys")), pid)

@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from compress import quantize_update
 from secagg import drop_correction, unmask_sum
-from security import canonical_metrics, sign_model, sign_update, tamper, update_digest, verify_update
+from security import canonical_metrics, sign_model, sign_recover, sign_update, tamper, update_digest, verify_update
 
 AUTH = "auth"
 
@@ -459,7 +459,10 @@ class GuardedStrategy(Strategy):
         dropped = sorted(set(range(self.secure_agg_clients)) - set(alive))
         if self._grid is None or not dropped:
             return None
-        q = RecordDict({"secagg": ConfigRecord({"dropped": dropped, "round": int(rnd)})})
+        ask = {"dropped": dropped, "round": int(rnd)}
+        if self._priv is not None:  # 沒簽的話，沒有 TLS 時中間人可以假造「某台斷線」來解開它已送達的遮罩
+            ask["sig"] = sign_recover(self._priv, rnd, dropped)
+        q = RecordDict({"secagg": ConfigRecord(ask)})
         replies = list(self._grid.send_and_receive(
             [Message(content=q, message_type="query", dst_node_id=n) for n in alive.values()], timeout=120))
         pid_of = {node: pid for pid, node in alive.items()}

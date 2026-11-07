@@ -182,6 +182,23 @@ def verify_model(pub: Ed25519PublicKey, arrays: dict, rnd: int, sig: str) -> boo
         return False
 
 
+def _recover_header(rnd: int, dropped) -> bytes:
+    return f"secagg-recover|{int(rnd)}|{sorted(int(j) for j in dropped)}".encode()
+
+
+def sign_recover(priv: Ed25519PrivateKey, rnd: int, dropped) -> str:
+    """安全聚合斷線復原請求的伺服器簽章：涵蓋輪次與斷線名單。"""
+    return priv.sign(_recover_header(rnd, dropped)).hex()
+
+
+def verify_recover(pub: Ed25519PublicKey, rnd: int, dropped, sig: str) -> bool:
+    try:
+        pub.verify(bytes.fromhex(sig), _recover_header(rnd, dropped))
+        return True
+    except (InvalidSignature, ValueError):
+        return False
+
+
 def poison_update(global_arrays: dict, local_arrays: dict, kind: str, scale: float,
                   rng: np.random.Generator) -> dict:
     """被入侵 VD 的惡意更新。flip：反向並放大自己的更新量；noise：送出大幅隨機雜訊；

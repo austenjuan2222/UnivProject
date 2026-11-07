@@ -41,5 +41,24 @@ class RecoverTest(unittest.TestCase):
                 self.assertIsNone(self._run(bad))
 
 
+class SignedQueryTest(unittest.TestCase):
+    def test_server_signs_the_recovery_request(self):
+        import tempfile
+        from security import load_server_public_key, load_server_secrets, provision_keys, verify_recover
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 3)
+            priv, _ = load_server_secrets(d)
+            sent = []
+            class Grid(FakeGrid):
+                def send_and_receive(self, messages, timeout=None):
+                    sent.extend(messages)
+                    return super().send_and_receive(messages, timeout)
+            g = GuardedStrategy(object(), priv, None, secure_agg_clients=3)
+            g._grid = Grid(lambda p: {"pid": p, "dropped": [2], "seeds": [SEED]})
+            g._recover(1, [_kept(0), _kept(1)])
+            q = sent[0].content["secagg"]
+            self.assertTrue(verify_recover(load_server_public_key(d), 1, [2], str(q["sig"])))
+
+
 if __name__ == "__main__":
     unittest.main()
