@@ -36,7 +36,26 @@ def _array_record(arrays: dict) -> ArrayRecord:
 
 def attach_update_tag(content: RecordDict, key: bytes, rnd: int, pid: int) -> None:
     """VD 端：替要上傳的模型參數加上 HMAC。"""
-    content[AUTH] = ConfigRecord({"tag": sign_update(key, arrays_of(content["arrays"]), rnd, pid)})
+    n = content["metrics"]["num-examples"]
+    content[AUTH] = ConfigRecord({"tag": sign_update(key, arrays_of(content["arrays"]), rnd, pid, n)})
+
+
+def _well_formed_metrics(c: RecordDict) -> bool:
+    """編號與 num-examples（FedAvg 的加權）都要是正整數。"""
+    try:
+        pid, n = float(c["metrics"]["partition-id"]), float(c["metrics"]["num-examples"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return pid.is_integer() and pid >= 0 and n.is_integer() and n > 0
+
+
+def _well_formed(c: RecordDict) -> bool:
+    """可用性：指標合格、參數都是浮點數。不合格的連 HMAC 都不算（字串陣列會讓驗證本身當掉）。"""
+    try:
+        kinds = {v.numpy().dtype.kind for v in c["arrays"].values()}
+    except (KeyError, TypeError, ValueError):
+        return False
+    return _well_formed_metrics(c) and kinds <= {"f"}
 
 
 def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: bool,
@@ -46,6 +65,12 @@ def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: 
     replay_rate > 0：模擬中間人把該 VD 上一輪的整份訊息（參數＋簽章）再送一次；last 由呼叫端保存跨輪的上一份訊息。"""
     keep, n_tampered, n_replayed, n_rejected, audit = [], 0, 0, 0, []
     for c in contents:
+        if not _well_formed(c):
+            c.pop(AUTH, None)
+            n_rejected += 1
+            keep.append(False)
+            audit.append({"round": int(rnd), "pid": -1, "accepted": False, "digest": "", "tag": ""})
+            continue
         pid = int(c["metrics"]["partition-id"])
         tag = str(c[AUTH]["tag"]) if AUTH in c else ""
         if last is not None:
@@ -61,7 +86,8 @@ def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: 
         ok = True
         if verify:
             key = vd_keys.get(pid)  # 驗證表裡沒有的 VD 一律拒絕
-            ok = bool(tag) and key is not None and verify_update(key, arrays_of(c["arrays"]), rnd, pid, tag)
+            ok = bool(tag) and key is not None and verify_update(key, arrays_of(c["arrays"]), rnd, pid, tag,
+                                                                       c["metrics"]["num-examples"])
         n_rejected += int(not ok)
         keep.append(ok)
         # 稽核紀錄：哪個 VD、哪一輪、送了什麼（內容雜湊）、附了什麼簽章、有沒有被採用
@@ -75,7 +101,9 @@ def update_delta(local: dict, global_: dict) -> np.ndarray | None:
     if local.keys() != global_.keys() or any(local[k].shape != global_[k].shape for k in local):
         return None
     d = np.concatenate([np.ravel(local[k] - global_[k]) for k in global_])
-    return d if np.isfinite(d).all() else None
+    # 先轉成聚合用的 float32 再看：float64 的 1e300 本身有限，轉過去就變 inf
+    ok = np.isfinite(d).all() and all(np.isfinite(local[k].astype(np.float32)).all() for k in local)
+    return d if ok else None
 
 
 class CollusionFilter:
@@ -315,11 +343,18 @@ class GuardedStrategy(Strategy):
         if self.on_audit and self.verify_updates:
             self.on_audit(audit)
         kept = [m for m, k in zip(ok_replies, keep) if k]
-        if self.collusion_filter is not None and kept:
+        if kept and self._global:
+            # 可用性：合法金鑰送來的 NaN／inf 或形狀不符的更新會讓全域模型變 NaN 或聚合當掉，一律不聚合
             deltas = {id(m): update_delta(arrays_of(m.content["arrays"]), self._global) for m in kept}
-            bad = sum(d is None for d in deltas.values())
-            stats["n_rejected"] = stats.get("n_rejected", 0) + bad  # 形狀不符或含 NaN／inf：不聚合也不計分
+            stats["n_rejected"] += sum(d is None for d in deltas.values())
             kept = [m for m in kept if deltas[id(m)] is not None]
+        if len(kept) >= 3:
+            # 自報的資料筆數超過這輪中位數 10 倍：FedAvg 下等於一台 VD 蓋過其他所有人
+            n = {id(m): float(m.content["metrics"]["num-examples"]) for m in kept}
+            cap = 10 * float(np.median(list(n.values())))
+            stats["n_rejected"] += sum(v > cap for v in n.values())
+            kept = [m for m in kept if n[id(m)] <= cap]
+        if self.collusion_filter is not None and kept:
             pid = {id(m): int(m.content["metrics"]["partition-id"]) for m in kept}
             flagged = self.collusion_filter.update({pid[id(m)]: deltas[id(m)] for m in kept})
             kept = [m for m in kept if pid[id(m)] not in flagged]
@@ -394,7 +429,9 @@ class GuardedStrategy(Strategy):
                           arrays, server_round)
 
     def aggregate_evaluate(self, server_round: int, replies: Iterable[Message]) -> MetricRecord | None:
-        return self.inner.aggregate_evaluate(server_round, [m for m in replies if not m.has_error()])
+        # 評估的 num-examples 是紀錄加權用：NaN 會讓紀錄程式當掉。誤差本身可以是 NaN（模型發散時要照實記錄）
+        return self.inner.aggregate_evaluate(
+            server_round, [m for m in replies if not m.has_error() and _well_formed_metrics(m.content)])
 
     def summary(self) -> None:
         self.inner.summary()

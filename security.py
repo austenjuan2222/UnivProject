@@ -137,23 +137,31 @@ def update_digest(arrays: dict, rnd: int, pid: int) -> str:
     return _payload(arrays, f"update|{rnd}|{pid}").hex()
 
 
-def sign_update(key, arrays: dict, rnd: int, pid: int) -> str:
+def _update_header(rnd: int, pid: int, n) -> str:
+    # n 是 FedAvg 的加權（num-examples）：不簽進去的話，中間人改它就能讓模型變 NaN 或讓一台 VD 蓋過全部
+    if n is None:
+        return f"update|{rnd}|{pid}"
+    n = float(n)
+    return f"update|{rnd}|{pid}|n=" + (str(int(n)) if n.is_integer() else repr(n))
+
+
+def sign_update(key, arrays: dict, rnd: int, pid: int, n=None) -> str:
     """key 是 bytes：HMAC-SHA256（完整性、鑑別性）；是 Ed25519 私鑰：數位簽章（再加上不可否認性）。"""
-    msg = _payload(arrays, f"update|{rnd}|{pid}")
+    msg = _payload(arrays, _update_header(rnd, pid, n))
     if isinstance(key, Ed25519PrivateKey):
         return key.sign(msg).hex()
     return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
-def verify_update(key, arrays: dict, rnd: int, pid: int, tag: str) -> bool:
+def verify_update(key, arrays: dict, rnd: int, pid: int, tag: str, n=None) -> bool:
     """key 是 bytes：比對 HMAC；是 Ed25519 公鑰：驗簽章。"""
     if isinstance(key, Ed25519PublicKey):
         try:
-            key.verify(bytes.fromhex(str(tag)), _payload(arrays, f"update|{rnd}|{pid}"))
+            key.verify(bytes.fromhex(str(tag)), _payload(arrays, _update_header(rnd, pid, n)))
             return True
         except (InvalidSignature, ValueError):
             return False
-    return hmac.compare_digest(sign_update(key, arrays, rnd, pid), str(tag))
+    return hmac.compare_digest(sign_update(key, arrays, rnd, pid, n), str(tag))
 
 
 def sign_model(priv: Ed25519PrivateKey, arrays: dict, rnd: int) -> str:
