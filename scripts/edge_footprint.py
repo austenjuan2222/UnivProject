@@ -115,7 +115,7 @@ def main(argv=None) -> int:
     print(f"資安運算（中位數）：驗全域模型簽章 {c['verify_model_ms']:.3f} ms、HMAC {c['hmac_ms']:.3f} ms、"
           f"Ed25519 簽更新 {c['ed25519_sign_ms']:.3f} ms、安全聚合遮罩（{a.peers} 台）{c['secagg_mask_ms']:.1f} ms")
     print(f"額外上傳：HMAC 標籤 {c['hmac_tag_bytes']} B、Ed25519 簽章 {c['ed25519_sig_bytes']} B；"
-          f"安全聚合後上傳 {c['secagg_upload_bytes'] / 1024:.1f} KB（float64）")
+          f"安全聚合後上傳 {c['secagg_upload_bytes'] / 1024:.1f} KB（mod 2^32 的 uint32）")
     return 0
 
 

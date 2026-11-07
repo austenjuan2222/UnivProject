@@ -19,7 +19,7 @@ from flwr.clientapp import ClientApp
 from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
-from secagg import load_agreement_keys, mask_update, reveal_seeds, seal_seeds, self_seed
+from secagg import count_clipped, load_agreement_keys, mask_update, reveal_seeds, seal_seeds, self_seed
 from security import (adaptive_shrink, drops_out, hide_congestion, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key, verify_recover,
                       poison_update, verify_model)
 from task import TrafficModel, all_finite, jam_scorer, evaluate, make_loader, set_seed, train, unwrap
@@ -236,7 +236,11 @@ def train_fn(msg: Message, context: Context) -> Message:
     if cfg["secure_agg"]:
         # 安全聚合：上傳「樣本數 × 參數 ＋ 成對遮罩」，伺服器只能還原所有 VD 的加總
         priv, pubs = load_agreement_keys(cfg["key_dir"], pid)
-        masked = mask_update(arrays_of(arrays), len(d["y_train"]), pid, range(n), priv, pubs, rnd, context.run_id,
+        # 上傳相對於（簽過名的）全域模型的差值：數值小，定點數範圍才夠；伺服器還原後加回全域模型
+        g = arrays_of(msg.content["arrays"])
+        delta = {k: np.asarray(v, dtype=np.float64) - g[k] for k, v in arrays_of(arrays).items()}
+        metrics["secagg-clipped"] = count_clipped(delta, len(d["y_train"]), n)
+        masked = mask_update(delta, len(d["y_train"]), pid, range(n), priv, pubs, rnd, context.run_id,
                              self_mask=cfg["secagg_self_mask"])
         context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": -1})
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})

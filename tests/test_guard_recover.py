@@ -104,7 +104,7 @@ class SelfMaskRoundTest(unittest.TestCase):
         import numpy as np
         from flwr.app import Array, ArrayRecord
         sent = Message(content=RecordDict(), dst_node_id=100 + pid, message_type="train")
-        return Message(content=RecordDict({"arrays": ArrayRecord({"w": Array(np.asarray(arrays, dtype=np.float64))}),
+        return Message(content=RecordDict({"arrays": ArrayRecord({"w": Array(np.asarray(arrays, dtype=np.uint32))}),
                                            "metrics": MetricRecord({"partition-id": pid, "num-examples": n,
                                                                     "secagg-self-mask": flag})}), reply_to=sent)
 

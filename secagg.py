@@ -9,7 +9,7 @@ i < j 時 i 加上 r_ij、j 減去 r_ij，加總時全部抵銷。每輪遮罩�
   這是簡化版：沒有雙重遮罩與秘密分享，若斷線 VD 的更新事後又送到，伺服器就看得到它（完整的 SecAgg+ 解決這點）。
 - 伺服器看不到個別更新，所以不能和「伺服器端裁剪的 client-level DP」或中位數聚合一起用；
   可以和 record-level DP（在 VD 本地加噪）一起用。
-- 用 float64 加遮罩示範；正式實作在有限體上做整數運算，抵銷才會完全精確。
+- 在有限體 Z_{2^32} 上做整數遮罩（定點數，小數 12 位元），抵銷完全精確，上傳和 float32 一樣大。
 """
 from __future__ import annotations
 
@@ -26,7 +26,25 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
 _RAW = serialization.Encoding.Raw
-MASK_RANGE = 1e3  # 遮罩的均勻分布範圍 ±1000，遠大於模型參數的尺度
+# 有限體 Z_{2^32} 上的定點數：小數 12 位元。遮罩是 [0, 2^32) 的均勻整數，加總後完全抵銷（沒有浮點誤差），
+# 上傳和 float32 一樣大。每台 VD 把 n×值限制在 ±2^31 / 2^12 / VD 數以內，加總才不會溢位。
+FRAC_BITS = 12
+
+
+def _limit(num_vd: int) -> int:
+    return (2 ** 31 - 1) // max(int(num_vd), 1)
+
+
+def _encode(x: np.ndarray, num_vd: int) -> np.ndarray:
+    q = np.clip(np.rint(np.asarray(x, dtype=np.float64) * 2 ** FRAC_BITS), -_limit(num_vd), _limit(num_vd))
+    return q.astype(np.int64).astype(np.uint32)  # 負數取 2 的補數（mod 2^32）
+
+
+def count_clipped(update: dict, n: int, num_vd: int) -> int:
+    """這份更新有多少個值超出定點範圍、會被截到上限（VD 自己回報，伺服器看不到個別更新）。"""
+    lim = _limit(num_vd)
+    return int(sum(np.sum(np.abs(np.rint(n * np.asarray(v, dtype=np.float64) * 2 ** FRAC_BITS)) > lim)
+                   for v in update.values()))
 
 
 def _new_x25519(path: Path) -> X25519PrivateKey:
@@ -126,7 +144,7 @@ def pair_seed(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, me: int, ot
 
 def _mask(seed: bytes, shape) -> np.ndarray:
     rng = np.random.default_rng(np.frombuffer(seed, dtype=np.uint32))
-    return rng.uniform(-MASK_RANGE, MASK_RANGE, size=shape)
+    return rng.integers(0, 2 ** 32, size=shape, dtype=np.uint64).astype(np.uint32)
 
 
 def self_seed(my_priv: X25519PrivateKey, me: int, rnd: int, run: int = 0) -> bytes:
@@ -137,10 +155,11 @@ def self_seed(my_priv: X25519PrivateKey, me: int, rnd: int, run: int = 0) -> byt
 
 def mask_update(update: dict, n: int, me: int, pids, my_priv, pubs: dict, rnd: int, run: int = 0,
                 self_mask: bool = False) -> dict:
-    """回傳 n × 更新 ＋ 成對遮罩（float64）。伺服器把所有 VD 的結果加總後除以總樣本數即得加權平均。
+    """回傳 n × 更新（定點數，mod 2^32 的 uint32）＋ 成對遮罩。伺服器把所有 VD 的結果加總後除以總樣本數即得加權平均。
     self_mask：再加一層只有自己知道的遮罩（雙重遮罩），在線時才交出它的種子；伺服器宣布某台斷線、
     拿到所有和它配對的種子後，就算它的更新遲到送達也解不開。"""
-    out = {k: n * np.asarray(v, dtype=np.float64) for k, v in update.items()}
+    pids = list(pids)
+    out = {k: _encode(n * np.asarray(v, dtype=np.float64), len(pids)) for k, v in update.items()}
     if self_mask:
         seed = self_seed(my_priv, me, rnd, run)
         for i, k in enumerate(sorted(out)):
@@ -149,9 +168,9 @@ def mask_update(update: dict, n: int, me: int, pids, my_priv, pubs: dict, rnd: i
         if other == me:
             continue
         seed = pair_seed(my_priv, pubs[other], me, other, rnd, run)
-        sign = 1.0 if me < other else -1.0
         for i, k in enumerate(sorted(out)):
-            out[k] += sign * _mask(seed + i.to_bytes(4, "little"), out[k].shape)
+            m = _mask(seed + i.to_bytes(4, "little"), out[k].shape)
+            out[k] = out[k] + m if me < other else out[k] - m  # uint32 運算自動 mod 2^32
     return out
 
 
@@ -163,14 +182,23 @@ def reveal_seeds(me: int, dropped, my_priv, pubs: dict, rnd: int, run: int = 0) 
 def drop_correction(revealed: dict, like: dict) -> dict:
     """revealed[i][j] = VD i 交出的 (i, j) 種子；回傳在線 VD 為了斷線 VD 加上、卻沒被抵銷的遮罩總和。
     revealed[i][i] 是 VD i 自己的自我遮罩種子（雙重遮罩），一律是加上去的。"""
-    out = {k: np.zeros_like(v, dtype=np.float64) for k, v in like.items()}
+    out = {k: np.zeros(np.shape(v), dtype=np.uint32) for k, v in like.items()}
     for i, seeds in revealed.items():
         for j, seed in seeds.items():
-            sign = 1.0 if int(i) <= int(j) else -1.0
             for idx, k in enumerate(sorted(out)):
-                out[k] += sign * _mask(bytes.fromhex(seed) + idx.to_bytes(4, "little"), out[k].shape)
+                m = _mask(bytes.fromhex(seed) + idx.to_bytes(4, "little"), out[k].shape)
+                out[k] = out[k] + m if int(i) <= int(j) else out[k] - m
     return out
 
 
 def unmask_sum(masked: list[dict], total_n: float, correction: dict | None = None) -> dict:
-    return {k: (sum(m[k] for m in masked) - (correction[k] if correction else 0)) / total_n for k in masked[0]}
+    """加總（mod 2^32）、扣掉沒抵銷的遮罩，再解回浮點數並除以總樣本數。"""
+    out = {}
+    for k in masked[0]:
+        acc = np.zeros(np.shape(masked[0][k]), dtype=np.uint32)
+        for m in masked:
+            acc = acc + np.asarray(m[k]).astype(np.uint32)
+        if correction:
+            acc = acc - correction[k]
+        out[k] = acc.view(np.int32).astype(np.float64) / 2 ** FRAC_BITS / total_n
+    return out

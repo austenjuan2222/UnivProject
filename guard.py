@@ -80,23 +80,23 @@ def _well_formed_metrics(c: RecordDict) -> bool:
     return pid.is_integer() and pid >= 0 and n.is_integer() and 0 < n <= 2**31
 
 
-def _well_formed(c: RecordDict) -> bool:
-    """可用性：指標合格、參數都是浮點數。不合格的連 HMAC 都不算（字串陣列會讓驗證本身當掉）。"""
+def _well_formed(c: RecordDict, kinds_ok: frozenset = frozenset("f")) -> bool:
+    """可用性：指標合格、參數都是浮點數（安全聚合時是 mod 2^32 的 uint32）。不合格的連 HMAC 都不算（字串陣列會讓驗證本身當掉）。"""
     try:
         kinds = {v.numpy().dtype.kind for v in c["arrays"].values()}
     except (KeyError, TypeError, ValueError, AttributeError):
         return False
-    return _has_records(c, "arrays", "metrics") and _well_formed_metrics(c) and kinds <= {"f"}
+    return _has_records(c, "arrays", "metrics") and _well_formed_metrics(c) and kinds <= kinds_ok
 
 
 def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: bool,
                    tamper_rate: float, rng: np.random.Generator, replay_rate: float = 0.0,
-                   last: dict | None = None) -> tuple[list[bool], dict]:
+                   last: dict | None = None, kinds_ok: frozenset = frozenset("f")) -> tuple[list[bool], dict]:
     """回傳每個回覆是否可用於聚合，以及統計（被竄改、被重送、被拒絕數）。會移除 auth 紀錄。
     replay_rate > 0：模擬中間人把該 VD 上一輪的整份訊息（參數＋簽章）再送一次；last 由呼叫端保存跨輪的上一份訊息。"""
     keep, n_tampered, n_replayed, n_rejected, audit = [], 0, 0, 0, []
     for c in contents:
-        if not _well_formed(c):
+        if not _well_formed(c, kinds_ok):
             c.pop(AUTH, None)
             n_rejected += 1
             keep.append(False)
@@ -258,7 +258,8 @@ class ValidationFilter:
         return out
 
 
-def secure_average(contents: list[RecordDict], expected: int, revealed: dict | None = None) -> ArrayRecord | None:
+def secure_average(contents: list[RecordDict], expected: int, revealed: dict | None = None,
+                   base: dict | None = None) -> ArrayRecord | None:
     """安全聚合：加總遮罩後的更新再除以總樣本數。少了 VD 時，需要在線 VD 交出的成對種子（revealed）
     才能扣掉沒抵銷的遮罩；拿不到就回傳 None 放棄這一輪。"""
     if not contents or (len(contents) != expected and revealed is None):
@@ -266,6 +267,8 @@ def secure_average(contents: list[RecordDict], expected: int, revealed: dict | N
     masked = [arrays_of(c["arrays"]) for c in contents]
     total = sum(float(c["metrics"]["num-examples"]) for c in contents)
     avg = unmask_sum(masked, total, drop_correction(revealed, masked[0]) if revealed else None)
+    if base:  # VD 上傳的是相對於全域模型的差值
+        avg = {k: avg[k] + np.asarray(base[k], dtype=np.float64) for k in avg}
     return _array_record({k: avg[k].astype(np.float32) for k in masked[0]})
 
 
@@ -356,7 +359,9 @@ class GuardedStrategy(Strategy):
         ok_replies = [m for m in replies if not m.has_error()]
         keep, stats = screen_replies([m.content for m in ok_replies], server_round, self.vd_keys,
                                      self.verify_updates, self.tamper_rate, self.rng,
-                                     self.replay_rate, self._last if self.replay_rate > 0 else None)
+                                     self.replay_rate, self._last if self.replay_rate > 0 else None,
+                                     # 安全聚合上傳的是 mod 2^32 的遮罩整數，一般模式只收浮點數
+                                     frozenset("u") if self.secure_agg_clients else frozenset("f"))
         stats["n_dropped"] = len(replies) - len(ok_replies)
         audit = stats.pop("audit")
         if self.verify_updates:
@@ -445,6 +450,8 @@ class GuardedStrategy(Strategy):
             # 收到了卻被拒絕的 VD（例如 HMAC 不符）不能當成斷線：交出它的種子等於讓伺服器解開它已送達的更新
             rejected = len(ok_replies) > len(kept)
             # 雙重遮罩時每輪都要復原（收自我遮罩種子），沒有就不能還原加總
+            # VD 自報有幾個值超出定點範圍被截（指標有 HMAC 保護）
+            stats["secagg_clipped"] = int(sum(float(m.content["metrics"].get("secagg-clipped", 0)) for m in kept))
             need = len(kept) < self.secure_agg_clients or self.secagg_self_mask
             # 雙重遮罩時被拒絕的 VD 可以當成斷線：它的自我遮罩種子不會交出，交出成對種子也解不開它的更新
             ok_to_reveal = self.secagg_self_mask or not rejected
@@ -454,7 +461,8 @@ class GuardedStrategy(Strategy):
             revealed = self._recover(server_round, kept) if need and ok_to_reveal and same else None
             stats["secagg_recovered"] = int(revealed is not None and len(kept) < self.secure_agg_clients)
             arrays = (None if not same or (self.secagg_self_mask and revealed is None)
-                      else secure_average([m.content for m in kept], self.secure_agg_clients, revealed))
+                      else secure_average([m.content for m in kept], self.secure_agg_clients, revealed,
+                                          base=self._global))
             stats["secagg_failed"] = int(arrays is None)
             if self.on_round:
                 self.on_round(server_round, stats)

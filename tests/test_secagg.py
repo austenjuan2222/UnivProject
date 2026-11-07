@@ -38,8 +38,8 @@ class SecAggTest(unittest.TestCase):
             np.testing.assert_allclose(avg[k], expect[k], rtol=0, atol=1e-6)
 
     def test_single_masked_update_hides_the_values(self):
-        m = self._masked(0, _update(0.5), 10)
-        self.assertGreater(np.abs(m["w"] - 10 * 0.5).min(), 1.0)  # 每個值都被大幅遮住
+        m = unmask_sum([self._masked(0, _update(0.5), 10)], 10)  # 只有一份時「解碼」出來的值
+        self.assertGreater(np.abs(m["w"] - 0.5).min(), 1.0)  # 每個值都被大幅遮住
 
     def test_masks_change_every_round(self):
         a = self._masked(1, _update(0.5), 10, rnd=1)
@@ -89,8 +89,28 @@ class SecAggTest(unittest.TestCase):
             priv, pubs = load_agreement_keys(self.dir, p)
             revealed[p] = reveal_seeds(p, [3], priv, pubs, 1)
         pair_part = drop_correction(revealed, late)  # 在線 VD 為 3 加的遮罩；3 自己加的是相反號
-        guess = {k: late[k] + pair_part[k] for k in late}  # 扣掉 3 的成對遮罩
-        self.assertGreater(np.abs(guess["w"] - 10 * 0.5).min(), 1.0)
+        guess = unmask_sum([{k: late[k] + pair_part[k] for k in late}], 10)  # 扣掉 3 的成對遮罩
+        self.assertGreater(np.abs(guess["w"] - 0.5).min(), 1.0)
+
+    def test_fixed_point_upload_is_uint32_and_cancels_exactly(self):
+        # 有限體（mod 2^32）上做整數遮罩：上傳和 float32 一樣大（float64 版本是兩倍），抵銷沒有浮點誤差
+        ups = {p: _update(0.1 * (p + 1)) for p in self.pids}
+        masked = [self._masked(p, ups[p], 10) for p in self.pids]
+        self.assertTrue(all(m[k].dtype == np.uint32 for m in masked for k in m))
+        self.assertEqual(sum(v.nbytes for v in masked[0].values()), sum(v.nbytes for v in ups[0].values()))
+        avg = unmask_sum(masked, 40)
+        for k in SHAPES:
+            np.testing.assert_allclose(avg[k], sum(ups[p][k].astype(np.float64) for p in self.pids) / 4,
+                                       rtol=0, atol=2 ** -12)
+
+    def test_out_of_range_values_are_clipped_and_counted(self):
+        from secagg import count_clipped
+        big = {"w": np.full((3, 2), 1e6, dtype=np.float32), "b": np.zeros(3, dtype=np.float32)}
+        self.assertEqual(count_clipped(big, 10, 4), 6)
+        self.assertEqual(count_clipped(_update(0.3), 10, 4), 0)
+        m = [self._masked(p, big if p == 0 else _update(0.0), 10) for p in self.pids]
+        avg = unmask_sum(m, 40)
+        self.assertTrue(np.all(np.isfinite(avg["w"])) and np.all(avg["w"] > 0))  # 飽和，不會溢位成負數
 
     def test_revealed_seeds_only_cover_dropped_pairs(self):
         priv, pubs = load_agreement_keys(self.dir, 0)
@@ -152,6 +172,13 @@ class SecureAverageTest(unittest.TestCase):
         a = arrays_of(rec)
         self.assertEqual(a["w"].dtype, np.float32)
         np.testing.assert_allclose(a["w"], 0.3, atol=1e-5)
+
+    def test_base_is_added_back(self):
+        # VD 上傳的是相對於全域模型的差值，伺服器還原後加回全域模型
+        from guard import arrays_of, secure_average
+        base = {"w": np.full((3, 2), 2.0, dtype=np.float32), "b": np.ones(3, dtype=np.float32)}
+        a = arrays_of(secure_average(self._contents([0, 1, 2]), expected=3, base=base))
+        np.testing.assert_allclose(a["w"], 2.3, atol=1e-3)
 
     def test_missing_vd_aborts_the_round(self):
         from guard import secure_average
