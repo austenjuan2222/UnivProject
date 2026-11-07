@@ -46,7 +46,8 @@ def _well_formed_metrics(c: RecordDict) -> bool:
         pid, n = float(c["metrics"]["partition-id"]), float(c["metrics"]["num-examples"])
     except (KeyError, TypeError, ValueError):
         return False
-    return pid.is_integer() and pid >= 0 and n.is_integer() and n > 0
+    # 絕對上限：只有兩三份更新時沒有中位數可比，自報天文數字的筆數也不能蓋過別人或讓加權總和溢位
+    return pid.is_integer() and pid >= 0 and n.is_integer() and 0 < n <= 2**31
 
 
 def _well_formed(c: RecordDict) -> bool:
@@ -69,7 +70,8 @@ def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: 
             c.pop(AUTH, None)
             n_rejected += 1
             keep.append(False)
-            audit.append({"round": int(rnd), "pid": -1, "accepted": False, "digest": "", "tag": ""})
+            pid = int(c["metrics"]["partition-id"]) if _well_formed_metrics(c) else -1
+            audit.append({"round": int(rnd), "pid": pid, "accepted": False, "digest": "", "tag": ""})
             continue
         pid = int(c["metrics"]["partition-id"])
         tag = str(c[AUTH]["tag"]) if AUTH in c else ""

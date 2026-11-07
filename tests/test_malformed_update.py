@@ -45,9 +45,22 @@ class MalformedUpdateTest(unittest.TestCase):
 
     def test_bad_num_examples_with_valid_hmac_is_rejected(self):
         # FedAvg 用 num-examples 加權：NaN／inf 讓全域模型變 NaN，總和為 0 會除以零，非整數也不合理
-        for bad in (float("nan"), float("inf"), 0, -20, 1.5):
+        for bad in (float("nan"), float("inf"), 0, -20, 1.5, 2**62):
             self.g.aggregate_train(1, [self.reply(0, [1, 1]), self.reply(1, [1, 1], n=bad), self.reply(2, [1, 1])])
             self.assertEqual(self.seen[-1], [0, 2], bad)
+
+    def test_inflated_num_examples_rejected_even_in_small_round(self):
+        # 只有 2 份更新時沒有中位數可比，仍要有絕對上限
+        self.g.aggregate_train(1, [self.reply(0, [1, 1]), self.reply(1, [1, 1], n=10**12)])
+        self.assertEqual(self.seen[-1], [0])
+
+    def test_malformed_audit_keeps_vd_id(self):
+        audits = []
+        self.g.on_audit = audits.extend
+        def to_str(c):
+            c["arrays"] = ArrayRecord({"s": Array(np.array(["a", "b"]))})
+        self.g.aggregate_train(1, [self.reply(0, [1, 1]), self.reply(1, [1, 1], after_tag=to_str)])
+        self.assertEqual([(a["pid"], a["accepted"]) for a in audits], [(0, True), (1, False)])
 
     def test_inflated_num_examples_is_rejected(self):
         # 自報 10 億筆資料等於一台 VD 取代整個模型

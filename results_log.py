@@ -125,7 +125,19 @@ class RunLogger:
             warnings.warn(f"第 {rnd} 輪 {phase} 只收到 {n}/{expected} 個 client 的回覆，"
                           "該輪指標只反映部分 client")
 
+    @staticmethod
+    def _complete(replies: list[dict], keys: tuple, phase: str) -> list[dict]:
+        """可用性：少欄位或 MSE 為負的回覆不記錄（不然紀錄程式會讓整個伺服器當掉），並發出警告。"""
+        def ok(r):
+            need = keys + (("jam-mae-kmh", "jam-bias-kmh") if "num-jam" in r else ())
+            return all(k in r for k in need) and not float(r.get("mse-kmh", 0)) < 0
+        good = [r for r in replies if ok(r)]
+        if len(good) < len(replies):
+            warnings.warn(f"{phase}：{len(replies) - len(good)} 份回覆欄位不完整，沒有記錄")
+        return good
+
     def on_train(self, replies: list[dict]) -> dict:
+        replies = self._complete(replies, ("round", "partition-id", "num-examples", "train-loss"), "train")
         agg = aggregate_train(replies)
         rnd = int(replies[0]["round"]) if replies else 0
         self._check_count(rnd, len(replies), "train")
@@ -156,6 +168,8 @@ class RunLogger:
                 f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
     def on_eval(self, replies: list[dict]) -> dict:
+        replies = self._complete(replies, ("round", "partition-id", "num-examples", "eval-loss", "mae-kmh",
+                                           "mse-kmh"), "evaluate")
         agg = aggregate_eval(replies)
         rnd = int(replies[0]["round"]) if replies else 0
         self._check_count(rnd, len(replies), "evaluate")

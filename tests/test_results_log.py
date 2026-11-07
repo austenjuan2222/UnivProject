@@ -84,6 +84,18 @@ class AggregateTest(unittest.TestCase):
 
 
 class RunLoggerTest(unittest.TestCase):
+    def test_incomplete_replies_are_skipped_not_crash(self):
+        # 可用性：VD 少送欄位或送負的 MSE，不能讓紀錄程式（進而整個伺服器）當掉
+        with tempfile.TemporaryDirectory() as d:
+            log = RunLogger(Path(d) / "run", config={})
+            good = {"round": 1, "partition-id": 0, "num-examples": 10, "train-loss": 1.0}
+            log.on_train([good, {"round": 1, "partition-id": 1, "num-examples": 10}])
+            ev = {"round": 1, "partition-id": 0, "num-examples": 5, "eval-loss": 0.2, "mae-kmh": 3.0, "mse-kmh": 9.0}
+            log.on_eval([ev, {**ev, "partition-id": 1, "mse-kmh": -1.0}, {**ev, "partition-id": 2, "num-jam": 3},
+                         {"round": 1, "partition-id": 3, "num-examples": 5}])
+            self.assertEqual(len(_rows(Path(d, "run", "clients.csv"))), 1)
+            self.assertAlmostEqual(float(_rows(Path(d, "run", "metrics.csv"))[0]["rmse_kmh"]), 3.0)
+
     def test_audit_log_appends_one_json_line_per_update(self):
         with tempfile.TemporaryDirectory() as d:
             log = RunLogger(Path(d) / "run", config={})
