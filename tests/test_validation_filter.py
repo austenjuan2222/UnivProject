@@ -94,6 +94,11 @@ class ValidationFilterTest(unittest.TestCase):
             bad = f.screen({p: {"s": np.array([v])} for p, v in enumerate(base)} | {9: {"s": np.array([5.3])}}, ids)
         self.assertIn(9, bad)  # 負的可疑程度截成 0，不能存起來抵銷之後的可疑輪次
 
+    def test_memory_rejects_all_messages_sharing_one_vd_id(self):
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, memory=1.5)
+        ups = {p: {"s": np.array([5.0 + 0.01 * p])} for p in range(10)}
+        self.assertEqual(f.screen(ups, {p: (3 if p == 7 else p) for p in range(10)}), {3, 7})
+
     def test_memory_off_by_default(self):
         f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0)
         base = [5.0, 5.1, 4.9, 5.05, 4.95, 5.0, 5.1, 4.9, 5.0]

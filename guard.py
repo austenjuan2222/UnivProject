@@ -174,6 +174,9 @@ class ValidationFilter:
                 self.history.setdefault(vd, []).append(zp)
             out |= {p for p in scores
                     if len(self.history[ids[p]]) >= 3 and np.mean(self.history[ids[p]]) > self.memory}
+            # 同一個 VD 編號這輪送了不只一份：視為異常，全部拒絕（歷史照樣記最可疑的那份）
+            dup = {vd for vd in now if sum(ids[p] == vd for p in scores) > 1}
+            out |= {p for p in scores if ids[p] in dup}
         return out
 
 
