@@ -231,5 +231,24 @@ class PersistentRevocationTest(unittest.TestCase):
             self.assertNotEqual(load_vd_verify_keys(d)[1].public_bytes_raw(), old_pub)
 
 
+
+class IntegerPayloadTest(unittest.TestCase):
+    """安全聚合上傳的是整數：HMAC 要涵蓋型別和原始位元組，不能先轉 float32。"""
+    def test_recast_to_wider_dtype_breaks_tag(self):
+        from security import sign_update, verify_update
+        key = b"k" * 32
+        a = {"w": np.array([1, 65535], dtype=np.uint16)}
+        tag = sign_update(key, a, 1, 0)
+        self.assertTrue(verify_update(key, a, 1, 0, tag))
+        self.assertFalse(verify_update(key, {"w": a["w"].astype(np.uint32)}, 1, 0, tag))
+
+    def test_low_bits_of_uint32_are_covered(self):
+        from security import sign_update, verify_update
+        key = b"k" * 32
+        a = {"w": np.array([2 ** 31], dtype=np.uint32)}
+        tag = sign_update(key, a, 1, 0)
+        self.assertFalse(verify_update(key, {"w": np.array([2 ** 31 + 1], dtype=np.uint32)}, 1, 0, tag))
+
+
 if __name__ == "__main__":
     unittest.main()

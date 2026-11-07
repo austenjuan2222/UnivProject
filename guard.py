@@ -259,7 +259,7 @@ class ValidationFilter:
 
 
 def secure_average(contents: list[RecordDict], expected: int, revealed: dict | None = None,
-                   base: dict | None = None, frac_bits: int = 12) -> ArrayRecord | None:
+                   base: dict | None = None, frac_bits: int = 12, bits: int | None = None) -> ArrayRecord | None:
     """安全聚合：加總遮罩後的更新再除以總樣本數。少了 VD 時，需要在線 VD 交出的成對種子（revealed）
     才能扣掉沒抵銷的遮罩；拿不到就回傳 None 放棄這一輪。"""
     if not contents or (len(contents) != expected and revealed is None):
@@ -267,7 +267,10 @@ def secure_average(contents: list[RecordDict], expected: int, revealed: dict | N
     masked = [arrays_of(c["arrays"]) for c in contents]
     total = sum(float(c["metrics"]["num-examples"]) for c in contents)
     try:
-        avg = unmask_sum(masked, total, drop_correction(revealed, masked[0]) if revealed else None, frac_bits)
+        if bits is not None and any(np.asarray(v).dtype.kind != "u" or np.asarray(v).dtype.itemsize * 8 != bits
+                                    for m in masked for v in m.values()):
+            return None  # 先擋寬度，drop_correction 才不會照攻擊者給的型別算
+        avg = unmask_sum(masked, total, drop_correction(revealed, masked[0]) if revealed else None, frac_bits, bits)
     except ValueError:
         return None
     if base:  # VD 上傳的是相對於全域模型的差值
@@ -470,7 +473,8 @@ class GuardedStrategy(Strategy):
             stats["secagg_recovered"] = int(revealed is not None and len(kept) < self.secure_agg_clients)
             arrays = (None if not same or (self.secagg_self_mask and revealed is None)
                       else secure_average([m.content for m in kept], self.secure_agg_clients, revealed,
-                                          base=self._global, frac_bits=self.secagg_ring[1]))
+                                          base=self._global, frac_bits=self.secagg_ring[1],
+                                          bits=self.secagg_ring[0]))
             stats["secagg_failed"] = int(arrays is None)
             if self.on_round:
                 self.on_round(server_round, stats)

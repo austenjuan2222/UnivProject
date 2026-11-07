@@ -122,10 +122,17 @@ def load_server_secrets(key_dir) -> tuple[Ed25519PrivateKey, dict]:
 
 
 def _payload(arrays: dict, header: str) -> bytes:
-    """固定順序的序列化：標頭＋各陣列名稱、形狀、float32 位元組。"""
+    """固定順序的序列化：標頭＋各陣列名稱、形狀、float32 位元組。
+    整數陣列（安全聚合的定點數）改涵蓋型別＋原始位元組：轉 float32 會丟掉 uint32 的低位元，
+    也分不出 uint16 和 uint32，中間人就能改寬度或低位元而不破壞標籤。"""
     h = hashlib.sha256(header.encode())
     for name in sorted(arrays):
-        a = np.ascontiguousarray(np.asarray(arrays[name], dtype=np.float32))
+        a = np.asarray(arrays[name])
+        if a.dtype.kind in "ui":
+            a = np.ascontiguousarray(a)
+            h.update(b"int:" + a.dtype.str.encode())
+        else:
+            a = np.ascontiguousarray(a, dtype=np.float32)
         h.update(name.encode())
         h.update(struct.pack(f"<{a.ndim + 1}q", a.ndim, *a.shape))
         h.update(a.tobytes())

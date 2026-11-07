@@ -198,14 +198,18 @@ def drop_correction(revealed: dict, like: dict) -> dict:
 
 
 def unmask_sum(masked: list[dict], total_n: float, correction: dict | None = None,
-               frac_bits: int = FRAC_BITS) -> dict:
-    """加總（mod 2^bits）、扣掉沒抵銷的遮罩，再解回浮點數並除以總樣本數。"""
+               frac_bits: int = FRAC_BITS, bits: int | None = None) -> dict:
+    """加總（mod 2^bits）、扣掉沒抵銷的遮罩，再解回浮點數並除以總樣本數。
+    bits：伺服器設定的環寬度；給了就只收那個寬度（不能讓上傳自己決定）。"""
     ring = {np.dtype(u): s for u, s in _RING.values()}
+    for m in masked:  # 少了、多了陣列或形狀不同（會被廣播）一律拒收
+        if set(m) != set(masked[0]) or any(np.shape(m[k]) != np.shape(masked[0][k]) for k in m):
+            raise ValueError("安全聚合的上傳陣列名稱或形狀不一致")
     out = {}
     for k in masked[0]:
         dt = np.asarray(masked[0][k]).dtype
-        if dt not in ring:
-            raise ValueError(f"安全聚合只收 uint32／uint16，{k} 是 {dt}")
+        if dt not in ring or (bits is not None and dt != np.dtype(_RING[bits][0])):
+            raise ValueError(f"安全聚合只收 {'uint%d' % bits if bits else 'uint32／uint16'}，{k} 是 {dt}")
         acc = np.zeros(np.shape(masked[0][k]), dtype=dt)
         for m in masked:
             if np.asarray(m[k]).dtype != dt:  # 浮點數或不同寬度硬轉會默默截斷

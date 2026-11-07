@@ -187,6 +187,9 @@ def main(grid: Grid, context: Context) -> None:
                              "upload-bits=32、collusion-filter=false、不設 validation-dir（可以和 record-level DP 一起用）")
         if int(cfg.get("secagg-bits", 32)) not in (16, 32):
             raise ValueError("secagg-bits 只能是 16 或 32")
+        if not -8 <= int(cfg.get("secagg-frac-bits", 12)) <= int(cfg.get("secagg-bits", 32)) - 2:
+            # 太低時所有更新都四捨五入成 0（模型不動，被截計數也看不出來）
+            raise ValueError("secagg-frac-bits 要在 -8 到 secagg-bits-2 之間")
         if not sign:
             # 斷線復原請求要伺服器簽章，VD 才不會被中間人假造的「某台斷線」騙去交出種子
             raise ValueError("secure-agg 需要 sign-models=true")

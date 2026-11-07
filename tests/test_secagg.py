@@ -136,6 +136,19 @@ class SecAggTest(unittest.TestCase):
         self.assertEqual(count_clipped(up, 1, 4, bits=16, frac_bits=12), 1)
         self.assertEqual(count_clipped(up, 1, 4), 0)
 
+    def test_ring_width_must_match_server_setting(self):
+        # 中間人把 uint16 改成同值的 uint32：伺服器設定 16 位元就要拒收
+        with self.assertRaises(ValueError):
+            unmask_sum([{"w": np.zeros(2, np.uint32)}, {"w": np.zeros(2, np.uint32)}], 1.0, bits=16)
+
+    def test_missing_or_misshaped_array_rejected(self):
+        with self.assertRaises(ValueError):
+            unmask_sum([{"w": np.zeros(2, np.uint32), "b": np.zeros(1, np.uint32)}, {"w": np.zeros(2, np.uint32)}], 1.0)
+        with self.assertRaises(ValueError):  # 形狀 (1,) 會被廣播到整個張量
+            unmask_sum([{"w": np.zeros(2, np.uint32)}, {"w": np.zeros(1, np.uint32)}], 1.0)
+        with self.assertRaises(ValueError):  # 多出來的陣列
+            unmask_sum([{"w": np.zeros(2, np.uint32)}, {"w": np.zeros(2, np.uint32), "x": np.zeros(1, np.uint32)}], 1.0)
+
     def test_mixed_ring_widths_rejected(self):
         with self.assertRaises(ValueError):
             unmask_sum([{"w": np.zeros(2, np.uint32)}, {"w": np.zeros(2, np.uint16)}], 1.0)
