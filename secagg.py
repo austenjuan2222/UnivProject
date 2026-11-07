@@ -129,9 +129,22 @@ def _mask(seed: bytes, shape) -> np.ndarray:
     return rng.uniform(-MASK_RANGE, MASK_RANGE, size=shape)
 
 
-def mask_update(update: dict, n: int, me: int, pids, my_priv, pubs: dict, rnd: int, run: int = 0) -> dict:
-    """回傳 n × 更新 ＋ 成對遮罩（float64）。伺服器把所有 VD 的結果加總後除以總樣本數即得加權平均。"""
+def self_seed(my_priv: X25519PrivateKey, me: int, rnd: int, run: int = 0) -> bytes:
+    """雙重遮罩的自我遮罩種子：只有這台 VD 算得出來（從自己的私鑰導出），每輪、每次執行不同。"""
+    raw = my_priv.private_bytes(_RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+    return hashlib.sha256(raw + f"secagg-self|{int(run)}|{int(me)}|{int(rnd)}".encode()).digest()
+
+
+def mask_update(update: dict, n: int, me: int, pids, my_priv, pubs: dict, rnd: int, run: int = 0,
+                self_mask: bool = False) -> dict:
+    """回傳 n × 更新 ＋ 成對遮罩（float64）。伺服器把所有 VD 的結果加總後除以總樣本數即得加權平均。
+    self_mask：再加一層只有自己知道的遮罩（雙重遮罩），在線時才交出它的種子；伺服器宣布某台斷線、
+    拿到所有和它配對的種子後，就算它的更新遲到送達也解不開。"""
     out = {k: n * np.asarray(v, dtype=np.float64) for k, v in update.items()}
+    if self_mask:
+        seed = self_seed(my_priv, me, rnd, run)
+        for i, k in enumerate(sorted(out)):
+            out[k] += _mask(seed + i.to_bytes(4, "little"), out[k].shape)
     for other in pids:
         if other == me:
             continue
@@ -148,11 +161,12 @@ def reveal_seeds(me: int, dropped, my_priv, pubs: dict, rnd: int, run: int = 0) 
 
 
 def drop_correction(revealed: dict, like: dict) -> dict:
-    """revealed[i][j] = VD i 交出的 (i, j) 種子；回傳在線 VD 為了斷線 VD 加上、卻沒被抵銷的遮罩總和。"""
+    """revealed[i][j] = VD i 交出的 (i, j) 種子；回傳在線 VD 為了斷線 VD 加上、卻沒被抵銷的遮罩總和。
+    revealed[i][i] 是 VD i 自己的自我遮罩種子（雙重遮罩），一律是加上去的。"""
     out = {k: np.zeros_like(v, dtype=np.float64) for k, v in like.items()}
     for i, seeds in revealed.items():
         for j, seed in seeds.items():
-            sign = 1.0 if int(i) < int(j) else -1.0
+            sign = 1.0 if int(i) <= int(j) else -1.0
             for idx, k in enumerate(sorted(out)):
                 out[k] += sign * _mask(bytes.fromhex(seed) + idx.to_bytes(4, "little"), out[k].shape)
     return out

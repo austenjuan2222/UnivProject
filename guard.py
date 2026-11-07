@@ -276,7 +276,8 @@ class GuardedStrategy(Strategy):
                  on_audit: Callable[[list], None] | None = None,
                  collusion_filter: CollusionFilter | None = None, replay_rate: float = 0.0,
                  validation_filter: ValidationFilter | None = None, download_bits: int = 32,
-                 norm_cap: float = 0.0, secagg_keys: tuple | None = None):
+                 norm_cap: float = 0.0, secagg_keys: tuple | None = None,
+                 secagg_self_mask: bool = False):
         """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。
         norm_cap > 0：更新長度超過這輪中位數 norm_cap 倍的，縮回 norm_cap 倍。"""
         if norm_cap and (norm_cap < 1 or secure_agg_clients):
@@ -289,6 +290,7 @@ class GuardedStrategy(Strategy):
         self.rng = np.random.default_rng(seed + 7919)
         self.on_round = on_round
         self.secagg_keys = secagg_keys
+        self.secagg_self_mask = secagg_self_mask
         self._priv = signing_key
         # > 0：安全聚合，需要這麼多個 VD 全部回覆遮罩後的更新（基本版不容許斷線）
         self.secure_agg_clients = secure_agg_clients
@@ -442,10 +444,12 @@ class GuardedStrategy(Strategy):
         if self.secure_agg_clients:
             # 收到了卻被拒絕的 VD（例如 HMAC 不符）不能當成斷線：交出它的種子等於讓伺服器解開它已送達的更新
             rejected = len(ok_replies) > len(kept)
-            revealed = (self._recover(server_round, kept)
-                        if len(kept) < self.secure_agg_clients and not rejected else None)
+            # 雙重遮罩時每輪都要復原（收自我遮罩種子），沒有就不能還原加總
+            need = len(kept) < self.secure_agg_clients or self.secagg_self_mask
+            revealed = self._recover(server_round, kept) if need and not rejected else None
             stats["secagg_recovered"] = int(revealed is not None)
-            arrays = secure_average([m.content for m in kept], self.secure_agg_clients, revealed)
+            arrays = (None if self.secagg_self_mask and revealed is None
+                      else secure_average([m.content for m in kept], self.secure_agg_clients, revealed))
             stats["secagg_failed"] = int(arrays is None)
             if self.on_round:
                 self.on_round(server_round, stats)
@@ -454,6 +458,10 @@ class GuardedStrategy(Strategy):
             return arrays, metrics
         return self.inner.aggregate_train(server_round, kept)
 
+    def _seal_pair(self, pid: int):
+        spriv, pubs = self.secagg_keys
+        return spriv, pubs[pid]
+
     def _run_id(self) -> int:
         return int(getattr(getattr(self._grid, "run", None), "run_id", 0))
 
@@ -461,7 +469,7 @@ class GuardedStrategy(Strategy):
         """向還在線的 VD 要它們和斷線 VD 之間的成對種子；任何一台沒回應就放棄（回傳 None）。"""
         alive = {int(m.content["metrics"]["partition-id"]): m.metadata.src_node_id for m in kept}
         dropped = sorted(set(range(self.secure_agg_clients)) - set(alive))
-        if self._grid is None or not dropped:
+        if self._grid is None or not (dropped or self.secagg_self_mask):
             return None
         ask = {"dropped": dropped, "round": int(rnd)}
         if self._priv is not None:  # 沒簽的話，沒有 TLS 時中間人可以假造「某台斷線」來解開它已送達的遮罩
@@ -490,6 +498,12 @@ class GuardedStrategy(Strategy):
                     return None
             elif not all(re.fullmatch(r"[0-9a-f]{64}", x) for x in seeds):
                 return None
+            if self.secagg_self_mask:  # 雙重遮罩：每台在線 VD 都要交出自己的自我遮罩種子
+                own = (open_seeds({pid: c["self"]}, pid, *self._seal_pair(pid), rnd, self._run_id())
+                       if "self" in c and self.secagg_keys is not None else None)
+                if own is None:
+                    return None
+                got = {**got, **own}
             revealed[pid] = got
         return revealed if set(revealed) == set(alive) else None
 

@@ -219,7 +219,8 @@ def main(grid: Grid, context: Context) -> None:
                                download_bits=int(cfg.get("download-bits", 32)),
                                norm_cap=float(cfg.get("norm-cap", 0.0)),
                                secagg_keys=(load_server_agreement_key(key_dir), load_agreement_pubs(key_dir))
-                               if secure_agg else None)
+                               if secure_agg else None,
+                               secagg_self_mask=secure_agg and bool(cfg.get("secagg-self-mask", True)))
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))

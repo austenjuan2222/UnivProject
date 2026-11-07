@@ -19,7 +19,7 @@ from flwr.clientapp import ClientApp
 from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
-from secagg import load_agreement_keys, mask_update, reveal_seeds, seal_seeds
+from secagg import load_agreement_keys, mask_update, reveal_seeds, seal_seeds, self_seed
 from security import (adaptive_shrink, drops_out, hide_congestion, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key, verify_recover,
                       poison_update, verify_model)
 from task import TrafficModel, all_finite, jam_scorer, evaluate, make_loader, set_seed, train, unwrap
@@ -70,6 +70,7 @@ def _cfg(context: Context) -> dict:
         "attack_adaptive_tol": float(c.get("attack-adaptive-tol", 0.0)),
         "dropout_rate": float(c.get("dropout-rate", 0.0)),
         "secure_agg": bool(c.get("secure-agg", False)),
+        "secagg_self_mask": bool(c.get("secagg-self-mask", True)),
         "upload_bits": int(c.get("upload-bits", 32)),
         "update_auth": str(c.get("update-auth", "hmac")),
         "edge_runtime": str(c.get("edge-runtime", "torch")),
@@ -235,7 +236,8 @@ def train_fn(msg: Message, context: Context) -> Message:
     if cfg["secure_agg"]:
         # 安全聚合：上傳「樣本數 × 參數 ＋ 成對遮罩」，伺服器只能還原所有 VD 的加總
         priv, pubs = load_agreement_keys(cfg["key_dir"], pid)
-        masked = mask_update(arrays_of(arrays), len(d["y_train"]), pid, range(n), priv, pubs, rnd, context.run_id)
+        masked = mask_update(arrays_of(arrays), len(d["y_train"]), pid, range(n), priv, pubs, rnd, context.run_id,
+                             self_mask=cfg["secagg_self_mask"])
         context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": -1})
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
     # Edge 運算成本：上傳量（模型參數）vs. 若把原始訓練資料傳上雲的量
@@ -278,8 +280,11 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
     priv, pubs = load_agreement_keys(str(context.run_config.get("key-dir", "keys")), pid)
     seeds = seal_seeds(reveal_seeds(pid, dropped, priv, pubs, rnd, context.run_id), pid, priv, pubs["server"], rnd,
                        context.run_id)
+    # 雙重遮罩：自己在線（不在斷線名單）才交出自我遮罩種子，同樣加密給伺服器
+    own = seal_seeds({pid: self_seed(priv, pid, rnd, context.run_id).hex()}, pid, priv, pubs["server"], rnd,
+                     context.run_id)[pid]
     return Message(content=RecordDict({"secagg": ConfigRecord(
-        {"pid": pid, "dropped": list(seeds), "seeds": list(seeds.values())})}), reply_to=msg)
+        {"pid": pid, "dropped": list(seeds), "seeds": list(seeds.values()), "self": own})}), reply_to=msg)
 
 
 @app.evaluate()

@@ -64,6 +64,34 @@ class SecAggTest(unittest.TestCase):
             expect = sum(ups[p][k].astype(np.float64) for p in alive) / 3
             np.testing.assert_allclose(avg[k], expect, rtol=0, atol=1e-6)
 
+    def _self_masked(self, pid, update, n, rnd=1):
+        priv, pubs = load_agreement_keys(self.dir, pid)
+        return mask_update(update, n, pid, self.pids, priv, pubs, rnd, self_mask=True)
+
+    def test_self_masks_removed_with_revealed_self_seeds(self):
+        from secagg import self_seed
+        ups = {p: _update(0.1 * (p + 1)) for p in self.pids}
+        alive = self.pids[:3]  # VD 3 斷線
+        masked = [self._self_masked(p, ups[p], 10) for p in alive]
+        revealed = {}
+        for p in alive:
+            priv, pubs = load_agreement_keys(self.dir, p)
+            revealed[p] = {**reveal_seeds(p, [3], priv, pubs, 1), p: self_seed(priv, p, 1).hex()}
+        avg = unmask_sum(masked, 30, drop_correction(revealed, masked[0]))
+        for k in SHAPES:
+            np.testing.assert_allclose(avg[k], sum(ups[p][k].astype(np.float64) for p in alive) / 3, rtol=0, atol=1e-6)
+
+    def test_late_update_stays_hidden_after_pair_seeds_revealed(self):
+        # 雙重遮罩：伺服器宣布 VD 3 斷線、拿到所有和它配對的種子後，VD 3 的更新才遲到送達，仍然解不開
+        late = self._self_masked(3, _update(0.5), 10)
+        revealed = {}
+        for p in self.pids[:3]:
+            priv, pubs = load_agreement_keys(self.dir, p)
+            revealed[p] = reveal_seeds(p, [3], priv, pubs, 1)
+        pair_part = drop_correction(revealed, late)  # 在線 VD 為 3 加的遮罩；3 自己加的是相反號
+        guess = {k: late[k] + pair_part[k] for k in late}  # 扣掉 3 的成對遮罩
+        self.assertGreater(np.abs(guess["w"] - 10 * 0.5).min(), 1.0)
+
     def test_revealed_seeds_only_cover_dropped_pairs(self):
         priv, pubs = load_agreement_keys(self.dir, 0)
         self.assertEqual(set(reveal_seeds(0, [2, 3], priv, pubs, 1)), {2, 3})

@@ -72,6 +72,9 @@ class SignedRecoverTest(unittest.TestCase):
         self.assertNotEqual(list(out["seeds"]), list(plain.values()))  # 不是明文
         self.assertEqual(open_seeds(dict(zip([5], out["seeds"])), 0, load_server_agreement_key(self.tmp.name),
                                     pubs[0], 3, run=1), plain)
+        from secagg import self_seed
+        self.assertEqual(open_seeds({0: str(out["self"])}, 0, load_server_agreement_key(self.tmp.name), pubs[0], 3, run=1),
+                         {0: self_seed(p0, 0, 3, run=1).hex()})  # 在線時才交出自己的自我遮罩種子
 
     def test_unsigned_or_forged_request_is_refused(self):
         for sig in [None, "", "00" * 64, sign_recover(self.priv, 3, [4], run=1), sign_recover(self.priv, 2, [5], run=1),

@@ -81,6 +81,22 @@ class SealedSeedsTest(unittest.TestCase):
             g._grid = FakeGrid(flip)
             self.assertIsNone(g._recover(1, [_kept(0), _kept(1)]))
 
+    def test_self_mask_seeds_are_collected_every_round(self):
+        import tempfile
+        from secagg import load_agreement_pubs, load_agreement_keys, load_server_agreement_key, provision_agreement_keys, seal_seeds
+        with tempfile.TemporaryDirectory() as d:
+            provision_agreement_keys(d, 2)
+            pubs = load_agreement_pubs(d)
+            privs = {p: load_agreement_keys(d, p)[0] for p in (0, 1)}
+            g = GuardedStrategy(object(), None, None, secure_agg_clients=2, secagg_self_mask=True,
+                                secagg_keys=(load_server_agreement_key(d), pubs))
+            S = "cd" * 32
+            g._grid = FakeGrid(lambda p: {"pid": p, "dropped": [], "seeds": [],
+                                          "self": seal_seeds({p: S}, p, privs[p], pubs["server"], 1)[p]})
+            self.assertEqual(g._recover(1, [_kept(0), _kept(1)]), {0: {0: S}, 1: {1: S}})  # 沒人斷線也要收
+            g._grid = FakeGrid(lambda p: {"pid": p, "dropped": [], "seeds": []})  # 少了自我遮罩種子
+            self.assertIsNone(g._recover(1, [_kept(0), _kept(1)]))
+
 
 if __name__ == "__main__":
     unittest.main()
