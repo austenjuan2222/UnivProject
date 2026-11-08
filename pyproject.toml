@@ -94,6 +94,8 @@ secure-agg = false         # true = 安全聚合（成對遮罩）：伺服器�
 secagg-bits = 32           # 安全聚合的整數環 Z_{2^bits}：32 或 16（LPWAN，上傳再減半，範圍較小）
 secagg-frac-bits = 12      # 定點數的小數位數；16 位元時要調低（可以是負數），超出範圍的值會被截並回報
 secagg-self-mask = true    # 安全聚合加雙重遮罩：每輪多一次往返收在線 VD 的自我遮罩種子，斷線 VD 的更新遲到送達也解不開
+secagg-shamir = false      # 自我遮罩種子用 Shamir 分享（門檻過半）：復原時沉默的 VD 不讓這輪作廢，惡意伺服器也拿不到同一台的兩種種子；每台每輪多上傳 n 份密文
+secagg-recover-dropout = 0.0  # 模擬：上傳後、復原時才斷線的 VD 比例
 upload-bits = 32           # < 32：上傳前把更新量量化成幾位元（8、4、2；隨機捨入），模擬 LPWAN 的小頻寬
 download-bits = 32         # < 32：伺服器只廣播「新全域模型 − VD 手上那一版」的量化差值（LPWAN 下行）；第一輪送完整模型
 dropout-rate = 0.0         # 模擬 VD 斷線：每個 VD 每輪不回應的機率（可用性）

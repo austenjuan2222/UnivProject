@@ -20,7 +20,8 @@ from flwr.serverapp.strategy import Strategy
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from compress import quantize_update
-from secagg import drop_correction, open_seeds, unmask_sum
+from secagg import (drop_correction, open_seeds, open_shares, seed_tag, shamir_combine, shamir_threshold,
+                    unmask_sum)
 from security import canonical_metrics, sign_model, sign_recover, sign_update, tamper, update_digest, verify_update
 
 AUTH = "auth"
@@ -286,7 +287,8 @@ class GuardedStrategy(Strategy):
                  collusion_filter: CollusionFilter | None = None, replay_rate: float = 0.0,
                  validation_filter: ValidationFilter | None = None, download_bits: int = 32,
                  norm_cap: float = 0.0, secagg_keys: tuple | None = None,
-                 secagg_self_mask: bool = False, secagg_bits: int = 32, secagg_frac_bits: int = 12):
+                 secagg_self_mask: bool = False, secagg_bits: int = 32, secagg_frac_bits: int = 12,
+                 secagg_shamir: bool = False):
         """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。
         norm_cap > 0：更新長度超過這輪中位數 norm_cap 倍的，縮回 norm_cap 倍。"""
         if norm_cap and (norm_cap < 1 or secure_agg_clients):
@@ -301,6 +303,11 @@ class GuardedStrategy(Strategy):
         self.secagg_keys = secagg_keys
         self.secagg_self_mask = secagg_self_mask
         self.secagg_ring = (int(secagg_bits), int(secagg_frac_bits))
+        if secagg_shamir and not secagg_self_mask:
+            raise ValueError("secagg-shamir 要搭配 secagg-self-mask=true（分享的是自我遮罩種子）")
+        self.secagg_shamir = secagg_shamir
+        self._shares: dict = {}  # 這輪各 VD 的自我遮罩種子加密份：_shares[擁有者][持有者] = 密文
+        self._self_hash: dict = {}  # 各 VD 上傳時承諾的種子雜湊（HMAC 涵蓋的指標）
         self._priv = signing_key
         # > 0：安全聚合，需要這麼多個 VD 全部回覆遮罩後的更新（基本版不容許斷線）
         self.secure_agg_clients = secure_agg_clients
@@ -364,6 +371,9 @@ class GuardedStrategy(Strategy):
                         ) -> tuple[ArrayRecord | None, MetricRecord | None]:
         replies = list(replies)
         ok_replies = [m for m in replies if not m.has_error()]
+        # 秘密分享的加密份不在 HMAC 範圍（每份有 AEAD），先拿出來，其他檢查照舊只看參數＋指標
+        shares_of = {id(m): m.content.pop("secagg-shares") for m in ok_replies
+                     if "secagg-shares" in m.content.keys()}
         keep, stats = screen_replies([m.content for m in ok_replies], server_round, self.vd_keys,
                                      self.verify_updates, self.tamper_rate, self.rng,
                                      self.replay_rate, self._last if self.replay_rate > 0 else None,
@@ -443,6 +453,16 @@ class GuardedStrategy(Strategy):
                     stats["n_clipped"] += 1
             stats["clipped"] = ";".join(sorted(str(int(m.content["metrics"]["partition-id"]))
                                                for m in kept if norms[id(m)] > limit))
+        if self.secure_agg_clients and self.secagg_shamir:
+            # 沒附完整份數的 VD 在復原時無法替它還原自我遮罩，當成被拒絕（雙重遮罩下等於斷線）
+            ids = {str(j) for j in range(self.secure_agg_clients)}
+            good = {id(m) for m in kept if id(m) in shares_of and set(shares_of[id(m)].keys()) == ids}
+            stats["n_rejected"] += len(kept) - len(good)
+            kept = [m for m in kept if id(m) in good]
+            self._shares = {int(m.content["metrics"]["partition-id"]): {int(j): v.hex() if isinstance(v, bytes) else str(v)
+                                                                        for j, v in shares_of[id(m)].items()} for m in kept}
+            self._self_hash = {int(m.content["metrics"]["partition-id"]):
+                               int(float(m.content["metrics"].get("secagg-self-tag", -1))) for m in kept}
         if self.on_audit and self.verify_updates:
             # 所有檢查跑完才寫：HMAC 對、但被格式／筆數／串通／驗證檢查擋掉的，也要記成沒採用
             final = {id(m) for m in kept}
@@ -499,13 +519,23 @@ class GuardedStrategy(Strategy):
         ask = {"dropped": dropped, "round": int(rnd)}
         if self._priv is not None:  # 沒簽的話，沒有 TLS 時中間人可以假造「某台斷線」來解開它已送達的遮罩
             ask["sig"] = sign_recover(self._priv, rnd, dropped, self._run_id())
-        q = RecordDict({"secagg": ConfigRecord(ask)})
+        owners = sorted(alive)
+
+        def query(j):
+            c = dict(ask)
+            if self.secagg_shamir:  # 每台只拿到「別人要給它」的那份密文
+                c["share-owners"] = owners
+                c["share-cts"] = [self._shares[i][j] for i in owners]
+            return RecordDict({"secagg": ConfigRecord(c)})
         replies = list(self._grid.send_and_receive(
-            [Message(content=q, message_type="query", dst_node_id=n) for n in alive.values()], timeout=120))
+            [Message(content=query(pid), message_type="query", dst_node_id=n) for pid, n in alive.items()],
+            timeout=120))
         pid_of = {node: pid for pid, node in alive.items()}
-        revealed = {}
+        revealed, shares = {}, {i: {} for i in owners}
         for r in replies:
             if r.has_error():
+                if self.secagg_shamir:
+                    continue  # 秘密分享：復原時沉默的 VD 由別人的份還原
                 return None
             try:
                 c = r.content["secagg"]
@@ -523,13 +553,39 @@ class GuardedStrategy(Strategy):
                     return None
             elif not all(re.fullmatch(r"[0-9a-f]{64}", x) for x in seeds):
                 return None
-            if self.secagg_self_mask:  # 雙重遮罩：每台在線 VD 都要交出自己的自我遮罩種子
+            if self.secagg_shamir:
+                try:
+                    got_owners = [int(i) for i in c["share-owners"]]
+                    sealed_list = [str(x) for x in c["shares"]]
+                    if len(sealed_list) != len(got_owners):
+                        return None
+                    sealed = dict(zip(got_owners, sealed_list))
+                except (KeyError, TypeError, ValueError):
+                    return None
+                opened = open_shares(sealed, pid, *self._seal_pair(pid), rnd, self._run_id())
+                if sorted(got_owners) != owners or opened is None:
+                    return None
+                for i, y in opened.items():
+                    shares[i][pid] = y
+            elif self.secagg_self_mask:  # 雙重遮罩：每台在線 VD 都要交出自己的自我遮罩種子
                 own = (open_seeds({pid: c["self"]}, pid, *self._seal_pair(pid), rnd, self._run_id())
                        if "self" in c and self.secagg_keys is not None else None)
                 if own is None:
                     return None
                 got = {**got, **own}
             revealed[pid] = got
+        if self.secagg_shamir:
+            silent = set(alive) - set(revealed)
+            # 沉默的 VD 和斷線 VD 之間的成對遮罩沒人能交出（要分享長期私鑰才行，這裡沒做），只能在沒人斷線時救回
+            if (silent and dropped) or len(revealed) < shamir_threshold(self.secure_agg_clients):
+                return None
+            for i in owners:
+                b = shamir_combine(shares[i])
+                # 有人交了錯的份：還原出的種子和它上傳時承諾的雜湊對不上，整輪放棄（不默默算錯）
+                if b is None or seed_tag(b) != self._self_hash.get(i):
+                    return None
+                revealed.setdefault(i, {})[i] = b.hex()
+            return revealed
         return revealed if set(revealed) == set(alive) else None
 
     def configure_evaluate(self, server_round: int, arrays: ArrayRecord, config: ConfigRecord,

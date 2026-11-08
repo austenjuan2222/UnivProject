@@ -19,7 +19,8 @@ from flwr.clientapp import ClientApp
 from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
-from secagg import count_clipped, load_agreement_keys, mask_update, reveal_seeds, seal_seeds, self_seed
+from secagg import (count_clipped, encrypt_shares, load_agreement_keys, mask_update, open_share, reveal_seeds,
+                    seal_seeds, seal_shares, seed_tag, self_seed)
 from security import (adaptive_shrink, drops_out, hide_congestion, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key, verify_recover,
                       poison_update, verify_model)
 from task import TrafficModel, all_finite, jam_scorer, evaluate, make_loader, set_seed, train, unwrap
@@ -71,6 +72,7 @@ def _cfg(context: Context) -> dict:
         "dropout_rate": float(c.get("dropout-rate", 0.0)),
         "secure_agg": bool(c.get("secure-agg", False)),
         "secagg_self_mask": bool(c.get("secagg-self-mask", True)),
+        "secagg_shamir": bool(c.get("secagg-shamir", False)),
         "secagg_bits": int(c.get("secagg-bits", 32)),
         "secagg_frac_bits": int(c.get("secagg-frac-bits", 12)),
         "upload_bits": int(c.get("upload-bits", 32)),
@@ -245,8 +247,12 @@ def train_fn(msg: Message, context: Context) -> Message:
         metrics["secagg-clipped"] = count_clipped(delta, len(d["y_train"]), n, **ring)
         masked = mask_update(delta, len(d["y_train"]), pid, range(n), priv, pubs, rnd, context.run_id,
                              self_mask=cfg["secagg_self_mask"], **ring)
-        context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": -1})
+        claim_mask_round(context, rnd)
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
+        if cfg["secagg_shamir"]:  # 自我遮罩種子切份、各自加密給持有者，經伺服器轉交
+            b = self_seed(priv, pid, rnd, context.run_id)
+            shares = encrypt_shares(b, pid, range(n), priv, pubs, rnd, context.run_id)
+            metrics["secagg-self-tag"] = seed_tag(b)  # HMAC 涵蓋：伺服器還原後拿來比對
         metrics["secagg-num-vd"] = n
         metrics["secagg-bits"], metrics["secagg-frac-bits"] = cfg["secagg_bits"], cfg["secagg_frac_bits"]
         metrics["secagg-self-mask"] = int(cfg["secagg_self_mask"])  # 伺服器比對設定一致（HMAC 有涵蓋）
@@ -257,6 +263,9 @@ def train_fn(msg: Message, context: Context) -> Message:
     metrics["raw-bytes"] = int(len(d["y_train"]) * 4)
     metrics["train-seconds"] = time.perf_counter() - t0
     content = RecordDict({"arrays": arrays, "metrics": MetricRecord(metrics)})
+    if cfg["secure_agg"] and cfg["secagg_shamir"]:
+        # 不在 HMAC 範圍內：每份都有 AEAD（綁擁有者、持有者、輪次），伺服器和中間人改不了也讀不到
+        content["secagg-shares"] = ConfigRecord({str(j): bytes.fromhex(ct) for j, ct in shares.items()})  # 二進位，LPWAN 上省一半
     if cfg["verify_updates"]:
         attach_update_tag(content, _vd_key(cfg, pid), rnd, pid)
     return Message(content=content, reply_to=msg)
@@ -267,6 +276,14 @@ def _vd_key(cfg, pid):
             else load_vd_key(cfg["key_dir"], pid))  # 只讀自己的金鑰
 
 
+def claim_mask_round(context: Context, rnd: int) -> None:
+    """每輪只遮罩一次：重送同一輪（或更舊）的訓練請求會重設「每輪只回答一次復原」，讓惡意伺服器問兩次不同名單。"""
+    st = context.state[SECAGG_STATE_KEY] if SECAGG_STATE_KEY in context.state else None
+    if st is not None and int(st["masked-round"]) >= int(rnd):
+        raise RuntimeError(f"第 {rnd} 輪已經遮罩過（或比上次更舊），拒絕重新遮罩")
+    context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": int(rnd), "revealed-round": -1})
+
+
 @app.query()
 def secagg_recover_fn(msg: Message, context: Context) -> Message:
     """安全聚合斷線復原：交出自己和斷線 VD 之間的成對種子，讓伺服器扣掉那些沒抵銷的遮罩。"""
@@ -274,6 +291,10 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
     n = int(context.node_config["num-partitions"])
     q = msg.content["secagg"]
     rnd, dropped = int(q["round"]), sorted({int(j) for j in q["dropped"]})
+    if drops_out(int(context.run_config.get("seed", 0)), pid, rnd + 100_000,
+                 float(context.run_config.get("secagg-recover-dropout", 0.0))):
+        # 模擬：上傳後、復原時才斷線的 VD
+        raise RuntimeError(f"VD {pid} 第 {rnd} 輪復原時斷線（模擬）")
     st = context.state[SECAGG_STATE_KEY] if SECAGG_STATE_KEY in context.state else None
     # 限制惡意伺服器：只回答自己這一輪真的送過遮罩的請求、每輪只回答一次、自己不能在斷線名單裡、
     # 在線 VD 至少 2/3（伺服器不能謊稱大多數 VD 斷線來解開少數幾台的遮罩）
@@ -292,7 +313,19 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
                        context.run_id)
     # 雙重遮罩：自己在線（不在斷線名單）才交出自我遮罩種子，同樣加密給伺服器
     reply = {"pid": pid, "dropped": list(seeds), "seeds": list(seeds.values())}
-    if bool(context.run_config.get("secagg-self-mask", True)):
+    if bool(context.run_config.get("secagg-shamir", False)):
+        # 秘密分享：不直接交出自己的種子，改交出名單上在線的 VD 的份；說它斷線的那台一律不交（只給成對種子）
+        owners = [int(i) for i in q["share-owners"]] if "share-owners" in q else []
+        cts = [str(x) for x in q["share-cts"]] if "share-cts" in q else []
+        # 份只給「名單上在線」的那些 VD，而且要剛好是名單的補集（不能挑著要）
+        if len(owners) != len(cts) or sorted(owners) != sorted(set(range(n)) - set(dropped)):
+            raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪交出斷線 VD 的份")
+        got = {i: open_share(ct, i, pid, priv, pubs, rnd, context.run_id) for i, ct in zip(owners, cts)}
+        if any(v is None for v in got.values()):
+            raise RuntimeError(f"VD {pid} 第 {rnd} 輪收到解不開的份")
+        sealed = seal_shares(got, pid, priv, pubs["server"], rnd, context.run_id)
+        reply["share-owners"], reply["shares"] = list(sealed), list(sealed.values())
+    elif bool(context.run_config.get("secagg-self-mask", True)):
         reply["self"] = seal_seeds({pid: self_seed(priv, pid, rnd, context.run_id).hex()}, pid, priv, pubs["server"],
                                    rnd, context.run_id)[pid]
     return Message(content=RecordDict({"secagg": ConfigRecord(reply)}), reply_to=msg)

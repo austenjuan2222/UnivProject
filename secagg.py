@@ -104,8 +104,8 @@ def _seal_aead(my_priv: X25519PrivateKey, their_pub: X25519PublicKey) -> ChaCha2
     return ChaCha20Poly1305(HKDF(hashes.SHA256(), 32, None, b"secagg-seal").derive(shared))
 
 
-def _seal_aad(me: int, j: int, rnd: int, run: int) -> bytes:
-    return f"secagg-seal|{int(run)}|{int(rnd)}|{int(me)}|{int(j)}".encode()
+def _seal_aad(me: int, j: int, rnd: int, run: int, kind: str = "seal") -> bytes:
+    return f"secagg-{kind}|{int(run)}|{int(rnd)}|{int(me)}|{int(j)}".encode()
 
 
 def seal_seeds(seeds: dict, me: int, my_priv: X25519PrivateKey, server_pub: X25519PublicKey, rnd: int,
@@ -218,4 +218,110 @@ def unmask_sum(masked: list[dict], total_n: float, correction: dict | None = Non
         if correction:
             acc = acc - correction[k]
         out[k] = acc.view(ring[dt]).astype(np.float64) / 2.0 ** frac_bits / total_n
+    return out
+
+
+# ---- Shamir 秘密分享自我遮罩種子（SecAgg 的做法）----
+# VD 上傳時把自我遮罩種子切成 n 份、各用和持有者之間的金鑰加密，經伺服器轉交。復原時 VD 不直接交出自己的種子，
+# 改由其他 VD 交出「名單上在線」的那些 VD 的份。每台 VD 對同一台只會交出成對種子（說它斷線）或份（說它在線）其中一種，
+# 惡意伺服器對不同 VD 送不同名單也拿不到同一台的兩種種子；在線卻在復原時沉默的 VD，伺服器湊滿門檻份數就能還原。
+SHAMIR_P = 2 ** 521 - 1  # 梅森質數，比 256 位元的種子大
+_SHARE_LEN = 66
+
+
+def shamir_threshold(n: int) -> int:
+    """門檻：過半數。少於這麼多份的 VD（和伺服器）合謀，還原不出任何一台的自我遮罩種子。"""
+    return int(n) // 2 + 1
+
+
+def shamir_split(secret: bytes, ids, t: int) -> dict[int, int]:
+    # 係數由種子導出（HKDF）：同一顆種子重算得到同樣的份，加密時就不會用同一個 nonce 加密不同明文
+    stream = HKDF(hashes.SHA512(), 66 * max(int(t) - 1, 1), None, b"secagg-shamir-coeffs").derive(secret)
+    coeffs = [int.from_bytes(secret, "big")] + [int.from_bytes(stream[66 * i:66 * (i + 1)], "big") % SHAMIR_P
+                                                for i in range(int(t) - 1)]
+    out = {}
+    for j in ids:
+        x, y = int(j) + 1, 0
+        for c in reversed(coeffs):
+            y = (y * x + c) % SHAMIR_P
+        out[int(j)] = y
+    return out
+
+
+def seed_tag(seed: bytes) -> int:
+    """種子的承諾（SHA-256 前 6 bytes：指標會經過 float，2^53 以內才不失真）：伺服器用它檢查還原出的種子對不對（被交錯的份就對不上）。"""
+    return int.from_bytes(hashlib.sha256(b"secagg-self-tag" + seed).digest()[:6], "big")
+
+
+def shamir_combine(shares: dict) -> bytes | None:
+    """Lagrange 內插求 x=0 的值；份數不足或份被改過時幾乎一定得到 ≥ 2^256 的數，回傳 None。"""
+    if not shares:
+        return None
+    xs = {int(j): int(j) + 1 for j in shares}
+    s = 0
+    for j, y in shares.items():
+        num = den = 1
+        for k, xk in xs.items():
+            if k != int(j):
+                num = num * (-xk) % SHAMIR_P
+                den = den * (xs[int(j)] - xk) % SHAMIR_P
+        s = (s + int(y) * num * pow(den, -1, SHAMIR_P)) % SHAMIR_P
+    return s.to_bytes(32, "big") if s < 2 ** 256 else None
+
+
+def _share_aead(my_priv: X25519PrivateKey, their_pub: X25519PublicKey) -> ChaCha20Poly1305:
+    return ChaCha20Poly1305(HKDF(hashes.SHA256(), 32, None, b"secagg-share").derive(my_priv.exchange(their_pub)))
+
+
+def _share_aad(owner: int, holder: int, rnd: int, run: int) -> bytes:
+    return f"secagg-share|{int(run)}|{int(rnd)}|{int(owner)}|{int(holder)}".encode()
+
+
+def encrypt_shares(secret: bytes, me: int, pids, my_priv: X25519PrivateKey, pubs: dict, rnd: int, run: int = 0,
+                   t: int | None = None) -> dict[int, str]:
+    """切份並各自加密給持有者（只有持有者解得開；AAD 綁執行、輪次、擁有者、持有者）。"""
+    pids = [int(j) for j in pids]
+    shares = shamir_split(secret, pids, t or shamir_threshold(len(pids)))
+    out = {}
+    for j, y in shares.items():
+        aad = _share_aad(me, j, rnd, run)
+        out[j] = _share_aead(my_priv, pubs[j]).encrypt(hashlib.sha256(aad).digest()[:12],
+                                                       y.to_bytes(_SHARE_LEN, "big"), aad).hex()
+    return out
+
+
+def open_share(ct: str, owner: int, holder: int, holder_priv: X25519PrivateKey, pubs: dict, rnd: int,
+               run: int = 0) -> int | None:
+    aad = _share_aad(owner, holder, rnd, run)
+    try:
+        y = _share_aead(holder_priv, pubs[int(owner)]).decrypt(hashlib.sha256(aad).digest()[:12],
+                                                               bytes.fromhex(str(ct)), aad)
+    except (InvalidTag, ValueError, TypeError, KeyError):
+        return None
+    return int.from_bytes(y, "big") if len(y) == _SHARE_LEN else None
+
+
+def seal_shares(shares: dict, me: int, my_priv: X25519PrivateKey, server_pub: X25519PublicKey, rnd: int,
+                run: int = 0) -> dict[int, str]:
+    """VD 把解開的份再加密給伺服器（和種子用同一把金鑰，AAD 標明是份）。"""
+    aead = _seal_aead(my_priv, server_pub)
+    out = {}
+    for i, y in shares.items():
+        aad = _seal_aad(me, i, rnd, run, "share")
+        out[int(i)] = aead.encrypt(hashlib.sha256(aad).digest()[:12], int(y).to_bytes(_SHARE_LEN, "big"), aad).hex()
+    return out
+
+
+def open_shares(sealed: dict, me: int, server_priv: X25519PrivateKey, vd_pub: X25519PublicKey, rnd: int,
+                run: int = 0) -> dict[int, int] | None:
+    aead, out = _seal_aead(server_priv, vd_pub), {}
+    for i, x in sealed.items():
+        aad = _seal_aad(me, i, rnd, run, "share")
+        try:
+            y = aead.decrypt(hashlib.sha256(aad).digest()[:12], bytes.fromhex(str(x)), aad)
+        except (InvalidTag, ValueError, TypeError):
+            return None
+        if len(y) != _SHARE_LEN:
+            return None
+        out[int(i)] = int.from_bytes(y, "big")
     return out
