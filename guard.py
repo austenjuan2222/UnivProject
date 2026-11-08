@@ -520,12 +520,27 @@ class GuardedStrategy(Strategy):
         if self._priv is not None:  # 沒簽的話，沒有 TLS 時中間人可以假造「某台斷線」來解開它已送達的遮罩
             ask["sig"] = sign_recover(self._priv, rnd, dropped, self._run_id())
         owners = sorted(alive)
+        macs = {}
+        if self.secagg_shamir:
+            # 一致性回合：每台替收到的名單向別台做 MAC，伺服器只負責轉交（改不了、偽造不了）
+            q0 = RecordDict({"secagg": ConfigRecord({**ask, "phase": "consist"})})
+            for r in self._grid.send_and_receive(
+                    [Message(content=q0, message_type="query", dst_node_id=n) for n in alive.values()], timeout=120):
+                try:
+                    pid0 = int(r.content["secagg"]["pid"])
+                    m0 = [str(x) for x in r.content["secagg"]["macs"]]
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    continue  # 沒回或回錯：少一份證明，門檻由 VD 自己檢查
+                if alive.get(pid0) == r.metadata.src_node_id and len(m0) == self.secure_agg_clients:
+                    macs[pid0] = m0
 
         def query(j):
             c = dict(ask)
-            if self.secagg_shamir:  # 每台只拿到「別人要給它」的那份密文
+            if self.secagg_shamir:  # 每台只拿到「別人要給它」的那份密文，加上別人替名單做的證明
                 c["share-owners"] = owners
                 c["share-cts"] = [self._shares[i][j] for i in owners]
+                frm = sorted(i for i in macs if i != j)
+                c["attest-from"], c["attest-macs"] = frm, [macs[i][j] for i in frm]
             return RecordDict({"secagg": ConfigRecord(c)})
         replies = list(self._grid.send_and_receive(
             [Message(content=query(pid), message_type="query", dst_node_id=n) for pid, n in alive.items()],

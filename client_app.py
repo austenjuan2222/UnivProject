@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 import warnings
@@ -19,7 +20,7 @@ from flwr.clientapp import ClientApp
 from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
-from secagg import (count_clipped, encrypt_shares, load_agreement_keys, mask_update, open_share, reveal_seeds,
+from secagg import (consist_mac, consistency_threshold, count_clipped, encrypt_shares, load_agreement_keys, mask_update, open_share, reveal_seeds,
                     seal_seeds, seal_shares, seed_tag, self_seed)
 from security import (adaptive_shrink, drops_out, hide_congestion, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key, verify_recover,
                       poison_update, verify_model)
@@ -281,7 +282,8 @@ def claim_mask_round(context: Context, rnd: int) -> None:
     st = context.state[SECAGG_STATE_KEY] if SECAGG_STATE_KEY in context.state else None
     if st is not None and int(st["masked-round"]) >= int(rnd):
         raise RuntimeError(f"第 {rnd} 輪已經遮罩過（或比上次更舊），拒絕重新遮罩")
-    context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": int(rnd), "revealed-round": -1})
+    context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": int(rnd), "revealed-round": -1,
+                                                    "attested-round": -1})
 
 
 @app.query()
@@ -291,7 +293,9 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
     n = int(context.node_config["num-partitions"])
     q = msg.content["secagg"]
     rnd, dropped = int(q["round"]), sorted({int(j) for j in q["dropped"]})
-    if drops_out(int(context.run_config.get("seed", 0)), pid, rnd + 100_000,
+    consist = str(q["phase"]) == "consist" if "phase" in q else False
+    # shortcut: 只模擬復原時斷線，一致性回合大家都回；要模擬一致性回合斷線時再加
+    if not consist and drops_out(int(context.run_config.get("seed", 0)), pid, rnd + 100_000,
                  float(context.run_config.get("secagg-recover-dropout", 0.0))):
         # 模擬：上傳後、復原時才斷線的 VD
         raise RuntimeError(f"VD {pid} 第 {rnd} 輪復原時斷線（模擬）")
@@ -306,14 +310,37 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
     if not (sig and verify_recover(load_server_public_key(str(context.run_config.get("key-dir", "keys"))),
                                    rnd, dropped, sig, context.run_id)):
         raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪沒有伺服器簽章的斷線復原請求")
-    # shortcut: 伺服器仍可謊稱「某一台」斷線而解開它的遮罩；完整 SecAgg+ 用雙重遮罩＋秘密分享防止
-    context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": rnd})
     priv, pubs = load_agreement_keys(str(context.run_config.get("key-dir", "keys")), pid)
-    seeds = seal_seeds(reveal_seeds(pid, dropped, priv, pubs, rnd, context.run_id), pid, priv, pubs["server"], rnd,
-                       context.run_id)
-    # 雙重遮罩：自己在線（不在斷線名單）才交出自我遮罩種子，同樣加密給伺服器
-    reply = {"pid": pid, "dropped": list(seeds), "seeds": list(seeds.values())}
-    if bool(context.run_config.get("secagg-shamir", False)):
+    att_round = int(st["attested-round"]) if "attested-round" in st else -1
+    att_key = SECAGG_STATE_KEY + "-attested"
+    # 存整份名單（不存短雜湊：48 bits 的雜湊伺服器可以離線找碰撞，讓 VD 替一份名單作證、卻算進另一份）
+    att_list = str(context.state[att_key]["list"]) if att_key in context.state else ""
+    shamir = bool(context.run_config.get("secagg-shamir", False))
+    if shamir and n - len(dropped) < consistency_threshold(n):
+        # 在線的少於一致性門檻：證明一定湊不滿，直接拒絕（例如 n=3 有任何一台斷線）
+        raise RuntimeError(f"VD {pid} 第 {rnd} 輪在線 VD 不足一致性門檻，無法復原")
+    if consist:
+        # 一致性回合：替自己收到的名單向每台 VD 做 MAC；每輪只做一次（不能替兩份名單作證）
+        if att_round == rnd:
+            raise RuntimeError(f"VD {pid} 第 {rnd} 輪已經證明過名單")
+        context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": int(st["revealed-round"]),
+                                                        "attested-round": rnd})
+        context.state[att_key] = ConfigRecord({"list": json.dumps(dropped)})
+        macs = ["" if j == pid else consist_mac(priv, pubs[j], pid, j, rnd, context.run_id, dropped)
+                for j in range(n)]
+        return Message(content=RecordDict({"secagg": ConfigRecord({"pid": pid, "macs": macs})}), reply_to=msg)
+    reply = {"pid": pid}
+    if shamir:
+        # 秘密分享要先過一致性回合：自己證明過同一份名單，而且湊滿 2n/3+1 份（含自己）別人對同一份名單的證明，
+        # 不然惡意伺服器可以對不同 VD 說不同名單，同時拿到某台的份和它的所有成對種子
+        frm = [int(i) for i in q["attest-from"]] if "attest-from" in q else []
+        macs = [str(x) for x in q["attest-macs"]] if "attest-macs" in q else []
+        import hmac
+        ok = {i for i, m in zip(frm, macs) if 0 <= i < n and i != pid and i not in dropped
+              and hmac.compare_digest(m, consist_mac(priv, pubs[i], i, pid, rnd, context.run_id, dropped))}
+        if (att_round != rnd or att_list != json.dumps(dropped) or len(frm) != len(macs)
+                or len(ok) + 1 < consistency_threshold(n)):
+            raise RuntimeError(f"VD {pid} 第 {rnd} 輪的斷線名單沒有足夠一致的證明")
         # 秘密分享：不直接交出自己的種子，改交出名單上在線的 VD 的份；說它斷線的那台一律不交（只給成對種子）
         owners = [int(i) for i in q["share-owners"]] if "share-owners" in q else []
         cts = [str(x) for x in q["share-cts"]] if "share-cts" in q else []
@@ -326,8 +353,15 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         sealed = seal_shares(got, pid, priv, pubs["server"], rnd, context.run_id)
         reply["share-owners"], reply["shares"] = list(sealed), list(sealed.values())
     elif bool(context.run_config.get("secagg-self-mask", True)):
+        # 雙重遮罩（沒有秘密分享）：自己在線才交出自我遮罩種子，同樣加密給伺服器
         reply["self"] = seal_seeds({pid: self_seed(priv, pid, rnd, context.run_id).hex()}, pid, priv, pubs["server"],
                                    rnd, context.run_id)[pid]
+    # 所有檢查都過了才記下「這輪答過」（格式錯的請求不會耗掉唯一一次回答）
+    context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": rnd,
+                                                    "attested-round": att_round})
+    seeds = seal_seeds(reveal_seeds(pid, dropped, priv, pubs, rnd, context.run_id), pid, priv, pubs["server"], rnd,
+                       context.run_id)
+    reply["dropped"], reply["seeds"] = list(seeds), list(seeds.values())
     return Message(content=RecordDict({"secagg": ConfigRecord(reply)}), reply_to=msg)
 
 

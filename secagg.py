@@ -269,6 +269,20 @@ def shamir_combine(shares: dict) -> bytes | None:
     return s.to_bytes(32, "big") if s < 2 ** 256 else None
 
 
+def consistency_threshold(n: int) -> int:
+    """名單一致性回合要湊滿的相同證明數（含自己）。"""
+    return 2 * int(n) // 3 + 1
+
+
+def consist_mac(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, sender: int, receiver: int, rnd: int,
+                run: int, dropped) -> str:
+    """sender 向 receiver 證明「我收到的斷線名單是 dropped」：用兩兩之間的金鑰，伺服器轉交時改不了也偽造不了。"""
+    import hmac
+    key = HKDF(hashes.SHA256(), 32, None, b"secagg-consist").derive(my_priv.exchange(their_pub))
+    msg = f"secagg-consist|{int(run)}|{int(rnd)}|{int(sender)}|{int(receiver)}|{sorted(int(j) for j in dropped)}"
+    return hmac.new(key, msg.encode(), hashlib.sha256).hexdigest()
+
+
 def _share_aead(my_priv: X25519PrivateKey, their_pub: X25519PublicKey) -> ChaCha20Poly1305:
     return ChaCha20Poly1305(HKDF(hashes.SHA256(), 32, None, b"secagg-share").derive(my_priv.exchange(their_pub)))
 
