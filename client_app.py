@@ -283,13 +283,17 @@ def _vd_key(cfg, pid):
             else load_vd_key(cfg["key_dir"], pid))  # 只讀自己的金鑰
 
 
+def _hex(x) -> str:
+    return x.hex() if isinstance(x, bytes) else str(x)
+
+
 def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int, rec) -> tuple:
     """驗證伺服器轉交的臨時公鑰：每一把都要有擁有者用兩兩長期金鑰做的 MAC，自己那把要是自己的。"""
     import hmac
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
     eph = ephemeral_key(priv, pid, rnd, run)
     try:
-        epubs, macs = [str(x) for x in rec["epubs"]], [str(x) for x in rec["macs"]]
+        epubs, macs = [_hex(x) for x in rec["epubs"]], [_hex(x) for x in rec["macs"]]
         if len(epubs) != n or len(macs) != n or epubs[pid] != eph.public_key().public_bytes_raw().hex():
             raise ValueError
         if not all(hmac.compare_digest(macs[i], epub_mac(priv, pubs[i], i, pid, rnd, run, epubs[i]))
@@ -331,8 +335,10 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         epub = eph.public_key().public_bytes_raw().hex()
         macs = ["" if j == pid else epub_mac(priv, pubs[j], pid, j, rnd, context.run_id, epub) for j in range(n)]
         cts = encrypt_shares(eph_bytes(eph), pid, range(n), priv, pubs, rnd, context.run_id, kind="eshare")
+        # 二進位傳（LPWAN 上十六進位會多一倍）
         return Message(content=RecordDict({"secagg": ConfigRecord(
-            {"pid": pid, "epub": epub, "epub-macs": macs, "eshares": [cts[j] for j in range(n)]})}), reply_to=msg)
+            {"pid": pid, "epub": bytes.fromhex(epub), "epub-macs": [bytes.fromhex(m) for m in macs],
+             "eshares": [bytes.fromhex(cts[j]) for j in range(n)]})}), reply_to=msg)
     consist = phase == "consist"
     # shortcut: 只模擬復原時斷線，一致性回合大家都回；要模擬一致性回合斷線時再加
     if not consist and drops_out(int(context.run_config.get("seed", 0)), pid, rnd + 100_000,

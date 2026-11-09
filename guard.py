@@ -261,6 +261,10 @@ class ValidationFilter:
         return out
 
 
+def _hex(x) -> str:
+    return x.hex() if isinstance(x, bytes) else str(x)
+
+
 def secure_average(contents: list[RecordDict], expected: int, revealed: dict | None = None,
                    base: dict | None = None, frac_bits: int = 12, bits: int | None = None) -> ArrayRecord | None:
     """安全聚合：加總遮罩後的更新再除以總樣本數。少了 VD 時，需要在線 VD 交出的成對種子（revealed）
@@ -375,8 +379,10 @@ class GuardedStrategy(Strategy):
                 timeout=120):
             try:
                 c = r.content["secagg"]
-                pid, epub = int(c["pid"]), str(c["epub"])
-                m0, e0 = [str(x) for x in c["epub-macs"]], [str(x) for x in c["eshares"]]
+                if not all(isinstance(x, bytes) for x in [c["epub"], *c["epub-macs"], *c["eshares"]]):
+                    continue  # 只收二進位（之後要 bytes.fromhex 轉回去，字串可能不是合法十六進位）
+                pid, epub = int(c["pid"]), _hex(c["epub"])
+                m0, e0 = [_hex(x) for x in c["epub-macs"]], [_hex(x) for x in c["eshares"]]
             except (KeyError, TypeError, ValueError, AttributeError):
                 continue
             if 0 <= pid < n and pid not in pid_of.values() and len(m0) == n and len(e0) == n \
@@ -393,8 +399,9 @@ class GuardedStrategy(Strategy):
                 out.append(m)
                 continue
             content = RecordDict(dict(m.content.items()))  # 同一輪的訊息共用 RecordDict，每台要自己的一份
-            content["secagg-eph"] = ConfigRecord({"epubs": [self._epubs[i] for i in range(n)],
-                                                  "macs": ["" if i == pid else macs[i][pid] for i in range(n)]})
+            content["secagg-eph"] = ConfigRecord({"epubs": [bytes.fromhex(self._epubs[i]) for i in range(n)],
+                                                  "macs": [b"" if i == pid else bytes.fromhex(macs[i][pid])
+                                                           for i in range(n)]})
             m.content = content
             out.append(m)
         return out

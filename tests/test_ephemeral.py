@@ -141,6 +141,31 @@ class EphemeralTest(unittest.TestCase):
                 for i in range(5)]
         self.assertIsNone(self.g._recover(RND, kept))
 
+    def test_advertise_payload_is_binary(self):
+        # LPWAN：公告回合的公鑰、MAC、份都用二進位傳（十六進位會多一倍）
+        q = ConfigRecord({"round": RND, "phase": "advertise"})
+        c = secagg_recover_fn(Message(content=RecordDict({"secagg": q}), dst_node_id=100, message_type="query"),
+                              self.ctxs[0]).content["secagg"]
+        up = [c["epub"], *c["epub-macs"], *c["eshares"]]
+        self.assertTrue(all(isinstance(x, bytes) for x in up))
+        self.assertLessEqual(sum(len(x) for x in up), 32 + 32 * (N - 1) + 82 * N)
+        rec = self._train_msgs()[1].content["secagg-eph"]
+        self.assertTrue(all(isinstance(x, bytes) for x in [*rec["epubs"], *rec["macs"]]))
+
+    def test_non_binary_advertise_reply_is_ignored(self):
+        # 惡意 VD 回十六進位以外的字串：伺服器忽略它（這輪不附公鑰），不能在 configure_train 裡當掉
+        inner = self.g._grid
+
+        class Bad:
+            def send_and_receive(self, messages, timeout=None):
+                out = inner.send_and_receive(messages, timeout)
+                c = dict(out[0].content["secagg"])
+                c["epub-macs"] = ["zz"] * N
+                return [Message(content=RecordDict({"secagg": ConfigRecord(c)}), reply_to=messages[0])] + out[1:]
+        self.g._grid = Bad()
+        msgs = self._train_msgs()
+        self.assertNotIn("secagg-eph", msgs[1].content.keys())
+
 
 if __name__ == "__main__":
     unittest.main()
