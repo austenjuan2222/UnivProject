@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 from flwr.app import Array, ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 
-from client_app import claim_mask_round, pair_keys_from_config, secagg_recover_fn
+from client_app import ADV_KEY, claim_mask_round, pair_keys_from_config, secagg_recover_fn
 from guard import GuardedStrategy, secure_average
 from secagg import (encrypt_shares, load_agreement_keys, load_agreement_pubs, load_server_agreement_key, mask_update,
                     neighbors, provision_agreement_keys, seed_tag, self_seed, share_threshold)
@@ -73,7 +73,7 @@ class NeighborRecoveryTest(unittest.TestCase):
         self.pubs = load_agreement_pubs(d)
         self.privs = {i: load_agreement_keys(d, i)[0] for i in range(N)}
         self.ctxs = {i: Context(run_id=0, node_id=100 + i, node_config={"partition-id": i, "num-partitions": N},
-                                state=RecordDict(),
+                                state=RecordDict({ADV_KEY: MetricRecord({"round": RND - 1})}),
                                 run_config={"key-dir": d, "secagg-shamir": True, "secagg-neighbors": K})
                      for i in range(N)}
         self.silent = set()
@@ -111,6 +111,7 @@ class NeighborRecoveryTest(unittest.TestCase):
                               self.ctxs[0]).content["secagg"]
         self.assertEqual(sum(1 for x in c["eshares"] if x), K)
         self.assertEqual(sum(1 for x in c["epub-macs"] if x), K)
+        self.ctxs[0].state[ADV_KEY] = MetricRecord({"round": RND - 1})  # 上面已直接公告過這輪
         rec = self._train_msgs()[0].content["secagg-eph"]
         self.assertEqual(sum(1 for x in rec["epubs"] if x), K + 1)  # 鄰居＋自己
 
@@ -121,6 +122,20 @@ class NeighborRecoveryTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             secagg_recover_fn(Message(content=RecordDict({"secagg": q}), dst_node_id=100, message_type="query"),
                               self.ctxs[0])
+
+    def test_advertise_rounds_must_be_consecutive(self):
+        # 伺服器不能跳輪次挑一張對它有利的鄰居圖：公告回合只接受上一輪＋1
+        ctx = self.ctxs[0]
+
+        def adv(r):
+            q = ConfigRecord({"round": r, "phase": "advertise"})
+            return secagg_recover_fn(Message(content=RecordDict({"secagg": q}), dst_node_id=100, message_type="query"),
+                                     ctx)
+        adv(RND)
+        for r in (RND, RND + 2, RND - 1):  # 重送、跳輪、倒退
+            with self.assertRaises(RuntimeError):
+                adv(r)
+        adv(RND + 1)
 
     def test_train_dropout_plus_silent_recovery_gives_exact_average(self):
         msgs = self._train_msgs()

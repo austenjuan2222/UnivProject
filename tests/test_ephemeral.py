@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 from flwr.app import Array, ArrayRecord, ConfigRecord, Message, MetricRecord, RecordDict
 
-from client_app import SECAGG_STATE_KEY, claim_mask_round, pair_keys_from_config, secagg_recover_fn
+from client_app import ADV_KEY, SECAGG_STATE_KEY, claim_mask_round, pair_keys_from_config, secagg_recover_fn
 from guard import GuardedStrategy, secure_average
 from secagg import (encrypt_shares, ephemeral_key, load_agreement_keys, load_agreement_pubs,
                     load_server_agreement_key, mask_update, open_share, provision_agreement_keys, seed_tag, self_seed)
@@ -33,7 +33,7 @@ class EphemeralTest(unittest.TestCase):
         from flwr.app import Context
         for i in range(N):
             self.ctxs[i] = Context(run_id=0, node_id=100 + i, node_config={"partition-id": i, "num-partitions": N},
-                                   state=RecordDict(), run_config={"key-dir": d, "secagg-shamir": True})
+                                   state=RecordDict({ADV_KEY: MetricRecord({"round": RND - 1})}), run_config={"key-dir": d, "secagg-shamir": True})
         self.silent = set()
         test = self
 
@@ -149,6 +149,7 @@ class EphemeralTest(unittest.TestCase):
         up = [c["epub"], *c["epub-macs"], *c["eshares"]]
         self.assertTrue(all(isinstance(x, bytes) for x in up))
         self.assertLessEqual(sum(len(x) for x in up), 32 + 32 * (N - 1) + 82 * N)
+        self.ctxs[0].state[ADV_KEY] = MetricRecord({"round": RND - 1})  # 上面已直接公告過這輪
         rec = self._train_msgs()[1].content["secagg-eph"]
         self.assertTrue(all(isinstance(x, bytes) for x in [*rec["epubs"], *rec["macs"]]))
 

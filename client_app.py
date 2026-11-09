@@ -311,6 +311,9 @@ def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int
         raise RuntimeError(f"VD {pid} 第 {rnd} 輪的臨時公鑰驗證失敗") from None
 
 
+ADV_KEY = SECAGG_STATE_KEY + "-advertised"  # 上次公告的輪次
+
+
 def claim_mask_round(context: Context, rnd: int) -> None:
     """每輪只遮罩一次：重送同一輪（或更舊）的訓練請求會重設「每輪只回答一次復原」，讓惡意伺服器問兩次不同名單。"""
     st = context.state[SECAGG_STATE_KEY] if SECAGG_STATE_KEY in context.state else None
@@ -334,6 +337,12 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
                 and bool(context.run_config.get("secagg-self-mask", True))):
             # 沒有自我遮罩時交出臨時私鑰的份，伺服器謊稱這台斷線就能解開它的更新
             raise RuntimeError(f"VD {pid} 沒開秘密分享＋自我遮罩，不公告臨時金鑰")
+        # 輪次只能連續往前（第一次是 1）：鄰居圖由 (run, 輪次) 決定，伺服器跳輪就能挑一張對它有利的圖
+        last = int(context.state[ADV_KEY]["round"]) if ADV_KEY in context.state else 0
+        if rnd != last + 1:
+            raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪公告：上次是第 {last} 輪")
+        context.state[ADV_KEY] = MetricRecord({"round": rnd})
+        # shortcut: run_id 仍由伺服器決定，可離線試；要更強時改用 VD 共同 commit-reveal 的亂數當洗牌種子
         priv, pubs = load_agreement_keys(str(context.run_config.get("key-dir", "keys")), pid)
         eph = ephemeral_key(priv, pid, rnd, context.run_id)
         epub = eph.public_key().public_bytes_raw().hex()
