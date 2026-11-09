@@ -255,13 +255,13 @@ def train_fn(msg: Message, context: Context) -> Message:
                                                                          msg.content["secagg-eph"],
                                                                          k=cfg["secagg_neighbors"])
         k = cfg["secagg_neighbors"] if cfg["secagg_shamir"] else 0
-        masked = mask_update(delta, len(d["y_train"]), pid, neighbors(pid, n, k), priv, pubs, rnd, context.run_id,
+        masked = mask_update(delta, len(d["y_train"]), pid, neighbors(pid, n, k, rnd, context.run_id), priv, pubs, rnd, context.run_id,
                              self_mask=cfg["secagg_self_mask"], **ring, **pair, num_vd=n)
         claim_mask_round(context, rnd)
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
         if cfg["secagg_shamir"]:  # 自我遮罩種子切份、各自加密給持有者，經伺服器轉交
             b = self_seed(priv, pid, rnd, context.run_id)
-            shares = encrypt_shares(b, pid, share_holders(pid, n, k), priv, pubs, rnd, context.run_id,
+            shares = encrypt_shares(b, pid, share_holders(pid, n, k, rnd, context.run_id), priv, pubs, rnd, context.run_id,
                                     t=share_threshold(n, k))
             metrics["secagg-self-tag"] = seed_tag(b)  # HMAC 涵蓋：伺服器還原後拿來比對
         metrics["secagg-num-vd"] = n
@@ -300,8 +300,8 @@ def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int
         epubs, macs = [_hex(x) for x in rec["epubs"]], [_hex(x) for x in rec["macs"]]
         if len(epubs) != n or len(macs) != n or epubs[pid] != eph.public_key().public_bytes_raw().hex():
             raise ValueError
-        nb = neighbors(pid, n, k)  # 只需要（也只驗）鄰居的臨時公鑰
-        if not all(hmac.compare_digest(macs[i], epub_mac(priv, pubs[i], i, pid, rnd, run, epubs[i])) for i in nb):
+        nb = neighbors(pid, n, k, rnd, run)  # 只需要（也只驗）鄰居的臨時公鑰
+        if not all(hmac.compare_digest(macs[i], epub_mac(priv, pubs[i], i, pid, rnd, run, epubs[i], k=k)) for i in nb):
             raise ValueError
         keys = {i: X25519PublicKey.from_public_bytes(bytes.fromhex(epubs[i])) for i in nb}
         for i in nb:
@@ -338,8 +338,11 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         eph = ephemeral_key(priv, pid, rnd, context.run_id)
         epub = eph.public_key().public_bytes_raw().hex()
         k = int(context.run_config.get("secagg-neighbors", 0))
-        nb, hold = set(neighbors(pid, n, k)), share_holders(pid, n, k)
-        macs = [epub_mac(priv, pubs[j], pid, j, rnd, context.run_id, epub) if j in nb else "" for j in range(n)]
+        floor = int(context.node_config.get("secagg-min-neighbors", 0))  # VD 本地設定，伺服器改不了
+        if k and k < floor:
+            raise RuntimeError(f"VD {pid} 拒絕 k={k}：低於本地下限 {floor}")
+        nb, hold = set(neighbors(pid, n, k, rnd, context.run_id)), share_holders(pid, n, k, rnd, context.run_id)
+        macs = [epub_mac(priv, pubs[j], pid, j, rnd, context.run_id, epub, k=k) if j in nb else "" for j in range(n)]
         cts = encrypt_shares(eph_bytes(eph), pid, hold, priv, pubs, rnd, context.run_id, t=share_threshold(n, k),
                              kind="eshare")
         # 二進位傳（LPWAN 上十六進位會多一倍）
@@ -369,6 +372,7 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
     # 存整份名單（不存短雜湊：48 bits 的雜湊伺服器可以離線找碰撞，讓 VD 替一份名單作證、卻算進另一份）
     att_list = str(context.state[att_key]["list"]) if att_key in context.state else ""
     shamir = bool(context.run_config.get("secagg-shamir", False))
+    knb = int(context.run_config.get("secagg-neighbors", 0)) if shamir else 0
     if shamir and n - len(dropped) < consistency_threshold(n):
         # 在線的少於一致性門檻：證明一定湊不滿，直接拒絕（例如 n=3 有任何一台斷線）
         raise RuntimeError(f"VD {pid} 第 {rnd} 輪在線 VD 不足一致性門檻，無法復原")
@@ -379,11 +383,10 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": int(st["revealed-round"]),
                                                         "attested-round": rnd})
         context.state[att_key] = ConfigRecord({"list": json.dumps(dropped)})
-        macs = ["" if j == pid else consist_mac(priv, pubs[j], pid, j, rnd, context.run_id, dropped)
+        macs = ["" if j == pid else consist_mac(priv, pubs[j], pid, j, rnd, context.run_id, dropped, k=knb)
                 for j in range(n)]
         return Message(content=RecordDict({"secagg": ConfigRecord({"pid": pid, "macs": macs})}), reply_to=msg)
     reply = {"pid": pid}
-    knb = int(context.run_config.get("secagg-neighbors", 0))
     if shamir:
         # 秘密分享要先過一致性回合：自己證明過同一份名單，而且湊滿 2n/3+1 份（含自己）別人對同一份名單的證明，
         # 不然惡意伺服器可以對不同 VD 說不同名單，同時拿到某台的份和它的所有成對種子
@@ -391,7 +394,7 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         macs = [str(x) for x in q["attest-macs"]] if "attest-macs" in q else []
         import hmac
         ok = {i for i, m in zip(frm, macs) if 0 <= i < n and i != pid and i not in dropped
-              and hmac.compare_digest(m, consist_mac(priv, pubs[i], i, pid, rnd, context.run_id, dropped))}
+              and hmac.compare_digest(m, consist_mac(priv, pubs[i], i, pid, rnd, context.run_id, dropped, k=knb))}
         if (att_round != rnd or att_list != json.dumps(dropped) or len(frm) != len(macs)
                 or len(ok) + 1 < consistency_threshold(n)):
             raise RuntimeError(f"VD {pid} 第 {rnd} 輪的斷線名單沒有足夠一致的證明")
@@ -399,7 +402,7 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         owners = [int(i) for i in q["share-owners"]] if "share-owners" in q else []
         cts = [str(x) for x in q["share-cts"]] if "share-cts" in q else []
         # 份只給「名單上在線」的那些 VD，而且要剛好是名單的補集（不能挑著要）
-        held = set(range(n)) if not knb else set(neighbors(pid, n, knb))  # 我持有誰的份
+        held = set(range(n)) if not knb else set(neighbors(pid, n, knb, rnd, context.run_id))  # 我持有誰的份
         if len(owners) != len(cts) or sorted(owners) != sorted(held - set(dropped)):
             raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪交出斷線 VD 的份")
         got = {i: open_share(ct, i, pid, priv, pubs, rnd, context.run_id) for i, ct in zip(owners, cts)}

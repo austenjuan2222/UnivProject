@@ -390,8 +390,8 @@ class GuardedStrategy(Strategy):
                 continue
             if 0 <= pid < n and pid not in pid_of.values() and len(m0) == n and len(e0) == n \
                     and re.fullmatch(r"[0-9a-f]{64}", epub) \
-                    and {j for j, e in enumerate(e0) if e} == set(share_holders(pid, n, self.secagg_k)) \
-                    and {j for j, x in enumerate(m0) if x} == set(neighbors(pid, n, self.secagg_k)):
+                    and {j for j, e in enumerate(e0) if e} == set(share_holders(pid, n, self.secagg_k, rnd, self._run_id())) \
+                    and {j for j, x in enumerate(m0) if x} == set(neighbors(pid, n, self.secagg_k, rnd, self._run_id())):
                 self._epubs[pid], macs[pid], pid_of[r.metadata.src_node_id] = epub, m0, pid
                 self._eshares[pid] = {j: e for j, e in enumerate(e0) if e}
         # shortcut: 少了任何一台的公告就不附公鑰（VD 會拒絕遮罩、這輪作廢）；要支援部分 VD 先離線時，改成只在公告過的 VD 之間遮罩
@@ -404,7 +404,7 @@ class GuardedStrategy(Strategy):
                 out.append(m)
                 continue
             content = RecordDict(dict(m.content.items()))  # 同一輪的訊息共用 RecordDict，每台要自己的一份
-            nb = set(neighbors(pid, n, self.secagg_k))  # 只轉交鄰居的公鑰（LPWAN 下行）
+            nb = set(neighbors(pid, n, self.secagg_k, rnd, self._run_id()))  # 只轉交鄰居的公鑰（LPWAN 下行）
             content["secagg-eph"] = ConfigRecord({
                 "epubs": [bytes.fromhex(self._epubs[i]) if i in nb or i == pid else b"" for i in range(n)],
                 "macs": [bytes.fromhex(macs[i][pid]) if i in nb else b"" for i in range(n)]})
@@ -511,7 +511,8 @@ class GuardedStrategy(Strategy):
             # 沒附完整份數的 VD 在復原時無法替它還原自我遮罩，當成被拒絕（雙重遮罩下等於斷線）
             def ids(m):
                 pid = int(m.content["metrics"]["partition-id"])
-                return {str(j) for j in share_holders(pid, self.secure_agg_clients, self.secagg_k)}
+                return {str(j) for j in share_holders(pid, self.secure_agg_clients, self.secagg_k, server_round,
+                                                         self._run_id())}
             good = {id(m) for m in kept if id(m) in shares_of and set(shares_of[id(m)].keys()) == ids(m)}
             stats["n_rejected"] += len(kept) - len(good)
             kept = [m for m in kept if id(m) in good]
@@ -689,7 +690,7 @@ class GuardedStrategy(Strategy):
                 if ek is None or ek.public_key().public_bytes_raw().hex() != self._epubs.get(d):
                     return None  # 有人交了錯的份：和它公告的公鑰對不上
                 for i in owners:
-                    if d not in neighbors(i, self.secure_agg_clients, self.secagg_k):
+                    if d not in neighbors(i, self.secure_agg_clients, self.secagg_k, rnd, self._run_id()):
                         continue  # 不是鄰居就沒有成對遮罩
                     pub = X25519PublicKey.from_public_bytes(bytes.fromhex(self._epubs[i]))
                     revealed.setdefault(i, {})[d] = pair_seed(ek, pub, d, i, rnd, self._run_id()).hex()

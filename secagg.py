@@ -240,20 +240,24 @@ def shamir_threshold(n: int) -> int:
     return int(n) // 2 + 1
 
 
-def neighbors(i: int, n: int, k: int = 0) -> list[int]:
-    """SecAgg+ 的通訊圖：環上前後各 k/2 台（k=0 表示所有其他 VD）。對稱，成對遮罩才抵銷得掉。"""
+def neighbors(i: int, n: int, k: int = 0, rnd: int | None = None, run: int = 0) -> list[int]:
+    """SecAgg+ 的通訊圖：環上前後各 k/2 台（k=0 表示所有其他 VD）。對稱，成對遮罩才抵銷得掉。
+    給了 rnd 時，環上的順序每輪由 (run, rnd) 洗牌一次，攻擊者無法固定收買某台的鄰居。"""
     if not k:
         return [j for j in range(n) if j != i]
-    if k % 2 or not 2 <= k < n:
-        raise ValueError("secagg-neighbors 要是偶數，且 2 ≤ k < VD 數")
-    # shortcut: 固定的環狀圖，攻擊者事先知道誰是誰的鄰居；SecAgg+ 用每輪隨機圖讓攻擊者無法挑鄰居，要更強時再換
-    h = k // 2
-    return sorted({(i + d) % n for d in range(1, h + 1)} | {(i - d) % n for d in range(1, h + 1)})
+    if k % 2 or not 4 <= k < n:
+        raise ValueError("secagg-neighbors 要是偶數，且 4 ≤ k < VD 數（k=2 時斷一台就整輪失敗）")
+    order = list(range(n))
+    if rnd is not None:
+        # shortcut: 洗牌種子由 run、rnd 公開推得，能挑 run_id 的伺服器可以離線試；要更強時改用 VD 共同貢獻的亂數（commit-reveal）
+        order.sort(key=lambda j: hashlib.sha256(f"secagg-graph|{int(run)}|{int(rnd)}|{j}".encode()).digest())
+    p, h = order.index(i), k // 2
+    return sorted({order[(p + d) % n] for d in range(1, h + 1)} | {order[(p - d) % n] for d in range(1, h + 1)})
 
 
-def share_holders(i: int, n: int, k: int = 0) -> list[int]:
+def share_holders(i: int, n: int, k: int = 0, rnd: int | None = None, run: int = 0) -> list[int]:
     """誰持有 VD i 的份：k=0 是所有 VD（含自己），否則是它的 k 個鄰居。"""
-    return list(range(n)) if not k else neighbors(i, n, k)
+    return list(range(n)) if not k else neighbors(i, n, k, rnd, run)
 
 
 def share_threshold(n: int, k: int = 0) -> int:
@@ -318,17 +322,19 @@ def _pair_hmac(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, info: byte
 
 
 def epub_mac(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, sender: int, receiver: int, rnd: int, run: int,
-             epub: str) -> str:
-    """sender 向 receiver 證明「這是我這輪的臨時公鑰」：伺服器轉交時換成自己的公鑰會被發現。"""
+             epub: str, k: int = 0) -> str:
+    """sender 向 receiver 證明「這是我這輪的臨時公鑰」：伺服器轉交時換成自己的公鑰會被發現。
+    也綁鄰居數 k：伺服器給某台較小的 k（門檻跟著變小）時，兩邊的 MAC 對不上。"""
     return _pair_hmac(my_priv, their_pub, b"secagg-epub",
-                      f"secagg-epub|{int(run)}|{int(rnd)}|{int(sender)}|{int(receiver)}|{epub}")
+                      f"secagg-epub|{int(run)}|{int(rnd)}|{int(sender)}|{int(receiver)}|{epub}|k={int(k)}")
 
 
 def consist_mac(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, sender: int, receiver: int, rnd: int,
-                run: int, dropped) -> str:
+                run: int, dropped, k: int = 0) -> str:
     """sender 向 receiver 證明「我收到的斷線名單是 dropped」：用兩兩之間的金鑰，伺服器轉交時改不了也偽造不了。"""
     return _pair_hmac(my_priv, their_pub, b"secagg-consist",
-                      f"secagg-consist|{int(run)}|{int(rnd)}|{int(sender)}|{int(receiver)}|{sorted(int(j) for j in dropped)}")
+                      f"secagg-consist|{int(run)}|{int(rnd)}|{int(sender)}|{int(receiver)}|{sorted(int(j) for j in dropped)}"
+                      f"|k={int(k)}")
 
 
 def _share_aead(my_priv: X25519PrivateKey, their_pub: X25519PublicKey) -> ChaCha20Poly1305:

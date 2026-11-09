@@ -29,6 +29,26 @@ class GraphTest(unittest.TestCase):
         self.assertEqual(share_threshold(8, 4), 3)
         with self.assertRaises(ValueError):
             neighbors(0, 8, 3)  # 環狀圖要偶數
+        with self.assertRaises(ValueError):
+            neighbors(0, 8, 2)  # k=2 時門檻等於全部持有者，斷一台就整輪失敗
+
+    def test_graph_is_random_per_round(self):
+        # 每輪換一張圖：攻擊者無法固定收買某台的鄰居
+        a, b = neighbors(0, 32, 8, rnd=1, run=0), neighbors(0, 32, 8, rnd=2, run=0)
+        self.assertNotEqual(a, b)
+        self.assertEqual(len(a), 8)
+        for i in range(32):
+            for j in neighbors(i, 32, 8, rnd=1, run=0):
+                self.assertIn(i, neighbors(j, 32, 8, rnd=1, run=0))
+
+    def test_macs_bind_k(self):
+        # 伺服器給某台不同的 k，兩兩 MAC 就對不上
+        from secagg import consist_mac, epub_mac
+        d = tempfile.mkdtemp()
+        provision_agreement_keys(d, 2)
+        p0, pubs = load_agreement_keys(d, 0)[0], load_agreement_pubs(d)
+        self.assertNotEqual(epub_mac(p0, pubs[1], 0, 1, 3, 0, "ab", k=8), epub_mac(p0, pubs[1], 0, 1, 3, 0, "ab", k=4))
+        self.assertNotEqual(consist_mac(p0, pubs[1], 0, 1, 3, 0, [2], k=8), consist_mac(p0, pubs[1], 0, 1, 3, 0, [2], k=4))
 
     def test_mask_with_neighbors_still_cancels(self):
         # 只和鄰居遮罩，加總時還是全部抵銷（定點數範圍照總 VD 數算）
@@ -37,7 +57,7 @@ class GraphTest(unittest.TestCase):
         provision_agreement_keys(d, N)
         pubs = load_agreement_pubs(d)
         upd = {i: {"w": np.full((2, 2), 0.01 * i)} for i in range(N)}
-        masked = [mask_update(upd[i], 1, i, neighbors(i, N, K), load_agreement_keys(d, i)[0], pubs, RND,
+        masked = [mask_update(upd[i], 1, i, neighbors(i, N, K, rnd=RND), load_agreement_keys(d, i)[0], pubs, RND,
                               num_vd=N) for i in range(N)]
         got = unmask_sum(masked, N)
         np.testing.assert_allclose(got["w"], np.full((2, 2), 0.01 * sum(range(N)) / N), atol=1e-3)
@@ -94,6 +114,14 @@ class NeighborRecoveryTest(unittest.TestCase):
         rec = self._train_msgs()[0].content["secagg-eph"]
         self.assertEqual(sum(1 for x in rec["epubs"] if x), K + 1)  # 鄰居＋自己
 
+    def test_vd_refuses_k_below_its_floor(self):
+        # VD 自己設的最小鄰居數（node_config，伺服器改不了）
+        self.ctxs[0].node_config["secagg-min-neighbors"] = 8
+        q = ConfigRecord({"round": RND, "phase": "advertise"})
+        with self.assertRaises(RuntimeError):
+            secagg_recover_fn(Message(content=RecordDict({"secagg": q}), dst_node_id=100, message_type="query"),
+                              self.ctxs[0])
+
     def test_train_dropout_plus_silent_recovery_gives_exact_average(self):
         msgs = self._train_msgs()
         rng = np.random.default_rng(1)
@@ -106,10 +134,10 @@ class NeighborRecoveryTest(unittest.TestCase):
             eph, epubs = pair_keys_from_config(self.privs[i], self.pubs, i, N, RND, 0,
                                                msgs[i].content["secagg-eph"], k=K)
             claim_mask_round(self.ctxs[i], RND)
-            masked = mask_update(upd[i], n_ex[i], i, neighbors(i, N, K), self.privs[i], self.pubs, RND, 0,
+            masked = mask_update(upd[i], n_ex[i], i, neighbors(i, N, K, rnd=RND), self.privs[i], self.pubs, RND, 0,
                                  self_mask=True, pair_priv=eph, pair_pubs=epubs, num_vd=N)
             b = self_seed(self.privs[i], i, RND, 0)
-            self.g._shares[i] = encrypt_shares(b, i, neighbors(i, N, K), self.privs[i], self.pubs, RND, 0,
+            self.g._shares[i] = encrypt_shares(b, i, neighbors(i, N, K, rnd=RND), self.privs[i], self.pubs, RND, 0,
                                                t=share_threshold(N, K))
             self.g._self_hash[i] = seed_tag(b)
             contents.append(RecordDict({"arrays": ArrayRecord({k: Array(v) for k, v in masked.items()}),
@@ -123,16 +151,19 @@ class NeighborRecoveryTest(unittest.TestCase):
         np.testing.assert_allclose(np.asarray(got["w"].numpy()), want, atol=1e-3)
 
     def test_too_few_holders_gives_up(self):
-        # VD 1 的持有者 {0,2,3,9}：9 斷線、0 和 2 沉默，只剩 1 個 < 門檻 4 → 放棄（不默默算錯）
-        self.silent = {0, 2}
+        # VD 1 的 6 個持有者裡，1 台斷線、2 台沉默，只剩 3 個 < 門檻 4 → 放棄（不默默算錯）
+        h = neighbors(1, N, K, rnd=RND)
+        drop = h[0]
+        self.silent = set(h[1:3])
         msgs = self._train_msgs()
-        for i in range(9):
+        alive = [i for i in range(N) if i != drop]
+        for i in alive:
             claim_mask_round(self.ctxs[i], RND)
-            self.g._shares[i] = encrypt_shares(self_seed(self.privs[i], i, RND, 0), i, neighbors(i, N, K),
+            self.g._shares[i] = encrypt_shares(self_seed(self.privs[i], i, RND, 0), i, neighbors(i, N, K, rnd=RND),
                                                self.privs[i], self.pubs, RND, 0, t=share_threshold(N, K))
             self.g._self_hash[i] = seed_tag(self_seed(self.privs[i], i, RND, 0))
         kept = [Message(content=RecordDict({"metrics": MetricRecord({"partition-id": i})}), reply_to=msgs[i])
-                for i in range(9)]
+                for i in alive]
         self.assertIsNone(self.g._recover(RND, kept))
 
 
