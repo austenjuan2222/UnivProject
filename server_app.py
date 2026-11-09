@@ -228,7 +228,8 @@ def main(grid: Grid, context: Context) -> None:
                                secagg_self_mask=secure_agg and bool(cfg.get("secagg-self-mask", True)),
                                secagg_bits=int(cfg.get("secagg-bits", 32)),
                                secagg_frac_bits=int(cfg.get("secagg-frac-bits", 12)),
-                               secagg_shamir=secure_agg and bool(cfg.get("secagg-shamir", False)))
+                               secagg_shamir=secure_agg and bool(cfg.get("secagg-shamir", False)),
+                               secagg_neighbors=int(cfg.get("secagg-neighbors", 0)))
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))

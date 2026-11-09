@@ -20,7 +20,7 @@ from flwr.clientapp import ClientApp
 from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
-from secagg import (consist_mac, consistency_threshold, count_clipped, eph_bytes, ephemeral_key, epub_mac, encrypt_shares, load_agreement_keys, mask_update, open_share, reveal_seeds,
+from secagg import (neighbors, share_holders, share_threshold, consist_mac, consistency_threshold, count_clipped, eph_bytes, ephemeral_key, epub_mac, encrypt_shares, load_agreement_keys, mask_update, open_share, reveal_seeds,
                     seal_seeds, seal_shares, seed_tag, self_seed)
 from security import (adaptive_shrink, drops_out, hide_congestion, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key, verify_recover,
                       poison_update, verify_model)
@@ -74,6 +74,7 @@ def _cfg(context: Context) -> dict:
         "secure_agg": bool(c.get("secure-agg", False)),
         "secagg_self_mask": bool(c.get("secagg-self-mask", True)),
         "secagg_shamir": bool(c.get("secagg-shamir", False)),
+        "secagg_neighbors": int(c.get("secagg-neighbors", 0)),
         "secagg_bits": int(c.get("secagg-bits", 32)),
         "secagg_frac_bits": int(c.get("secagg-frac-bits", 12)),
         "upload_bits": int(c.get("upload-bits", 32)),
@@ -251,14 +252,17 @@ def train_fn(msg: Message, context: Context) -> Message:
             if not cfg["secagg_self_mask"] or "secagg-eph" not in msg.content.keys():
                 raise RuntimeError(f"VD {pid} 第 {rnd} 輪沒收到臨時公鑰，拒絕遮罩")
             pair["pair_priv"], pair["pair_pubs"] = pair_keys_from_config(priv, pubs, pid, n, rnd, context.run_id,
-                                                                         msg.content["secagg-eph"])
-        masked = mask_update(delta, len(d["y_train"]), pid, range(n), priv, pubs, rnd, context.run_id,
-                             self_mask=cfg["secagg_self_mask"], **ring, **pair)
+                                                                         msg.content["secagg-eph"],
+                                                                         k=cfg["secagg_neighbors"])
+        k = cfg["secagg_neighbors"] if cfg["secagg_shamir"] else 0
+        masked = mask_update(delta, len(d["y_train"]), pid, neighbors(pid, n, k), priv, pubs, rnd, context.run_id,
+                             self_mask=cfg["secagg_self_mask"], **ring, **pair, num_vd=n)
         claim_mask_round(context, rnd)
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
         if cfg["secagg_shamir"]:  # 自我遮罩種子切份、各自加密給持有者，經伺服器轉交
             b = self_seed(priv, pid, rnd, context.run_id)
-            shares = encrypt_shares(b, pid, range(n), priv, pubs, rnd, context.run_id)
+            shares = encrypt_shares(b, pid, share_holders(pid, n, k), priv, pubs, rnd, context.run_id,
+                                    t=share_threshold(n, k))
             metrics["secagg-self-tag"] = seed_tag(b)  # HMAC 涵蓋：伺服器還原後拿來比對
         metrics["secagg-num-vd"] = n
         metrics["secagg-bits"], metrics["secagg-frac-bits"] = cfg["secagg_bits"], cfg["secagg_frac_bits"]
@@ -287,7 +291,7 @@ def _hex(x) -> str:
     return x.hex() if isinstance(x, bytes) else str(x)
 
 
-def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int, rec) -> tuple:
+def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int, rec, k: int = 0) -> tuple:
     """驗證伺服器轉交的臨時公鑰：每一把都要有擁有者用兩兩長期金鑰做的 MAC，自己那把要是自己的。"""
     import hmac
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
@@ -296,11 +300,11 @@ def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int
         epubs, macs = [_hex(x) for x in rec["epubs"]], [_hex(x) for x in rec["macs"]]
         if len(epubs) != n or len(macs) != n or epubs[pid] != eph.public_key().public_bytes_raw().hex():
             raise ValueError
-        if not all(hmac.compare_digest(macs[i], epub_mac(priv, pubs[i], i, pid, rnd, run, epubs[i]))
-                   for i in range(n) if i != pid):
+        nb = neighbors(pid, n, k)  # 只需要（也只驗）鄰居的臨時公鑰
+        if not all(hmac.compare_digest(macs[i], epub_mac(priv, pubs[i], i, pid, rnd, run, epubs[i])) for i in nb):
             raise ValueError
-        keys = {i: X25519PublicKey.from_public_bytes(bytes.fromhex(epubs[i])) for i in range(n)}
-        for i in range(n):
+        keys = {i: X25519PublicKey.from_public_bytes(bytes.fromhex(epubs[i])) for i in nb}
+        for i in nb:
             eph.exchange(keys[i])  # 低階點（例如全零）會丟 ValueError：當成驗證失敗，不讓一台惡意 VD 弄當大家
         return eph, keys
     except (KeyError, TypeError, ValueError):
@@ -333,12 +337,15 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         priv, pubs = load_agreement_keys(str(context.run_config.get("key-dir", "keys")), pid)
         eph = ephemeral_key(priv, pid, rnd, context.run_id)
         epub = eph.public_key().public_bytes_raw().hex()
-        macs = ["" if j == pid else epub_mac(priv, pubs[j], pid, j, rnd, context.run_id, epub) for j in range(n)]
-        cts = encrypt_shares(eph_bytes(eph), pid, range(n), priv, pubs, rnd, context.run_id, kind="eshare")
+        k = int(context.run_config.get("secagg-neighbors", 0))
+        nb, hold = set(neighbors(pid, n, k)), share_holders(pid, n, k)
+        macs = [epub_mac(priv, pubs[j], pid, j, rnd, context.run_id, epub) if j in nb else "" for j in range(n)]
+        cts = encrypt_shares(eph_bytes(eph), pid, hold, priv, pubs, rnd, context.run_id, t=share_threshold(n, k),
+                             kind="eshare")
         # 二進位傳（LPWAN 上十六進位會多一倍）
         return Message(content=RecordDict({"secagg": ConfigRecord(
             {"pid": pid, "epub": bytes.fromhex(epub), "epub-macs": [bytes.fromhex(m) for m in macs],
-             "eshares": [bytes.fromhex(cts[j]) for j in range(n)]})}), reply_to=msg)
+             "eshares": [bytes.fromhex(cts[j]) if j in cts else b"" for j in range(n)]})}), reply_to=msg)
     consist = phase == "consist"
     # shortcut: 只模擬復原時斷線，一致性回合大家都回；要模擬一致性回合斷線時再加
     if not consist and drops_out(int(context.run_config.get("seed", 0)), pid, rnd + 100_000,
@@ -376,6 +383,7 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
                 for j in range(n)]
         return Message(content=RecordDict({"secagg": ConfigRecord({"pid": pid, "macs": macs})}), reply_to=msg)
     reply = {"pid": pid}
+    knb = int(context.run_config.get("secagg-neighbors", 0))
     if shamir:
         # 秘密分享要先過一致性回合：自己證明過同一份名單，而且湊滿 2n/3+1 份（含自己）別人對同一份名單的證明，
         # 不然惡意伺服器可以對不同 VD 說不同名單，同時拿到某台的份和它的所有成對種子
@@ -391,7 +399,8 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         owners = [int(i) for i in q["share-owners"]] if "share-owners" in q else []
         cts = [str(x) for x in q["share-cts"]] if "share-cts" in q else []
         # 份只給「名單上在線」的那些 VD，而且要剛好是名單的補集（不能挑著要）
-        if len(owners) != len(cts) or sorted(owners) != sorted(set(range(n)) - set(dropped)):
+        held = set(range(n)) if not knb else set(neighbors(pid, n, knb))  # 我持有誰的份
+        if len(owners) != len(cts) or sorted(owners) != sorted(held - set(dropped)):
             raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪交出斷線 VD 的份")
         got = {i: open_share(ct, i, pid, priv, pubs, rnd, context.run_id) for i, ct in zip(owners, cts)}
         if any(v is None for v in got.values()):
@@ -407,7 +416,7 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         # 擁有者要剛好是斷線名單（在線 VD 的臨時私鑰份一律不交，否則加上自我遮罩份就能解開它）
         eo = [int(i) for i in q["eshare-owners"]] if "eshare-owners" in q else []
         ec = [str(x) for x in q["eshare-cts"]] if "eshare-cts" in q else []
-        if len(eo) != len(ec) or sorted(eo) != dropped:
+        if len(eo) != len(ec) or sorted(eo) != sorted(held & set(dropped)):
             raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪交出在線 VD 的臨時私鑰份")
         eg = {i: open_share(ct, i, pid, priv, pubs, rnd, context.run_id, kind="eshare") for i, ct in zip(eo, ec)}
         if any(v is None for v in eg.values()):

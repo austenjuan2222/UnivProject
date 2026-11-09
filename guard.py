@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from compress import quantize_update
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
-from secagg import (drop_correction, open_seeds, open_shares, pair_seed, seed_tag, shamir_combine, shamir_threshold,
+from secagg import (neighbors, share_holders, share_threshold, drop_correction, open_seeds, open_shares, pair_seed, seed_tag, shamir_combine, shamir_threshold,
                     unmask_sum)
 from security import canonical_metrics, sign_model, sign_recover, sign_update, tamper, update_digest, verify_update
 
@@ -294,7 +294,7 @@ class GuardedStrategy(Strategy):
                  validation_filter: ValidationFilter | None = None, download_bits: int = 32,
                  norm_cap: float = 0.0, secagg_keys: tuple | None = None,
                  secagg_self_mask: bool = False, secagg_bits: int = 32, secagg_frac_bits: int = 12,
-                 secagg_shamir: bool = False):
+                 secagg_shamir: bool = False, secagg_neighbors: int = 0):
         """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。
         norm_cap > 0：更新長度超過這輪中位數 norm_cap 倍的，縮回 norm_cap 倍。"""
         if norm_cap and (norm_cap < 1 or secure_agg_clients):
@@ -312,6 +312,9 @@ class GuardedStrategy(Strategy):
         if secagg_shamir and not secagg_self_mask:
             raise ValueError("secagg-shamir 要搭配 secagg-self-mask=true（分享的是自我遮罩種子）")
         self.secagg_shamir = secagg_shamir
+        self.secagg_k = int(secagg_neighbors) if secagg_shamir else 0
+        if self.secagg_k and secure_agg_clients:
+            neighbors(0, secure_agg_clients, self.secagg_k)  # 不合法的 k 先丟 ValueError
         self._shares: dict = {}  # 這輪各 VD 的自我遮罩種子加密份：_shares[擁有者][持有者] = 密文
         self._self_hash: dict = {}  # 各 VD 上傳時承諾的種子雜湊（HMAC 涵蓋的指標）
         self._epubs: dict = {}  # 這輪各 VD 公告的臨時公鑰（十六進位）
@@ -386,9 +389,11 @@ class GuardedStrategy(Strategy):
             except (KeyError, TypeError, ValueError, AttributeError):
                 continue
             if 0 <= pid < n and pid not in pid_of.values() and len(m0) == n and len(e0) == n \
-                    and re.fullmatch(r"[0-9a-f]{64}", epub):
+                    and re.fullmatch(r"[0-9a-f]{64}", epub) \
+                    and {j for j, e in enumerate(e0) if e} == set(share_holders(pid, n, self.secagg_k)) \
+                    and {j for j, x in enumerate(m0) if x} == set(neighbors(pid, n, self.secagg_k)):
                 self._epubs[pid], macs[pid], pid_of[r.metadata.src_node_id] = epub, m0, pid
-                self._eshares[pid] = dict(enumerate(e0))
+                self._eshares[pid] = {j: e for j, e in enumerate(e0) if e}
         # shortcut: 少了任何一台的公告就不附公鑰（VD 會拒絕遮罩、這輪作廢）；要支援部分 VD 先離線時，改成只在公告過的 VD 之間遮罩
         if set(self._epubs) != set(range(n)):
             return messages
@@ -399,9 +404,10 @@ class GuardedStrategy(Strategy):
                 out.append(m)
                 continue
             content = RecordDict(dict(m.content.items()))  # 同一輪的訊息共用 RecordDict，每台要自己的一份
-            content["secagg-eph"] = ConfigRecord({"epubs": [bytes.fromhex(self._epubs[i]) for i in range(n)],
-                                                  "macs": [b"" if i == pid else bytes.fromhex(macs[i][pid])
-                                                           for i in range(n)]})
+            nb = set(neighbors(pid, n, self.secagg_k))  # 只轉交鄰居的公鑰（LPWAN 下行）
+            content["secagg-eph"] = ConfigRecord({
+                "epubs": [bytes.fromhex(self._epubs[i]) if i in nb or i == pid else b"" for i in range(n)],
+                "macs": [bytes.fromhex(macs[i][pid]) if i in nb else b"" for i in range(n)]})
             m.content = content
             out.append(m)
         return out
@@ -503,8 +509,10 @@ class GuardedStrategy(Strategy):
                                                for m in kept if norms[id(m)] > limit))
         if self.secure_agg_clients and self.secagg_shamir:
             # 沒附完整份數的 VD 在復原時無法替它還原自我遮罩，當成被拒絕（雙重遮罩下等於斷線）
-            ids = {str(j) for j in range(self.secure_agg_clients)}
-            good = {id(m) for m in kept if id(m) in shares_of and set(shares_of[id(m)].keys()) == ids}
+            def ids(m):
+                pid = int(m.content["metrics"]["partition-id"])
+                return {str(j) for j in share_holders(pid, self.secure_agg_clients, self.secagg_k)}
+            good = {id(m) for m in kept if id(m) in shares_of and set(shares_of[id(m)].keys()) == ids(m)}
             stats["n_rejected"] += len(kept) - len(good)
             kept = [m for m in kept if id(m) in good]
             self._shares = {int(m.content["metrics"]["partition-id"]): {int(j): v.hex() if isinstance(v, bytes) else str(v)
@@ -585,10 +593,12 @@ class GuardedStrategy(Strategy):
         def query(j):
             c = dict(ask)
             if self.secagg_shamir:  # 每台只拿到「別人要給它」的那份密文，加上別人替名單做的證明
-                c["share-owners"] = owners
-                c["share-cts"] = [self._shares[i][j] for i in owners]
-                c["eshare-owners"] = dropped  # 斷線 VD 的臨時私鑰份
-                c["eshare-cts"] = [self._eshares[d][j] for d in dropped]
+                mine = [i for i in owners if j in self._shares[i]]  # 只有 j 持有份的那些
+                c["share-owners"] = mine
+                c["share-cts"] = [self._shares[i][j] for i in mine]
+                emine = [d for d in dropped if j in self._eshares[d]]  # 斷線 VD 的臨時私鑰份
+                c["eshare-owners"] = emine
+                c["eshare-cts"] = [self._eshares[d][j] for d in emine]
                 frm = sorted(i for i in macs if i != j)
                 c["attest-from"], c["attest-macs"] = frm, [macs[i][j] for i in frm]
             return RecordDict({"secagg": ConfigRecord(c)})
@@ -643,7 +653,7 @@ class GuardedStrategy(Strategy):
                 except (KeyError, TypeError, ValueError):
                     return None
                 opened = open_shares(sealed, pid, *self._seal_pair(pid), rnd, self._run_id())
-                if sorted(got_owners) != owners or opened is None:
+                if sorted(got_owners) != [i for i in owners if pid in self._shares[i]] or opened is None:
                     return None
                 for i, y in opened.items():
                     shares[i][pid] = y
@@ -652,7 +662,8 @@ class GuardedStrategy(Strategy):
                 except (KeyError, TypeError, ValueError):
                     return None
                 eopened = (open_shares(dict(zip(eo, el)), pid, *self._seal_pair(pid), rnd, self._run_id(), kind="eshare")
-                           if len(eo) == len(el) and sorted(eo) == dropped else None)
+                           if len(eo) == len(el) and sorted(eo) == [d for d in dropped if pid in self._eshares[d]]
+                           else None)
                 if eopened is None:
                     return None
                 for d, y in eopened.items():
@@ -665,8 +676,9 @@ class GuardedStrategy(Strategy):
                 got = {**got, **own}
             revealed[pid] = got
         if self.secagg_shamir:
-            if len(revealed) < shamir_threshold(self.secure_agg_clients):
-                return None
+            t = share_threshold(self.secure_agg_clients, self.secagg_k)
+            if any(len(shares[i]) < t for i in owners) or any(len(eshares[d]) < t for d in dropped):
+                return None  # 某台的份不夠門檻
             for d in dropped:
                 # 還原斷線 VD 這輪的臨時私鑰，自己算它和每台在線 VD（含沉默的）之間的成對種子
                 e = shamir_combine(eshares[d])
@@ -677,6 +689,8 @@ class GuardedStrategy(Strategy):
                 if ek is None or ek.public_key().public_bytes_raw().hex() != self._epubs.get(d):
                     return None  # 有人交了錯的份：和它公告的公鑰對不上
                 for i in owners:
+                    if d not in neighbors(i, self.secure_agg_clients, self.secagg_k):
+                        continue  # 不是鄰居就沒有成對遮罩
                     pub = X25519PublicKey.from_public_bytes(bytes.fromhex(self._epubs[i]))
                     revealed.setdefault(i, {})[d] = pair_seed(ek, pub, d, i, rnd, self._run_id()).hex()
             for i in owners:

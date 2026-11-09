@@ -160,12 +160,15 @@ def self_seed(my_priv: X25519PrivateKey, me: int, rnd: int, run: int = 0) -> byt
 
 def mask_update(update: dict, n: int, me: int, pids, my_priv, pubs: dict, rnd: int, run: int = 0,
                 self_mask: bool = False, bits: int = 32, frac_bits: int = FRAC_BITS,
-                pair_priv: X25519PrivateKey | None = None, pair_pubs: dict | None = None) -> dict:
+                pair_priv: X25519PrivateKey | None = None, pair_pubs: dict | None = None,
+                num_vd: int | None = None) -> dict:
     """回傳 n × 更新（定點數，mod 2^32 的 uint32）＋ 成對遮罩。伺服器把所有 VD 的結果加總後除以總樣本數即得加權平均。
     self_mask：再加一層只有自己知道的遮罩（雙重遮罩），在線時才交出它的種子；伺服器宣布某台斷線、
     拿到所有和它配對的種子後，就算它的更新遲到送達也解不開。"""
     pids = list(pids)
-    out = {k: _encode(n * np.asarray(v, dtype=np.float64), len(pids), bits, frac_bits) for k, v in update.items()}
+    # 定點數範圍照「加總的 VD 數」算（只和鄰居遮罩時 pids 比總數少）
+    nv = int(num_vd) if num_vd is not None else len(pids)
+    out = {k: _encode(n * np.asarray(v, dtype=np.float64), nv, bits, frac_bits) for k, v in update.items()}
     dt = _RING[bits][0]
     if self_mask:
         seed = self_seed(my_priv, me, rnd, run)
@@ -235,6 +238,26 @@ _SHARE_LEN = 66
 def shamir_threshold(n: int) -> int:
     """門檻：過半數。少於這麼多份的 VD（和伺服器）合謀，還原不出任何一台的自我遮罩種子。"""
     return int(n) // 2 + 1
+
+
+def neighbors(i: int, n: int, k: int = 0) -> list[int]:
+    """SecAgg+ 的通訊圖：環上前後各 k/2 台（k=0 表示所有其他 VD）。對稱，成對遮罩才抵銷得掉。"""
+    if not k:
+        return [j for j in range(n) if j != i]
+    if k % 2 or not 2 <= k < n:
+        raise ValueError("secagg-neighbors 要是偶數，且 2 ≤ k < VD 數")
+    # shortcut: 固定的環狀圖，攻擊者事先知道誰是誰的鄰居；SecAgg+ 用每輪隨機圖讓攻擊者無法挑鄰居，要更強時再換
+    h = k // 2
+    return sorted({(i + d) % n for d in range(1, h + 1)} | {(i - d) % n for d in range(1, h + 1)})
+
+
+def share_holders(i: int, n: int, k: int = 0) -> list[int]:
+    """誰持有 VD i 的份：k=0 是所有 VD（含自己），否則是它的 k 個鄰居。"""
+    return list(range(n)) if not k else neighbors(i, n, k)
+
+
+def share_threshold(n: int, k: int = 0) -> int:
+    return shamir_threshold(n) if not k else k // 2 + 1
 
 
 def shamir_split(secret: bytes, ids, t: int) -> dict[int, int]:
