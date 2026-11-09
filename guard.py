@@ -20,7 +20,9 @@ from flwr.serverapp.strategy import Strategy
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from compress import quantize_update
-from secagg import (drop_correction, open_seeds, open_shares, seed_tag, shamir_combine, shamir_threshold,
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+
+from secagg import (drop_correction, open_seeds, open_shares, pair_seed, seed_tag, shamir_combine, shamir_threshold,
                     unmask_sum)
 from security import canonical_metrics, sign_model, sign_recover, sign_update, tamper, update_digest, verify_update
 
@@ -308,6 +310,8 @@ class GuardedStrategy(Strategy):
         self.secagg_shamir = secagg_shamir
         self._shares: dict = {}  # 這輪各 VD 的自我遮罩種子加密份：_shares[擁有者][持有者] = 密文
         self._self_hash: dict = {}  # 各 VD 上傳時承諾的種子雜湊（HMAC 涵蓋的指標）
+        self._epubs: dict = {}  # 這輪各 VD 公告的臨時公鑰（十六進位）
+        self._eshares: dict = {}  # 臨時私鑰的加密份：_eshares[擁有者][持有者] = 密文
         self._priv = signing_key
         # > 0：安全聚合，需要這麼多個 VD 全部回覆遮罩後的更新（基本版不容許斷線）
         self.secure_agg_clients = secure_agg_clients
@@ -356,7 +360,44 @@ class GuardedStrategy(Strategy):
         arrays = self._broadcast(arrays)
         self._global = arrays_of(arrays)
         self._grid = grid  # 安全聚合斷線復原時要再問一次在線 VD
-        return self._sign(self.inner.configure_train(server_round, arrays, config, grid), arrays, server_round)
+        msgs = self.inner.configure_train(server_round, arrays, config, grid)
+        if self.secure_agg_clients and self.secagg_shamir:
+            msgs = self._advertise(server_round, msgs)
+        return self._sign(msgs, arrays, server_round)
+
+    def _advertise(self, rnd: int, messages) -> list[Message]:
+        """公告回合：收集每台 VD 這輪的臨時公鑰、給別台的 MAC、臨時私鑰的加密份，再把公鑰和 MAC 附進各自的訓練訊息。"""
+        messages, n = list(messages), self.secure_agg_clients
+        q = RecordDict({"secagg": ConfigRecord({"round": int(rnd), "phase": "advertise"})})
+        self._epubs, self._eshares, macs, pid_of = {}, {}, {}, {}
+        for r in self._grid.send_and_receive(
+                [Message(content=q, message_type="query", dst_node_id=m.metadata.dst_node_id) for m in messages],
+                timeout=120):
+            try:
+                c = r.content["secagg"]
+                pid, epub = int(c["pid"]), str(c["epub"])
+                m0, e0 = [str(x) for x in c["epub-macs"]], [str(x) for x in c["eshares"]]
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue
+            if 0 <= pid < n and pid not in pid_of.values() and len(m0) == n and len(e0) == n \
+                    and re.fullmatch(r"[0-9a-f]{64}", epub):
+                self._epubs[pid], macs[pid], pid_of[r.metadata.src_node_id] = epub, m0, pid
+                self._eshares[pid] = dict(enumerate(e0))
+        # shortcut: 少了任何一台的公告就不附公鑰（VD 會拒絕遮罩、這輪作廢）；要支援部分 VD 先離線時，改成只在公告過的 VD 之間遮罩
+        if set(self._epubs) != set(range(n)):
+            return messages
+        out = []
+        for m in messages:
+            pid = pid_of.get(m.metadata.dst_node_id)
+            if pid is None:
+                out.append(m)
+                continue
+            content = RecordDict(dict(m.content.items()))  # 同一輪的訊息共用 RecordDict，每台要自己的一份
+            content["secagg-eph"] = ConfigRecord({"epubs": [self._epubs[i] for i in range(n)],
+                                                  "macs": ["" if i == pid else macs[i][pid] for i in range(n)]})
+            m.content = content
+            out.append(m)
+        return out
 
     def revoke(self, pid: int) -> None:
         """應用層撤銷：移除該 VD 的驗證金鑰，之後它（或偷到金鑰的人）送的更新一律拒絕；
@@ -510,43 +551,58 @@ class GuardedStrategy(Strategy):
     def _run_id(self) -> int:
         return int(getattr(getattr(self._grid, "run", None), "run_id", 0))
 
-    def _recover(self, rnd: int, kept: list[Message]) -> dict | None:
-        """向還在線的 VD 要它們和斷線 VD 之間的成對種子；任何一台沒回應就放棄（回傳 None）。"""
-        alive = {int(m.content["metrics"]["partition-id"]): m.metadata.src_node_id for m in kept}
-        dropped = sorted(set(range(self.secure_agg_clients)) - set(alive))
-        if self._grid is None or not (dropped or self.secagg_self_mask):
-            return None
+    def _ask(self, rnd: int, dropped: list) -> dict:
         ask = {"dropped": dropped, "round": int(rnd)}
         if self._priv is not None:  # 沒簽的話，沒有 TLS 時中間人可以假造「某台斷線」來解開它已送達的遮罩
             ask["sig"] = sign_recover(self._priv, rnd, dropped, self._run_id())
-        owners = sorted(alive)
+        return ask
+
+    def _consist(self, rnd: int, dropped: list, alive: dict) -> dict:
+        """一致性回合：每台替收到的名單向別台做 MAC，伺服器只負責轉交（改不了、偽造不了）。"""
         macs = {}
-        if self.secagg_shamir:
-            # 一致性回合：每台替收到的名單向別台做 MAC，伺服器只負責轉交（改不了、偽造不了）
-            q0 = RecordDict({"secagg": ConfigRecord({**ask, "phase": "consist"})})
-            for r in self._grid.send_and_receive(
-                    [Message(content=q0, message_type="query", dst_node_id=n) for n in alive.values()], timeout=120):
-                try:
-                    pid0 = int(r.content["secagg"]["pid"])
-                    m0 = [str(x) for x in r.content["secagg"]["macs"]]
-                except (KeyError, TypeError, ValueError, AttributeError):
-                    continue  # 沒回或回錯：少一份證明，門檻由 VD 自己檢查
-                if alive.get(pid0) == r.metadata.src_node_id and len(m0) == self.secure_agg_clients:
-                    macs[pid0] = m0
+        q0 = RecordDict({"secagg": ConfigRecord({**self._ask(rnd, dropped), "phase": "consist"})})
+        for r in self._grid.send_and_receive(
+                [Message(content=q0, message_type="query", dst_node_id=n) for n in alive.values()], timeout=120):
+            try:
+                pid0 = int(r.content["secagg"]["pid"])
+                m0 = [str(x) for x in r.content["secagg"]["macs"]]
+            except (KeyError, TypeError, ValueError, AttributeError):
+                continue  # 沒回或回錯：少一份證明，門檻由 VD 自己檢查
+            if alive.get(pid0) == r.metadata.src_node_id and len(m0) == self.secure_agg_clients:
+                macs[pid0] = m0
+        return macs
+
+    def _recover_query(self, rnd: int, dropped: list, owners: list, macs: dict):
+        ask = self._ask(rnd, dropped)
 
         def query(j):
             c = dict(ask)
             if self.secagg_shamir:  # 每台只拿到「別人要給它」的那份密文，加上別人替名單做的證明
                 c["share-owners"] = owners
                 c["share-cts"] = [self._shares[i][j] for i in owners]
+                c["eshare-owners"] = dropped  # 斷線 VD 的臨時私鑰份
+                c["eshare-cts"] = [self._eshares[d][j] for d in dropped]
                 frm = sorted(i for i in macs if i != j)
                 c["attest-from"], c["attest-macs"] = frm, [macs[i][j] for i in frm]
             return RecordDict({"secagg": ConfigRecord(c)})
+        return query
+
+    def _recover(self, rnd: int, kept: list[Message]) -> dict | None:
+        """向還在線的 VD 要它們和斷線 VD 之間的成對種子；任何一台沒回應就放棄（回傳 None）。"""
+        alive = {int(m.content["metrics"]["partition-id"]): m.metadata.src_node_id for m in kept}
+        dropped = sorted(set(range(self.secure_agg_clients)) - set(alive))
+        if self._grid is None or not (dropped or self.secagg_self_mask):
+            return None
+        owners = sorted(alive)
+        if self.secagg_shamir and not all(d in self._eshares for d in dropped):
+            return None  # 斷線 VD 沒公告過臨時金鑰（不該發生：沒公告的 VD 收不到可遮罩的訓練訊息）
+        macs = self._consist(rnd, dropped, alive) if self.secagg_shamir else {}
+        query = self._recover_query(rnd, dropped, owners, macs)
         replies = list(self._grid.send_and_receive(
             [Message(content=query(pid), message_type="query", dst_node_id=n) for pid, n in alive.items()],
             timeout=120))
         pid_of = {node: pid for pid, node in alive.items()}
-        revealed, shares = {}, {i: {} for i in owners}
+        revealed, shares, eshares = {}, {i: {} for i in owners}, {d: {} for d in dropped}
         for r in replies:
             if r.has_error():
                 if self.secagg_shamir:
@@ -558,7 +614,9 @@ class GuardedStrategy(Strategy):
             except (KeyError, TypeError, ValueError):
                 return None
             # 回覆要來自它自稱的 VD、涵蓋整份斷線名單；加密的種子要解得開，明文的要是 32 bytes 的十六進位
-            if pid_of.get(r.metadata.src_node_id) != pid or sorted(js) != dropped or len(seeds) != len(js):
+            # 秘密分享模式不交成對種子（改交斷線 VD 的臨時私鑰份）
+            want = [] if self.secagg_shamir else dropped
+            if pid_of.get(r.metadata.src_node_id) != pid or sorted(js) != want or len(seeds) != len(js):
                 return None
             got = dict(zip(js, seeds))
             if self.secagg_keys is not None:
@@ -582,6 +640,16 @@ class GuardedStrategy(Strategy):
                     return None
                 for i, y in opened.items():
                     shares[i][pid] = y
+                try:
+                    eo, el = [int(i) for i in c["eshare-owners"]], [str(x) for x in c["eshares"]]
+                except (KeyError, TypeError, ValueError):
+                    return None
+                eopened = (open_shares(dict(zip(eo, el)), pid, *self._seal_pair(pid), rnd, self._run_id(), kind="eshare")
+                           if len(eo) == len(el) and sorted(eo) == dropped else None)
+                if eopened is None:
+                    return None
+                for d, y in eopened.items():
+                    eshares[d][pid] = y
             elif self.secagg_self_mask:  # 雙重遮罩：每台在線 VD 都要交出自己的自我遮罩種子
                 own = (open_seeds({pid: c["self"]}, pid, *self._seal_pair(pid), rnd, self._run_id())
                        if "self" in c and self.secagg_keys is not None else None)
@@ -590,10 +658,20 @@ class GuardedStrategy(Strategy):
                 got = {**got, **own}
             revealed[pid] = got
         if self.secagg_shamir:
-            silent = set(alive) - set(revealed)
-            # 沉默的 VD 和斷線 VD 之間的成對遮罩沒人能交出（要分享長期私鑰才行，這裡沒做），只能在沒人斷線時救回
-            if (silent and dropped) or len(revealed) < shamir_threshold(self.secure_agg_clients):
+            if len(revealed) < shamir_threshold(self.secure_agg_clients):
                 return None
+            for d in dropped:
+                # 還原斷線 VD 這輪的臨時私鑰，自己算它和每台在線 VD（含沉默的）之間的成對種子
+                e = shamir_combine(eshares[d])
+                try:
+                    ek = X25519PrivateKey.from_private_bytes(e) if e is not None else None
+                except ValueError:
+                    ek = None
+                if ek is None or ek.public_key().public_bytes_raw().hex() != self._epubs.get(d):
+                    return None  # 有人交了錯的份：和它公告的公鑰對不上
+                for i in owners:
+                    pub = X25519PublicKey.from_public_bytes(bytes.fromhex(self._epubs[i]))
+                    revealed.setdefault(i, {})[d] = pair_seed(ek, pub, d, i, rnd, self._run_id()).hex()
             for i in owners:
                 b = shamir_combine(shares[i])
                 # 有人交了錯的份：還原出的種子和它上傳時承諾的雜湊對不上，整輪放棄（不默默算錯）

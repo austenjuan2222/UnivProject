@@ -84,6 +84,10 @@ class VdShareReplyTest(unittest.TestCase):
         self.pubs = load_agreement_pubs(self.tmp.name)
         self.cts = {i: encrypt_shares(self_seed(load_agreement_keys(self.tmp.name, i)[0], i, 3, 1), i, range(4),
                                       load_agreement_keys(self.tmp.name, i)[0], self.pubs, 3, 1) for i in range(4)}
+        from secagg import eph_bytes, ephemeral_key
+        k = {i: load_agreement_keys(self.tmp.name, i)[0] for i in range(4)}
+        self.ects = {i: encrypt_shares(eph_bytes(ephemeral_key(k[i], i, 3, 1)), i, range(4), k[i], self.pubs, 3, 1,
+                                       kind="eshare") for i in range(4)}
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -101,7 +105,8 @@ class VdShareReplyTest(unittest.TestCase):
         macs = [consist_mac(load_agreement_keys(self.tmp.name, i)[0], self.pubs[pid], i, pid, 3, 1,
                             [] if forge else dropped) for i in attesters]
         q = {**base, "share-owners": list(owners), "share-cts": [self.cts[i][pid] for i in owners],
-             "attest-from": list(attesters), "attest-macs": macs}
+             "attest-from": list(attesters), "attest-macs": macs,
+             "eshare-owners": list(dropped), "eshare-cts": [self.ects[d][pid] for d in dropped]}
         return secagg_recover_fn(self._q(q), ctx)
 
     def test_gives_shares_for_alive_owners_and_no_plain_self_seed(self):

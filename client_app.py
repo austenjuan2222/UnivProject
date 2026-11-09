@@ -20,7 +20,7 @@ from flwr.clientapp import ClientApp
 from compress import quantize_update
 from data import load_client_arrays, n_calendar
 from guard import AUTH, arrays_of, attach_update_tag
-from secagg import (consist_mac, consistency_threshold, count_clipped, encrypt_shares, load_agreement_keys, mask_update, open_share, reveal_seeds,
+from secagg import (consist_mac, consistency_threshold, count_clipped, eph_bytes, ephemeral_key, epub_mac, encrypt_shares, load_agreement_keys, mask_update, open_share, reveal_seeds,
                     seal_seeds, seal_shares, seed_tag, self_seed)
 from security import (adaptive_shrink, drops_out, hide_congestion, is_attacker, load_server_public_key, load_vd_key, load_vd_signing_key, verify_recover,
                       poison_update, verify_model)
@@ -246,8 +246,14 @@ def train_fn(msg: Message, context: Context) -> Message:
         delta = {k: np.asarray(v, dtype=np.float64) - g[k] for k, v in arrays_of(arrays).items()}
         ring = {"bits": cfg["secagg_bits"], "frac_bits": cfg["secagg_frac_bits"]}
         metrics["secagg-clipped"] = count_clipped(delta, len(d["y_train"]), n, **ring)
+        pair = {}
+        if cfg["secagg_shamir"]:  # 成對遮罩用這輪公告過的臨時金鑰（訓練斷線的 VD 才能由別人的份還原）
+            if not cfg["secagg_self_mask"] or "secagg-eph" not in msg.content.keys():
+                raise RuntimeError(f"VD {pid} 第 {rnd} 輪沒收到臨時公鑰，拒絕遮罩")
+            pair["pair_priv"], pair["pair_pubs"] = pair_keys_from_config(priv, pubs, pid, n, rnd, context.run_id,
+                                                                         msg.content["secagg-eph"])
         masked = mask_update(delta, len(d["y_train"]), pid, range(n), priv, pubs, rnd, context.run_id,
-                             self_mask=cfg["secagg_self_mask"], **ring)
+                             self_mask=cfg["secagg_self_mask"], **ring, **pair)
         claim_mask_round(context, rnd)
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
         if cfg["secagg_shamir"]:  # 自我遮罩種子切份、各自加密給持有者，經伺服器轉交
@@ -277,6 +283,26 @@ def _vd_key(cfg, pid):
             else load_vd_key(cfg["key_dir"], pid))  # 只讀自己的金鑰
 
 
+def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int, rec) -> tuple:
+    """驗證伺服器轉交的臨時公鑰：每一把都要有擁有者用兩兩長期金鑰做的 MAC，自己那把要是自己的。"""
+    import hmac
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
+    eph = ephemeral_key(priv, pid, rnd, run)
+    try:
+        epubs, macs = [str(x) for x in rec["epubs"]], [str(x) for x in rec["macs"]]
+        if len(epubs) != n or len(macs) != n or epubs[pid] != eph.public_key().public_bytes_raw().hex():
+            raise ValueError
+        if not all(hmac.compare_digest(macs[i], epub_mac(priv, pubs[i], i, pid, rnd, run, epubs[i]))
+                   for i in range(n) if i != pid):
+            raise ValueError
+        keys = {i: X25519PublicKey.from_public_bytes(bytes.fromhex(epubs[i])) for i in range(n)}
+        for i in range(n):
+            eph.exchange(keys[i])  # 低階點（例如全零）會丟 ValueError：當成驗證失敗，不讓一台惡意 VD 弄當大家
+        return eph, keys
+    except (KeyError, TypeError, ValueError):
+        raise RuntimeError(f"VD {pid} 第 {rnd} 輪的臨時公鑰驗證失敗") from None
+
+
 def claim_mask_round(context: Context, rnd: int) -> None:
     """每輪只遮罩一次：重送同一輪（或更舊）的訓練請求會重設「每輪只回答一次復原」，讓惡意伺服器問兩次不同名單。"""
     st = context.state[SECAGG_STATE_KEY] if SECAGG_STATE_KEY in context.state else None
@@ -292,8 +318,22 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
     pid = int(context.node_config["partition-id"])
     n = int(context.node_config["num-partitions"])
     q = msg.content["secagg"]
-    rnd, dropped = int(q["round"]), sorted({int(j) for j in q["dropped"]})
-    consist = str(q["phase"]) == "consist" if "phase" in q else False
+    rnd, dropped = int(q["round"]), sorted({int(j) for j in (q["dropped"] if "dropped" in q else [])})
+    phase = str(q["phase"]) if "phase" in q else ""
+    if phase == "advertise":
+        # 公告回合（訓練前）：這輪的臨時公鑰＋給每台的 MAC，臨時私鑰切份加密給每台（經伺服器轉交）
+        if not (bool(context.run_config.get("secagg-shamir", False))
+                and bool(context.run_config.get("secagg-self-mask", True))):
+            # 沒有自我遮罩時交出臨時私鑰的份，伺服器謊稱這台斷線就能解開它的更新
+            raise RuntimeError(f"VD {pid} 沒開秘密分享＋自我遮罩，不公告臨時金鑰")
+        priv, pubs = load_agreement_keys(str(context.run_config.get("key-dir", "keys")), pid)
+        eph = ephemeral_key(priv, pid, rnd, context.run_id)
+        epub = eph.public_key().public_bytes_raw().hex()
+        macs = ["" if j == pid else epub_mac(priv, pubs[j], pid, j, rnd, context.run_id, epub) for j in range(n)]
+        cts = encrypt_shares(eph_bytes(eph), pid, range(n), priv, pubs, rnd, context.run_id, kind="eshare")
+        return Message(content=RecordDict({"secagg": ConfigRecord(
+            {"pid": pid, "epub": epub, "epub-macs": macs, "eshares": [cts[j] for j in range(n)]})}), reply_to=msg)
+    consist = phase == "consist"
     # shortcut: 只模擬復原時斷線，一致性回合大家都回；要模擬一致性回合斷線時再加
     if not consist and drops_out(int(context.run_config.get("seed", 0)), pid, rnd + 100_000,
                  float(context.run_config.get("secagg-recover-dropout", 0.0))):
@@ -356,11 +396,25 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         # 雙重遮罩（沒有秘密分享）：自己在線才交出自我遮罩種子，同樣加密給伺服器
         reply["self"] = seal_seeds({pid: self_seed(priv, pid, rnd, context.run_id).hex()}, pid, priv, pubs["server"],
                                    rnd, context.run_id)[pid]
+    if shamir:
+        # 斷線 VD 交出的是它臨時私鑰的份（不是成對種子），伺服器自己算它和每台在線 VD 的種子；
+        # 擁有者要剛好是斷線名單（在線 VD 的臨時私鑰份一律不交，否則加上自我遮罩份就能解開它）
+        eo = [int(i) for i in q["eshare-owners"]] if "eshare-owners" in q else []
+        ec = [str(x) for x in q["eshare-cts"]] if "eshare-cts" in q else []
+        if len(eo) != len(ec) or sorted(eo) != dropped:
+            raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪交出在線 VD 的臨時私鑰份")
+        eg = {i: open_share(ct, i, pid, priv, pubs, rnd, context.run_id, kind="eshare") for i, ct in zip(eo, ec)}
+        if any(v is None for v in eg.values()):
+            raise RuntimeError(f"VD {pid} 第 {rnd} 輪收到解不開的臨時私鑰份")
+        es = seal_shares(eg, pid, priv, pubs["server"], rnd, context.run_id, kind="eshare")
+        reply["eshare-owners"], reply["eshares"] = list(es), list(es.values())
+        seeds = {}
+    else:
+        seeds = seal_seeds(reveal_seeds(pid, dropped, priv, pubs, rnd, context.run_id), pid, priv, pubs["server"],
+                           rnd, context.run_id)
     # 所有檢查都過了才記下「這輪答過」（格式錯的請求不會耗掉唯一一次回答）
     context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": rnd,
                                                     "attested-round": att_round})
-    seeds = seal_seeds(reveal_seeds(pid, dropped, priv, pubs, rnd, context.run_id), pid, priv, pubs["server"], rnd,
-                       context.run_id)
     reply["dropped"], reply["seeds"] = list(seeds), list(seeds.values())
     return Message(content=RecordDict({"secagg": ConfigRecord(reply)}), reply_to=msg)
 

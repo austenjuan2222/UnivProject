@@ -159,7 +159,8 @@ def self_seed(my_priv: X25519PrivateKey, me: int, rnd: int, run: int = 0) -> byt
 
 
 def mask_update(update: dict, n: int, me: int, pids, my_priv, pubs: dict, rnd: int, run: int = 0,
-                self_mask: bool = False, bits: int = 32, frac_bits: int = FRAC_BITS) -> dict:
+                self_mask: bool = False, bits: int = 32, frac_bits: int = FRAC_BITS,
+                pair_priv: X25519PrivateKey | None = None, pair_pubs: dict | None = None) -> dict:
     """回傳 n × 更新（定點數，mod 2^32 的 uint32）＋ 成對遮罩。伺服器把所有 VD 的結果加總後除以總樣本數即得加權平均。
     self_mask：再加一層只有自己知道的遮罩（雙重遮罩），在線時才交出它的種子；伺服器宣布某台斷線、
     拿到所有和它配對的種子後，就算它的更新遲到送達也解不開。"""
@@ -173,7 +174,9 @@ def mask_update(update: dict, n: int, me: int, pids, my_priv, pubs: dict, rnd: i
     for other in pids:
         if other == me:
             continue
-        seed = pair_seed(my_priv, pubs[other], me, other, rnd, run)
+        # 自我遮罩一律用長期私鑰導出；成對遮罩可改用這輪的臨時金鑰（pair_priv／pair_pubs）
+        seed = (pair_seed(pair_priv, pair_pubs[other], me, other, rnd, run) if pair_priv is not None
+                else pair_seed(my_priv, pubs[other], me, other, rnd, run))
         for i, k in enumerate(sorted(out)):
             m = _mask(seed + i.to_bytes(4, "little"), out[k].shape, dt)
             out[k] = out[k] + m if me < other else out[k] - m  # 無號整數運算自動 mod 2^bits
@@ -274,39 +277,62 @@ def consistency_threshold(n: int) -> int:
     return 2 * int(n) // 3 + 1
 
 
+def ephemeral_key(my_priv: X25519PrivateKey, me: int, rnd: int, run: int = 0) -> X25519PrivateKey:
+    """每輪的臨時金鑰（成對遮罩用）：從長期私鑰導出，只有自己算得出；還原它只會洩漏這一輪的成對種子。"""
+    raw = my_priv.private_bytes(_RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+    return X25519PrivateKey.from_private_bytes(
+        HKDF(hashes.SHA256(), 32, None, f"secagg-eph|{int(run)}|{int(me)}|{int(rnd)}".encode()).derive(raw))
+
+
+def eph_bytes(key: X25519PrivateKey) -> bytes:
+    return key.private_bytes(_RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+
+
+def _pair_hmac(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, info: bytes, msg: str) -> str:
+    import hmac
+    key = HKDF(hashes.SHA256(), 32, None, info).derive(my_priv.exchange(their_pub))
+    return hmac.new(key, msg.encode(), hashlib.sha256).hexdigest()
+
+
+def epub_mac(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, sender: int, receiver: int, rnd: int, run: int,
+             epub: str) -> str:
+    """sender 向 receiver 證明「這是我這輪的臨時公鑰」：伺服器轉交時換成自己的公鑰會被發現。"""
+    return _pair_hmac(my_priv, their_pub, b"secagg-epub",
+                      f"secagg-epub|{int(run)}|{int(rnd)}|{int(sender)}|{int(receiver)}|{epub}")
+
+
 def consist_mac(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, sender: int, receiver: int, rnd: int,
                 run: int, dropped) -> str:
     """sender 向 receiver 證明「我收到的斷線名單是 dropped」：用兩兩之間的金鑰，伺服器轉交時改不了也偽造不了。"""
-    import hmac
-    key = HKDF(hashes.SHA256(), 32, None, b"secagg-consist").derive(my_priv.exchange(their_pub))
-    msg = f"secagg-consist|{int(run)}|{int(rnd)}|{int(sender)}|{int(receiver)}|{sorted(int(j) for j in dropped)}"
-    return hmac.new(key, msg.encode(), hashlib.sha256).hexdigest()
+    return _pair_hmac(my_priv, their_pub, b"secagg-consist",
+                      f"secagg-consist|{int(run)}|{int(rnd)}|{int(sender)}|{int(receiver)}|{sorted(int(j) for j in dropped)}")
 
 
 def _share_aead(my_priv: X25519PrivateKey, their_pub: X25519PublicKey) -> ChaCha20Poly1305:
     return ChaCha20Poly1305(HKDF(hashes.SHA256(), 32, None, b"secagg-share").derive(my_priv.exchange(their_pub)))
 
 
-def _share_aad(owner: int, holder: int, rnd: int, run: int) -> bytes:
-    return f"secagg-share|{int(run)}|{int(rnd)}|{int(owner)}|{int(holder)}".encode()
+def _share_aad(owner: int, holder: int, rnd: int, run: int, kind: str = "share") -> bytes:
+    # kind 區分自我遮罩種子的份（share）和臨時私鑰的份（eshare）：伺服器不能拿其中一種冒充另一種
+    return f"secagg-{kind}|{int(run)}|{int(rnd)}|{int(owner)}|{int(holder)}".encode()
 
 
 def encrypt_shares(secret: bytes, me: int, pids, my_priv: X25519PrivateKey, pubs: dict, rnd: int, run: int = 0,
-                   t: int | None = None) -> dict[int, str]:
+                   t: int | None = None, kind: str = "share") -> dict[int, str]:
     """切份並各自加密給持有者（只有持有者解得開；AAD 綁執行、輪次、擁有者、持有者）。"""
     pids = [int(j) for j in pids]
     shares = shamir_split(secret, pids, t or shamir_threshold(len(pids)))
     out = {}
     for j, y in shares.items():
-        aad = _share_aad(me, j, rnd, run)
+        aad = _share_aad(me, j, rnd, run, kind)
         out[j] = _share_aead(my_priv, pubs[j]).encrypt(hashlib.sha256(aad).digest()[:12],
                                                        y.to_bytes(_SHARE_LEN, "big"), aad).hex()
     return out
 
 
 def open_share(ct: str, owner: int, holder: int, holder_priv: X25519PrivateKey, pubs: dict, rnd: int,
-               run: int = 0) -> int | None:
-    aad = _share_aad(owner, holder, rnd, run)
+               run: int = 0, kind: str = "share") -> int | None:
+    aad = _share_aad(owner, holder, rnd, run, kind)
     try:
         y = _share_aead(holder_priv, pubs[int(owner)]).decrypt(hashlib.sha256(aad).digest()[:12],
                                                                bytes.fromhex(str(ct)), aad)
@@ -316,21 +342,21 @@ def open_share(ct: str, owner: int, holder: int, holder_priv: X25519PrivateKey, 
 
 
 def seal_shares(shares: dict, me: int, my_priv: X25519PrivateKey, server_pub: X25519PublicKey, rnd: int,
-                run: int = 0) -> dict[int, str]:
+                run: int = 0, kind: str = "share") -> dict[int, str]:
     """VD 把解開的份再加密給伺服器（和種子用同一把金鑰，AAD 標明是份）。"""
     aead = _seal_aead(my_priv, server_pub)
     out = {}
     for i, y in shares.items():
-        aad = _seal_aad(me, i, rnd, run, "share")
+        aad = _seal_aad(me, i, rnd, run, kind)
         out[int(i)] = aead.encrypt(hashlib.sha256(aad).digest()[:12], int(y).to_bytes(_SHARE_LEN, "big"), aad).hex()
     return out
 
 
 def open_shares(sealed: dict, me: int, server_priv: X25519PrivateKey, vd_pub: X25519PublicKey, rnd: int,
-                run: int = 0) -> dict[int, int] | None:
+                run: int = 0, kind: str = "share") -> dict[int, int] | None:
     aead, out = _seal_aead(server_priv, vd_pub), {}
     for i, x in sealed.items():
-        aad = _seal_aad(me, i, rnd, run, "share")
+        aad = _seal_aad(me, i, rnd, run, kind)
         try:
             y = aead.decrypt(hashlib.sha256(aad).digest()[:12], bytes.fromhex(str(x)), aad)
         except (InvalidTag, ValueError, TypeError):
