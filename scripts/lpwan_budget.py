@@ -47,6 +47,20 @@ def expected_sends(packets: int, loss: float, mode: str) -> float:
     return packets / ok if mode == "packet" else packets / ok ** packets
 
 
+# SX1276 資料手冊：PA_BOOST +20 dBm 發射約 120 mA（+13 dBm 約 29 mA），3.3 V 供電
+TX_MA, VOLTS = 120, 3.3
+
+
+def radio_joules(airtime_ms: float, ma: float = TX_MA, volts: float = VOLTS) -> float:
+    return airtime_ms / 1000 * ma / 1000 * volts
+
+
+def battery_days(joules_per_round: float, rounds_per_day: float, wh: float = 12.0) -> float:
+    """只算發射＋訓練（不含待機與感測），一顆 18650（約 3.4 Ah × 3.6 V ≈ 12 Wh）可以撐幾天。"""
+    per_day = joules_per_round * rounds_per_day
+    return float("inf") if per_day <= 0 else wh * 3600 / per_day
+
+
 def main() -> int:
     # 32 VD 實驗的每 VD 每輪上傳量（README 壓縮上傳一節），+32 B HMAC 標籤
     sizes = {"32 位元（不壓縮）": 6276, "8 位元": 1597, "4 位元": 809,
@@ -62,6 +76,17 @@ def main() -> int:
         for sf in (7, 12):
             n, t = upload_cost(b + 32, sf)
             print(f"| {name} {b + 32} B | SF{sf} | {n} | {t / 1000:.1f} 秒 | {t * 100 / 1000 / 60:.1f} 分鐘 |")
+    # 電量（講義 Edge 資源／LPWAN）：上傳發射電量 vs 本地訓練電量。訓練時間是實測：torch 版 32 台同時跑時
+    # 每輪最慢那台 1.3～1.6 秒（3 seed 中位數約 1.4，results/night9/nb2/），numpy 版單台 0.035 秒（第 10 項）；
+    # CPU 功率 3 W 是假設（樹莓派等級滿載），只用來看量級
+    train = {"torch 1.4 秒": 1.4 * 3.0, "numpy 0.035 秒": 0.035 * 3.0}
+    print("\n| 上傳 | SF | 發射電量（+20 dBm） | 訓練電量 torch／numpy | 12 Wh 電池可跑幾輪（numpy，不含待機與感測） |")
+    print("|---|---|---|---|---|")
+    for name, b in sizes.items():
+        for sf in (7, 12):
+            e = radio_joules(upload_cost(b + 32, sf)[1])
+            tj, nj = train.values()
+            print(f"| {name} | SF{sf} | {e:.1f} J | {tj:.1f}／{nj:.2f} J | {battery_days(e + nj, 1):,.0f} 輪 |")
     # 下行：每台 VD 收到的全域模型（量化差值），+64 B Ed25519 簽章；閘道器逐台送 32 台
     down = {"32 位元（不壓縮）": 6276, "8 位元": 1593, "4 位元": 809, "2 位元": 417}
     print("\n| 下行 | SF | 每台封包數 | 每台空中時間 | 閘道器 10% 工作週期下送完 32 台至少 |")

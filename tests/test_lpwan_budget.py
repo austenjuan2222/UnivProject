@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from lpwan_budget import downlink_round_s, expected_sends, time_on_air_ms, upload_cost  # noqa: E402
+from lpwan_budget import battery_days, downlink_round_s, expected_sends, radio_joules, time_on_air_ms, upload_cost  # noqa: E402
 
 
 class LoraAirtimeTest(unittest.TestCase):
@@ -35,6 +35,17 @@ class PacketLossTest(unittest.TestCase):
     def test_no_loss_sends_each_packet_once(self):
         for mode in ("packet", "whole"):
             self.assertEqual(expected_sends(7, 0.0, mode), 7)
+
+
+class EnergyTest(unittest.TestCase):
+    def test_radio_energy_is_airtime_times_current_times_voltage(self):
+        # 講義 Edge／LPWAN：電量 = 空中時間 × 發射電流 × 電壓（SX1276 +20 dBm 約 120 mA、3.3 V）
+        self.assertAlmostEqual(radio_joules(1000.0, ma=120, volts=3.3), 1.0 * 0.120 * 3.3)
+
+    def test_battery_days(self):
+        # 12 Wh 電池、每輪 1 J、每天 24 輪 → 12*3600/24 天
+        self.assertAlmostEqual(battery_days(1.0, 24, wh=12.0), 12 * 3600 / 24)
+        self.assertEqual(battery_days(0.0, 24, wh=12.0), float("inf"))
 
 
 if __name__ == "__main__":
