@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 from flwr.app import Array, ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 
-from client_app import ADV_KEY, claim_mask_round, pair_keys_from_config, secagg_recover_fn
+from client_app import ADV_KEY, use_advertised_round, claim_mask_round, pair_keys_from_config, secagg_recover_fn
 from guard import GuardedStrategy, secure_average
 from secagg import (encrypt_shares, load_agreement_keys, load_agreement_pubs, load_server_agreement_key, mask_update,
                     neighbors, provision_agreement_keys, seed_tag, self_seed, share_threshold)
@@ -135,7 +135,12 @@ class NeighborRecoveryTest(unittest.TestCase):
         for r in (RND, RND + 2, RND - 1):  # 重送、跳輪、倒退
             with self.assertRaises(RuntimeError):
                 adv(r)
+        with self.assertRaises(RuntimeError):
+            use_advertised_round(ctx, RND + 1)  # 訓練的輪次要等於剛公告的那輪
+        use_advertised_round(ctx, RND)
         adv(RND + 1)
+        with self.assertRaises(RuntimeError):
+            use_advertised_round(ctx, RND)  # 不能回頭挑之前公告過的輪次
 
     def test_train_dropout_plus_silent_recovery_gives_exact_average(self):
         msgs = self._train_msgs()

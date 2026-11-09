@@ -172,6 +172,8 @@ def train_fn(msg: Message, context: Context) -> Message:
     cfg = _cfg(context)
     pid, d = _client_data(context, cfg)
     rnd = int(msg.content["config"]["server-round"])
+    if cfg["secure_agg"] and cfg["secagg_shamir"]:
+        use_advertised_round(context, rnd)
     if drops_out(cfg["seed"], pid, rnd, cfg["dropout_rate"]):
         raise RuntimeError(f"模擬 VD {pid} 在第 {rnd} 輪斷線")  # 伺服器會收到錯誤回覆並略過這個 VD
     _check_global_signature(cfg, msg, rnd)
@@ -314,6 +316,13 @@ def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int
 ADV_KEY = SECAGG_STATE_KEY + "-advertised"  # 上次公告的輪次
 
 
+def use_advertised_round(context: Context, rnd: int) -> None:
+    """訓練的輪次要等於剛公告的那輪（不能挑之前公告過的某輪；同一輪重複訓練由 claim_mask_round 擋）。"""
+    adv = context.state[ADV_KEY] if ADV_KEY in context.state else None
+    if adv is None or int(adv["round"]) != int(rnd):
+        raise RuntimeError(f"第 {rnd} 輪不是剛公告的輪次，拒絕訓練")
+
+
 def claim_mask_round(context: Context, rnd: int) -> None:
     """每輪只遮罩一次：重送同一輪（或更舊）的訓練請求會重設「每輪只回答一次復原」，讓惡意伺服器問兩次不同名單。"""
     st = context.state[SECAGG_STATE_KEY] if SECAGG_STATE_KEY in context.state else None
@@ -338,10 +347,12 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
             # 沒有自我遮罩時交出臨時私鑰的份，伺服器謊稱這台斷線就能解開它的更新
             raise RuntimeError(f"VD {pid} 沒開秘密分享＋自我遮罩，不公告臨時金鑰")
         # 輪次只能連續往前（第一次是 1）：鄰居圖由 (run, 輪次) 決定，伺服器跳輪就能挑一張對它有利的圖
+        # shortcut: 伺服器仍可「只公告不訓練」一輪一輪往前試（每試一次就廢一輪，看得出來）；不鎖「公告過要訓練過」
+        # 是因為斷線的 VD 丟例外時狀態不會存，會被永久鎖住；要擋時改用 VD 共同 commit-reveal 的洗牌種子
+        # shortcut: 漏收某輪公告的 VD 會被鎖到這次執行結束（下次執行狀態重來）
         last = int(context.state[ADV_KEY]["round"]) if ADV_KEY in context.state else 0
         if rnd != last + 1:
             raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪公告：上次是第 {last} 輪")
-        context.state[ADV_KEY] = MetricRecord({"round": rnd})
         # shortcut: run_id 仍由伺服器決定，可離線試；要更強時改用 VD 共同 commit-reveal 的亂數當洗牌種子
         priv, pubs = load_agreement_keys(str(context.run_config.get("key-dir", "keys")), pid)
         eph = ephemeral_key(priv, pid, rnd, context.run_id)
@@ -350,6 +361,7 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         floor = int(context.node_config.get("secagg-min-neighbors", 0))  # VD 本地設定，伺服器改不了
         if k and k < floor:
             raise RuntimeError(f"VD {pid} 拒絕 k={k}：低於本地下限 {floor}")
+        context.state[ADV_KEY] = MetricRecord({"round": rnd})  # 全部檢查過才記錄
         nb, hold = set(neighbors(pid, n, k, rnd, context.run_id)), share_holders(pid, n, k, rnd, context.run_id)
         macs = [epub_mac(priv, pubs[j], pid, j, rnd, context.run_id, epub, k=k) if j in nb else "" for j in range(n)]
         cts = encrypt_shares(eph_bytes(eph), pid, hold, priv, pubs, rnd, context.run_id, t=share_threshold(n, k),
