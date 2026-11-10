@@ -98,6 +98,7 @@ secagg-advertise-dropout = 0.0  # 模擬：公告回合（訓練前）沒回應�
 secagg-neighbors = 0       # SecAgg+：秘密分享模式下每台只和環上 k 個鄰居遮罩、分份（偶數，0＝全部），門檻 k/2+1
 secagg-shamir = false      # 自我遮罩種子用 Shamir 分享（門檻過半）：復原時沉默的 VD 不讓這輪作廢，惡意伺服器也拿不到同一台的兩種種子；每台每輪多上傳 n 份密文
 secagg-recover-dropout = 0.0  # 模擬：上傳後、復原時才斷線的 VD 比例
+secagg-consist-dropout = 0.0  # 模擬：一致性回合（復原前）沒回應的 VD 比例
 upload-bits = 32           # < 32：上傳前把更新量量化成幾位元（8、4、2；隨機捨入），模擬 LPWAN 的小頻寬
 download-bits = 32         # < 32：伺服器只廣播「新全域模型 − VD 手上那一版」的量化差值（LPWAN 下行）；第一輪送完整模型
 dropout-rate = 0.0         # 模擬 VD 斷線：每個 VD 每輪不回應的機率（可用性）

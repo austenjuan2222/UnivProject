@@ -77,7 +77,7 @@ class NeighborRecoveryTest(unittest.TestCase):
                                 state=RecordDict({ADV_KEY: MetricRecord({"round": RND - 1})}),
                                 run_config={"key-dir": d, "secagg-shamir": True, "secagg-neighbors": K})
                      for i in range(N)}
-        self.silent, self.adv_silent = set(), set()
+        self.silent, self.adv_silent, self.consist_silent = set(), set(), set()
         test = self
 
         class Grid:
@@ -86,7 +86,8 @@ class NeighborRecoveryTest(unittest.TestCase):
                 for m in messages:
                     pid = m.metadata.dst_node_id - 100
                     phase = str(m.content["secagg"]["phase"]) if "phase" in m.content["secagg"] else ""
-                    if pid in test.silent and phase == "" or pid in test.adv_silent and phase == "advertise":
+                    if (pid in test.silent and phase == "" or pid in test.adv_silent and phase == "advertise"
+                            or pid in test.consist_silent and phase == "consist"):
                         continue
                     try:
                         out.append(secagg_recover_fn(m, test.ctxs[pid]))
@@ -311,6 +312,27 @@ class NeighborRecoveryTest(unittest.TestCase):
         for r in range(RND + 4, RND + 13):
             adv(r)
         adv(RND + 14)  # RND、RND+1 已在視窗外
+
+    def test_vd_silent_at_consistency_round_still_exact(self):
+        # 一致性回合沒回的 VD 沒作證，復原時會拒絕交份（當成沉默）；其他人的份夠就照樣還原
+        self.consist_silent = {4}
+        msgs = self._train_msgs()
+        alive = [i for i in range(N) if i != 9]  # VD 9 訓練斷線
+        upd, n_ex, contents, kept = self._round(msgs, alive)
+        rev = self.g._recover(RND, kept)
+        self.assertIsNotNone(rev)
+        got = secure_average(contents, N, rev)
+        want = sum(n_ex[i] * upd[i]["w"] for i in alive) / sum(n_ex.values())
+        np.testing.assert_allclose(np.asarray(got["w"].numpy()), want, atol=1e-3)
+
+    def test_consist_dropout_knob(self):
+        # 模擬一致性回合斷線（secagg-consist-dropout）：機率 1 時一律不回
+        ctx = self.ctxs[0]
+        claim_mask_round(ctx, RND, adv=range(N))
+        ctx.run_config["secagg-consist-dropout"] = 1.0
+        q = ConfigRecord({**self.g._ask(RND, []), "phase": "consist"})
+        with self.assertRaisesRegex(RuntimeError, "一致性回合斷線"):
+            secagg_recover_fn(Message(content=RecordDict({"secagg": q}), dst_node_id=100, message_type="query"), ctx)
 
     def test_too_few_holders_gives_up(self):
         # VD 1 的 6 個持有者裡，1 台斷線、2 台沉默，只剩 3 個 < 門檻 4 → 放棄（不默默算錯）

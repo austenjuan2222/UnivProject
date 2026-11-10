@@ -402,7 +402,10 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
             {"pid": pid, "epub": bytes.fromhex(epub), "epub-macs": [bytes.fromhex(m) for m in macs],
              "eshares": [bytes.fromhex(cts[j]) if j in cts else b"" for j in range(n)]})}), reply_to=msg)
     consist = phase == "consist"
-    # shortcut: 只模擬復原時斷線，一致性回合大家都回；要模擬一致性回合斷線時再加
+    seed = int(context.run_config.get("seed", 0))
+    if consist and drops_out(seed, pid, rnd + 300_000, float(context.run_config.get("secagg-consist-dropout", 0.0))):
+        # 模擬：一致性回合沒回的 VD（沒作證，之後復原時也會拒絕交份，等同沉默）
+        raise RuntimeError(f"VD {pid} 第 {rnd} 輪一致性回合斷線（模擬）")
     if not consist and drops_out(int(context.run_config.get("seed", 0)), pid, rnd + 100_000,
                  float(context.run_config.get("secagg-recover-dropout", 0.0))):
         # 模擬：上傳後、復原時才斷線的 VD
