@@ -284,6 +284,34 @@ class NeighborRecoveryTest(unittest.TestCase):
             self.assertGreaterEqual(sum(1 for j in share_holders(i, N, K, RND, 0) if j == i or j in a), t)
         self.assertEqual(prune_present(set(range(N)), N, K, RND, 0), set(range(N)))
 
+    def test_vd_local_floor_on_present_neighbors(self):
+        # VD 本地設定（伺服器改不了）：在場的成對遮罩對象至少這麼多台，不只看分份門檻
+        h = neighbors(0, N, K, rnd=RND)[0]
+        rec = self._eph(drop_from_present=[h], blank=[h])  # 一個鄰居缺席，剩 K-1 個
+        pair_keys_from_config(self.privs[0], self.pubs, 0, N, RND, 0, rec, k=K, min_peers=K - 1)
+        self.ctxs[0].node_config["secagg-min-present"] = K  # 和 k 的下限（secagg-min-neighbors）分開設
+        with self.assertRaises(RuntimeError):
+            pair_keys_from_config(self.privs[0], self.pubs, 0, N, RND, 0, rec, k=K, min_peers=K)
+
+    def test_skip_budget_over_whole_run(self):
+        # 每步最多跳 3 輪之外，整次執行跳過的輪數也有上限（本地設定）：伺服器不能每輪都挑圖
+        ctx = self.ctxs[0]
+        ctx.node_config["secagg-max-skips"] = 2
+
+        def adv(r):
+            q = ConfigRecord({"round": r, "phase": "advertise"})
+            return secagg_recover_fn(Message(content=RecordDict({"secagg": q}), dst_node_id=100, message_type="query"),
+                                     ctx)
+        adv(RND + 2)  # 跳過 RND、RND+1：用掉 2
+        with self.assertRaises(RuntimeError):
+            adv(RND + 4)  # 再跳 1 輪就超過
+        adv(RND + 3)  # 連續的不算
+        # 用滑動視窗算（預設最近 20 輪）：很久以前的漏收會過期，誠實斷線的 VD 不會一路累積到被永久鎖住
+        ctx.node_config["secagg-skip-window"] = 10
+        for r in range(RND + 4, RND + 13):
+            adv(r)
+        adv(RND + 14)  # RND、RND+1 已在視窗外
+
     def test_too_few_holders_gives_up(self):
         # VD 1 的 6 個持有者裡，1 台斷線、2 台沉默，只剩 3 個 < 門檻 4 → 放棄（不默默算錯）
         h = neighbors(1, N, K, rnd=RND)

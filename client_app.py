@@ -255,7 +255,9 @@ def train_fn(msg: Message, context: Context) -> Message:
                 raise RuntimeError(f"VD {pid} 第 {rnd} 輪沒收到臨時公鑰，拒絕遮罩")
             pair["pair_priv"], pair["pair_pubs"] = pair_keys_from_config(priv, pubs, pid, n, rnd, context.run_id,
                                                                          msg.content["secagg-eph"],
-                                                                         k=cfg["secagg_neighbors"])
+                                                                         k=cfg["secagg_neighbors"],
+                                                                         min_peers=int(context.node_config.get(
+                                                                             "secagg-min-present", 0)))
         k = cfg["secagg_neighbors"] if cfg["secagg_shamir"] else 0
         # 秘密分享模式只和這輪公告過（伺服器轉交、驗過）的鄰居遮罩
         peers = sorted(pair["pair_pubs"]) if pair else neighbors(pid, n, k, rnd, context.run_id)
@@ -296,7 +298,8 @@ def _hex(x) -> str:
     return x.hex() if isinstance(x, bytes) else str(x)
 
 
-def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int, rec, k: int = 0) -> tuple:
+def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int, rec, k: int = 0,
+                          min_peers: int = 0) -> tuple:
     """驗證伺服器轉交的臨時公鑰：每一把都要有擁有者用兩兩長期金鑰做的 MAC，自己那把要是自己的。"""
     import hmac
     from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
@@ -312,7 +315,8 @@ def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int
             raise ValueError
         # 只需要（也只驗）鄰居的臨時公鑰；空的表示那台這輪沒公告，不和它遮罩
         nb = [i for i in neighbors(pid, n, k, rnd, run) if epubs[i]]
-        if set(nb) != set(neighbors(pid, n, k, rnd, run)) & present:
+        # 本地下限（伺服器改不了）：伺服器可把某台的鄰居集中說成缺席，只剩門檻數的遮罩對象
+        if set(nb) != set(neighbors(pid, n, k, rnd, run)) & present or len(nb) < min_peers:
             raise ValueError
         if not all(hmac.compare_digest(macs[i], epub_mac(priv, pubs[i], i, pid, rnd, run, epubs[i], k=k)) for i in nb):
             raise ValueError
@@ -328,6 +332,7 @@ def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int
 
 
 ADV_KEY = SECAGG_STATE_KEY + "-advertised"  # 上次公告的輪次
+SKIP_KEY = SECAGG_STATE_KEY + "-skipped"  # 最近跳過（沒公告到）的輪次
 
 
 def use_advertised_round(context: Context, rnd: int) -> None:
@@ -371,8 +376,13 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
                      float(context.run_config.get("secagg-advertise-dropout", 0.0))):
             raise RuntimeError(f"VD {pid} 第 {rnd} 輪公告時斷線（模擬）")
         last = int(context.state[ADV_KEY]["round"]) if ADV_KEY in context.state else 0
-        if not last < rnd <= last + 3:
-            raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪公告：上次是第 {last} 輪")
+        # 跳過的輪數在滑動視窗內也有上限（本地設定）：不然伺服器可以每輪都在 3 張圖裡挑；
+        # 用視窗而不是整次執行總額，誠實斷線的 VD 漏收的輪次會過期，不會一路累積到被永久鎖住
+        sk = SKIP_KEY in context.state and json.loads(str(context.state[SKIP_KEY]["list"])) or []
+        win = int(context.node_config.get("secagg-skip-window", 20))
+        sk = [r for r in [*sk, *range(last + 1, rnd)] if r > rnd - win]
+        if not last < rnd <= last + 3 or len(sk) > int(context.node_config.get("secagg-max-skips", 6)):
+            raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪公告：上次是第 {last} 輪，最近 {win} 輪已跳過 {len(sk)} 輪")
         # shortcut: run_id 仍由伺服器決定，可離線試；要更強時改用 VD 共同 commit-reveal 的亂數當洗牌種子
         priv, pubs = load_agreement_keys(str(context.run_config.get("key-dir", "keys")), pid)
         eph = ephemeral_key(priv, pid, rnd, context.run_id)
@@ -382,6 +392,7 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         if k and k < floor:
             raise RuntimeError(f"VD {pid} 拒絕 k={k}：低於本地下限 {floor}")
         context.state[ADV_KEY] = MetricRecord({"round": rnd})  # 全部檢查過才記錄
+        context.state[SKIP_KEY] = ConfigRecord({"list": json.dumps(sk)})
         nb, hold = set(neighbors(pid, n, k, rnd, context.run_id)), share_holders(pid, n, k, rnd, context.run_id)
         macs = [epub_mac(priv, pubs[j], pid, j, rnd, context.run_id, epub, k=k) if j in nb else "" for j in range(n)]
         cts = encrypt_shares(eph_bytes(eph), pid, hold, priv, pubs, rnd, context.run_id, t=share_threshold(n, k),
