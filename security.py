@@ -32,8 +32,19 @@ _RAW = serialization.Encoding.Raw
 def _write_secret(path: Path, data: str) -> None:
     """只有擁有者可讀寫（0600）；先建檔再寫入，避免短暫以預設權限存在。"""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.chmod(path, 0o600)  # 0o600 只在新建時套用；覆寫原本權限較寬的檔案時也要收緊
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(data)
+
+
+def _write_atomic(path: Path, data: str, secret: bool = True) -> None:
+    """先寫暫存檔再 os.replace：中途當掉時舊表還在，不會留下寫一半、讓伺服器起不來的 JSON。"""
+    tmp = path.with_name(path.name + ".tmp")
+    if secret:
+        _write_secret(tmp, data)
+    else:
+        tmp.write_text(data, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def provision_keys(key_dir, num_clients: int) -> None:
@@ -97,15 +108,26 @@ def rotate_vd(key_dir, pid: int) -> None:
     key_dir, pid = Path(key_dir), int(pid)
     if pid in _revoked(key_dir):
         raise ValueError(f"VD {pid} 已撤銷；要重新加入請先從撤銷清單移除再配發")
-    sign = Ed25519PrivateKey.generate()
     pubs_path = key_dir / "vd_sign_pub.json"
     pubs = json.loads(pubs_path.read_text(encoding="utf-8"))
-    pubs[str(pid)] = sign.public_key().public_bytes(_RAW, serialization.PublicFormat.Raw).hex()
-    pubs_path.write_text(json.dumps(pubs), encoding="utf-8")
     table_path = key_dir / "server" / "vd_keys.json"
     table = json.loads(table_path.read_text(encoding="utf-8"))
+    if pid < 0 or str(pid) not in table or str(pid) not in pubs:
+        raise ValueError(f"VD {pid} 沒有配發過金鑰，不能輪替（避免打錯編號多出一個有效身分）")
+    sign = Ed25519PrivateKey.generate()
+    pubs[str(pid)] = sign.public_key().public_bytes(_RAW, serialization.PublicFormat.Raw).hex()
+    _write_atomic(pubs_path, json.dumps(pubs), secret=False)
+    # 安全聚合的 X25519 金鑰放在同一個資料夾，資料夾外洩時一起外洩，所以一併換新
+    agree_path = key_dir / "x25519_pub.json"
+    if agree_path.exists():
+        from secagg import _new_x25519  # 延遲載入：secagg 也會用到這個模組
+        agree = json.loads(agree_path.read_text(encoding="utf-8"))
+        (key_dir / f"vd-{pid}.x25519").unlink(missing_ok=True)
+        x = _new_x25519(key_dir / f"vd-{pid}.x25519")
+        agree[str(pid)] = x.public_key().public_bytes(_RAW, serialization.PublicFormat.Raw).hex()
+        _write_atomic(agree_path, json.dumps(agree), secret=False)
     table[str(pid)] = secrets.token_hex(32)
-    _write_secret(table_path, json.dumps(table))
+    _write_atomic(table_path, json.dumps(table))
     _write_secret(key_dir / f"vd-{pid}.ed25519",
                   sign.private_bytes(_RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption()).hex())
     _write_secret(key_dir / f"vd-{pid}.key", table[str(pid)])

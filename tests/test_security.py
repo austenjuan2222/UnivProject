@@ -240,6 +240,30 @@ class KeyRotationTest(unittest.TestCase):
             provision_keys(d, 3)  # 之後再跑配發不會把舊金鑰換回來
             self.assertEqual(load_server_secrets(d)[1][1], table[1])
 
+    def test_cannot_rotate_a_vd_that_was_never_provisioned(self):
+        from security import rotate_vd
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 3)
+            for pid in (3, -1):  # 打錯編號不能憑空多一個有效身分
+                with self.assertRaises(ValueError):
+                    rotate_vd(d, pid)
+            self.assertEqual(sorted(load_server_secrets(d)[1]), [0, 1, 2])
+
+    def test_rotation_also_replaces_the_secure_aggregation_key(self):
+        # 金鑰資料夾外洩時 vd-<編號>.x25519 也一起外洩；只換 HMAC／Ed25519 的話安全聚合身分不變
+        from secagg import load_agreement_keys, provision_agreement_keys
+        from security import rotate_vd
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 3)
+            provision_agreement_keys(d, 3)
+            old_priv, old_pubs = load_agreement_keys(d, 1)
+            rotate_vd(d, 1)
+            priv, pubs = load_agreement_keys(d, 1)
+            raw = lambda k: k.public_bytes_raw()
+            self.assertNotEqual(raw(priv.public_key()), raw(old_priv.public_key()))
+            self.assertEqual(raw(pubs[1]), raw(priv.public_key()))
+            self.assertEqual(raw(pubs[0]), raw(old_pubs[0]))
+
     def test_revoked_vd_cannot_be_rotated_back_in(self):
         from security import revoke_vd, rotate_vd
         with tempfile.TemporaryDirectory() as d:
