@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import io
 import json
 import logging
 import time
@@ -83,6 +84,20 @@ def _cfg(context: Context) -> dict:
     }
 
 
+def _npy_matches(data: bytes, shape: tuple) -> bool:
+    """Array.shape／dtype 是傳送方填的；numpy() 實際照資料裡的 npy 標頭配置記憶體（標頭寫 4 TB 就要 4 TB），
+    所以先自己解析標頭：形狀、little-endian float32、C 順序、總長度都要剛好。"""
+    f = io.BytesIO(data)
+    try:
+        major, _ = np.lib.format.read_magic(f)
+        read = np.lib.format.read_array_header_1_0 if major == 1 else np.lib.format.read_array_header_2_0
+        got, fortran, dtype = read(f)
+    except ValueError:
+        return False
+    return (tuple(got) == shape and dtype == np.dtype("<f4") and not fortran
+            and len(data) == f.tell() + 4 * int(np.prod(shape)))
+
+
 def _check_global_signature(cfg: dict, msg: Message, rnd: int, run: int) -> None:
     """VD 只接受伺服器簽過名的全域模型（避免被騙去載入假的模型更新）。
     先比對名稱、形狀、float32（只看標頭，不讀資料）：超大或多出來的陣列不必先雜湊完才拒絕；
@@ -91,9 +106,8 @@ def _check_global_signature(cfg: dict, msg: Message, rnd: int, run: int) -> None
     want = {k: (tuple(v.shape), "float32")
             for k, v in TrafficModel(cfg["lookback"], cfg["hidden"], cfg["residual"], n_extra).state_dict().items()}
     rec = msg.content["arrays"]
-    # Array.shape／dtype 是傳送方填的，numpy() 讀的是資料裡的 npy 標頭，所以資料長度也要限制（npy 標頭約 128 bytes）
-    if ({k: (tuple(a.shape), a.dtype) for k, a in rec.items()} != want
-            or any(len(a.data) > 4 * int(np.prod(a.shape)) + 256 for a in rec.values())):
+    if {k: (tuple(a.shape), a.dtype) for k, a in rec.items()} != want or not all(
+            _npy_matches(a.data, want[k][0]) for k, a in rec.items()):
         raise RuntimeError(f"第 {rnd} 輪全域模型的名稱、形狀或型別不符，VD 拒絕使用這個模型")
     if not cfg["sign_models"]:
         return

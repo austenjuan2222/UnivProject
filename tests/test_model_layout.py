@@ -66,6 +66,24 @@ class ModelLayoutTest(unittest.TestCase):
                 client_app._check_global_signature(CFG, m, 1, 7)
             self.assertFalse(v.called)
 
+    def test_npy_header_claiming_a_huge_shape_is_rejected_before_np_load(self):
+        # np.load 先照資料裡 npy 標頭的形狀配置記憶體才讀資料：資料很短也能要 4 TB
+        import io
+        p = good()
+        k = next(iter(p))
+        buf = io.BytesIO()
+        np.lib.format.write_array_header_1_0(buf, {"descr": "<f4", "fortran_order": False, "shape": (2 ** 40,)})
+        buf.write(b"\0" * 64)
+        rec = ArrayRecord({n: Array(v) for n, v in p.items()})
+        rec[k] = Array(dtype="float32", shape=tuple(p[k].shape), stype=rec[k].stype, data=buf.getvalue())
+        m = Message(content=RecordDict({"arrays": rec, "config": ConfigRecord({"server-round": 1}),
+                                        AUTH: ConfigRecord({"sig": "00"})}), dst_node_id=1, message_type="train")
+        with mock.patch.object(client_app, "verify_model", return_value=True) as v, \
+                mock.patch.object(client_app, "load_server_public_key", return_value=None):
+            with self.assertRaises(RuntimeError):
+                client_app._check_global_signature(CFG, m, 1, 7)
+            self.assertFalse(v.called)
+
 
 if __name__ == "__main__":
     unittest.main()
