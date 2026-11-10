@@ -1,2 +1,0 @@
-label,use_dp,sigma,n_seeds,final_mae_mean,final_mae_std,final_rmse_mean,final_epsilon_mean,naive_mae_mean,finetuned_mae_mean,finetuned_mae_std,finetuned_epsilon_mean
-DP σ=1.1,True,1.1,3,2.1968243022759757,0.00982512281981052,3.8682607537738254,2.367100349790259,2.4292450435459614,2.1230605045954385,0.013667039437594569,2.5415330315055065
