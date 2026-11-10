@@ -586,7 +586,10 @@ class GuardedStrategy(Strategy):
                 [Message(content=q0, message_type="query", dst_node_id=n) for n in alive.values()], timeout=120):
             try:
                 pid0 = int(r.content["secagg"]["pid"])
-                m0 = [str(x) for x in r.content["secagg"]["macs"]]
+                raw = list(r.content["secagg"]["macs"])
+                if not all(isinstance(x, bytes) for x in raw):
+                    continue  # 只收二進位
+                m0 = [_hex(x) for x in raw]
             except (KeyError, TypeError, ValueError, AttributeError):
                 continue  # 沒回或回錯：少一份證明，門檻由 VD 自己檢查
             if alive.get(pid0) == r.metadata.src_node_id and len(m0) == self.secure_agg_clients:
@@ -606,7 +609,7 @@ class GuardedStrategy(Strategy):
                 c["eshare-owners"] = emine
                 c["eshare-cts"] = [self._eshares[d][j] for d in emine]
                 frm = sorted(i for i in macs if i != j)
-                c["attest-from"], c["attest-macs"] = frm, [macs[i][j] for i in frm]
+                c["attest-from"], c["attest-macs"] = frm, [bytes.fromhex(macs[i][j]) for i in frm]
             return RecordDict({"secagg": ConfigRecord(c)})
         return query
 

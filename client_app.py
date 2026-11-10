@@ -446,13 +446,15 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         context.state[att_key] = ConfigRecord({"list": json.dumps(dropped)})
         macs = ["" if j == pid else consist_mac(priv, pubs[j], pid, j, rnd, context.run_id, dropped, k=knb, present=bind)
                 for j in range(n)]
-        return Message(content=RecordDict({"secagg": ConfigRecord({"pid": pid, "macs": macs})}), reply_to=msg)
+        # 二進位傳（LPWAN 上十六進位會多一倍）
+        return Message(content=RecordDict({"secagg": ConfigRecord(
+            {"pid": pid, "macs": [bytes.fromhex(m) for m in macs]})}), reply_to=msg)
     reply = {"pid": pid}
     if shamir:
         # 秘密分享要先過一致性回合：自己證明過同一份名單，而且湊滿 2n/3+1 份（含自己）別人對同一份名單的證明，
         # 不然惡意伺服器可以對不同 VD 說不同名單，同時拿到某台的份和它的所有成對種子
         frm = [int(i) for i in q["attest-from"]] if "attest-from" in q else []
-        macs = [str(x) for x in q["attest-macs"]] if "attest-macs" in q else []
+        macs = [_hex(x) for x in q["attest-macs"]] if "attest-macs" in q else []
         import hmac
         ok = {i for i, m in zip(frm, macs) if i in present and i != pid and i not in dropped
               and hmac.compare_digest(m, consist_mac(priv, pubs[i], i, pid, rnd, context.run_id, dropped, k=knb,

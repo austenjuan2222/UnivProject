@@ -138,12 +138,21 @@ class VdShareReplyTest(unittest.TestCase):
         self.assertNotIn("self", out)
         self.assertEqual(sorted(int(i) for i in out["share-owners"]), [0, 1, 2])
 
+    def test_consist_macs_are_binary(self):
+        # LPWAN：一致性回合的 MAC 用二進位傳（十六進位會多一倍），每個 32 bytes，自己那格是空的
+        ctx = _ctx(self.tmp.name, 0, 4)
+        out = secagg_recover_fn(self._q({"round": 3, "dropped": [3], "phase": "consist",
+                                         "sig": sign_recover(self.priv, 3, [3], run=1)}), ctx).content["secagg"]
+        macs = list(out["macs"])
+        self.assertTrue(all(isinstance(m, bytes) for m in macs))
+        self.assertEqual([len(m) for m in macs], [0, 32, 32, 32])
+
     def test_consist_phase_returns_macs_for_every_other_vd(self):
         ctx = _ctx(self.tmp.name, 0, 4)
         out = secagg_recover_fn(self._q({"round": 3, "dropped": [3], "phase": "consist",
                                          "sig": sign_recover(self.priv, 3, [3], run=1)}), ctx).content["secagg"]
         macs = list(out["macs"])
-        self.assertEqual(macs[1], consist_mac(load_agreement_keys(self.tmp.name, 0)[0], self.pubs[1], 0, 1, 3, 1, [3],
+        self.assertEqual(macs[1].hex(), consist_mac(load_agreement_keys(self.tmp.name, 0)[0], self.pubs[1], 0, 1, 3, 1, [3],
                                                       present=range(4)))  # 沒有在場名單時當作全部在場
         with self.assertRaises(RuntimeError):  # 每輪只替一份名單做證明
             secagg_recover_fn(self._q({"round": 3, "dropped": [], "phase": "consist",
