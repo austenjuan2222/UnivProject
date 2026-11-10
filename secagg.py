@@ -264,6 +264,14 @@ def share_threshold(n: int, k: int = 0) -> int:
     return shamir_threshold(n) if not k else k // 2 + 1
 
 
+def prune_present(present, n: int, k: int, rnd: int, run: int = 0) -> set:
+    """反覆剔除在場持有者（含自己）不到門檻的 VD：它反正會拒絕遮罩，留著會讓整輪的份湊不滿。"""
+    a, t = set(present), share_threshold(n, k)
+    while bad := {i for i in a if sum(1 for j in share_holders(i, n, k, rnd, run) if j == i or j in a) < t}:
+        a -= bad
+    return a
+
+
 def shamir_split(secret: bytes, ids, t: int) -> dict[int, int]:
     # 係數由種子導出（HKDF）：同一顆種子重算得到同樣的份，加密時就不會用同一個 nonce 加密不同明文
     stream = HKDF(hashes.SHA512(), 66 * max(int(t) - 1, 1), None, b"secagg-shamir-coeffs").derive(secret)
@@ -330,11 +338,13 @@ def epub_mac(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, sender: int,
 
 
 def consist_mac(my_priv: X25519PrivateKey, their_pub: X25519PublicKey, sender: int, receiver: int, rnd: int,
-                run: int, dropped, k: int = 0) -> str:
-    """sender 向 receiver 證明「我收到的斷線名單是 dropped」：用兩兩之間的金鑰，伺服器轉交時改不了也偽造不了。"""
+                run: int, dropped, k: int = 0, present=None) -> str:
+    """sender 向 receiver 證明「我收到的斷線名單是 dropped」：用兩兩之間的金鑰，伺服器轉交時改不了也偽造不了。
+    present（這輪在場名單）也綁進去：伺服器對不同 VD 說不同的在場名單，它們就湊不成同一份證明。"""
+    tail = "" if present is None else f"|present={sorted(int(j) for j in present)}"
     return _pair_hmac(my_priv, their_pub, b"secagg-consist",
                       f"secagg-consist|{int(run)}|{int(rnd)}|{int(sender)}|{int(receiver)}|{sorted(int(j) for j in dropped)}"
-                      f"|k={int(k)}")
+                      f"|k={int(k)}{tail}")
 
 
 def _share_aead(my_priv: X25519PrivateKey, their_pub: X25519PublicKey) -> ChaCha20Poly1305:

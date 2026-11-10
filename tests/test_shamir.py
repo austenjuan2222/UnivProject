@@ -1,4 +1,5 @@
 """Shamir 秘密分享自我遮罩種子（SecAgg 的做法）：VD 自己不直接交出種子，伺服器要湊滿門檻份數才能還原。"""
+import json
 import tempfile
 import unittest
 
@@ -67,10 +68,13 @@ def _err(m, e):
     return Message(Error(code=0, reason=str(e)), reply_to=m)
 
 
-def _ctx(d, pid, n):
+def _ctx(d, pid, n, present=None):
     ctx = Context(run_id=1, node_id=pid, node_config={"partition-id": pid, "num-partitions": n},
                   state=RecordDict(), run_config={"key-dir": d, "secagg-shamir": True})
     ctx.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": 3, "revealed-round": -1})
+    if present is not False:  # 訓練時存下的這輪在場名單（預設全部在場）
+        ctx.state[SECAGG_STATE_KEY + "-present"] = ConfigRecord(
+            {"list": json.dumps(sorted(range(n) if present is None else present))})
     return ctx
 
 
@@ -103,11 +107,31 @@ class VdShareReplyTest(unittest.TestCase):
         if attesters is None:
             attesters = [i for i in range(4) if i != pid and i not in dropped]
         macs = [consist_mac(load_agreement_keys(self.tmp.name, i)[0], self.pubs[pid], i, pid, 3, 1,
-                            [] if forge else dropped) for i in attesters]
+                            [] if forge else dropped, present=range(4)) for i in attesters]
         q = {**base, "share-owners": list(owners), "share-cts": [self.cts[i][pid] for i in owners],
              "attest-from": list(attesters), "attest-macs": macs,
              "eshare-owners": list(dropped), "eshare-cts": [self.ects[d][pid] for d in dropped]}
         return secagg_recover_fn(self._q(q), ctx)
+
+    def test_refuses_without_present_record(self):
+        # 秘密分享模式下沒存在場名單＝沒照流程遮罩過：不要當成全部在場
+        ctx = _ctx(self.tmp.name, 0, 4, present=False)
+        with self.assertRaises(RuntimeError):
+            secagg_recover_fn(self._q({"round": 3, "dropped": [], "phase": "consist",
+                                       "sig": sign_recover(self.priv, 3, [], run=1)}), ctx)
+
+    def test_attester_outside_present_list_not_counted(self):
+        # VD 3 不在場：它（或冒用它的伺服器共謀者）替名單做的證明不能算進門檻
+        present = [0, 1, 2]
+        ctx = _ctx(self.tmp.name, 0, 4, present=present)
+        base = {"round": 3, "dropped": [], "sig": sign_recover(self.priv, 3, [], run=1)}
+        secagg_recover_fn(self._q({**base, "phase": "consist"}), ctx)
+        macs = [consist_mac(load_agreement_keys(self.tmp.name, i)[0], self.pubs[0], i, 0, 3, 1, [], present=present)
+                for i in (1, 3)]
+        q = {**base, "share-owners": present, "share-cts": [self.cts[i][0] for i in present],
+             "attest-from": [1, 3], "attest-macs": macs, "eshare-owners": [], "eshare-cts": []}
+        with self.assertRaises(RuntimeError):
+            secagg_recover_fn(self._q(q), ctx)
 
     def test_gives_shares_for_alive_owners_and_no_plain_self_seed(self):
         out = self._ask(0, [3], [0, 1, 2]).content["secagg"]
@@ -119,7 +143,8 @@ class VdShareReplyTest(unittest.TestCase):
         out = secagg_recover_fn(self._q({"round": 3, "dropped": [3], "phase": "consist",
                                          "sig": sign_recover(self.priv, 3, [3], run=1)}), ctx).content["secagg"]
         macs = list(out["macs"])
-        self.assertEqual(macs[1], consist_mac(load_agreement_keys(self.tmp.name, 0)[0], self.pubs[1], 0, 1, 3, 1, [3]))
+        self.assertEqual(macs[1], consist_mac(load_agreement_keys(self.tmp.name, 0)[0], self.pubs[1], 0, 1, 3, 1, [3],
+                                                      present=range(4)))  # 沒有在場名單時當作全部在場
         with self.assertRaises(RuntimeError):  # 每輪只替一份名單做證明
             secagg_recover_fn(self._q({"round": 3, "dropped": [], "phase": "consist",
                                        "sig": sign_recover(self.priv, 3, [], run=1)}), ctx)

@@ -72,7 +72,7 @@ class EphemeralTest(unittest.TestCase):
         contents, kept = [], []
         for i in alive:
             eph, epubs = pair_keys_from_config(self.privs[i], self.pubs, i, N, RND, 0, msgs[i].content["secagg-eph"])
-            claim_mask_round(self.ctxs[i], RND)
+            claim_mask_round(self.ctxs[i], RND, adv=range(N))
             masked = mask_update(upd[i], n_ex[i], i, range(N), self.privs[i], self.pubs, RND, 0, self_mask=True,
                                  pair_priv=eph, pair_pubs=epubs)
             b = self_seed(self.privs[i], i, RND, 0)
@@ -106,7 +106,7 @@ class EphemeralTest(unittest.TestCase):
         self.g._shares = {i: encrypt_shares(self_seed(self.privs[i], i, RND, 0), i, range(N), self.privs[i],
                                             self.pubs, RND, 0) for i in range(5)}
         for i in range(N):
-            claim_mask_round(self.ctxs[i], RND)
+            claim_mask_round(self.ctxs[i], RND, adv=range(N))
         macs = self.g._consist(RND, [5], {i: 100 + i for i in range(5)})
         q = self.g._recover_query(RND, [5], [0, 1, 2, 3, 4], macs)
         c = dict(q(0)["secagg"])
@@ -154,7 +154,7 @@ class EphemeralTest(unittest.TestCase):
         self.assertTrue(all(isinstance(x, bytes) for x in [*rec["epubs"], *rec["macs"]]))
 
     def test_non_binary_advertise_reply_is_ignored(self):
-        # 惡意 VD 回十六進位以外的字串：伺服器忽略它（這輪不附公鑰），不能在 configure_train 裡當掉
+        # 惡意 VD 回十六進位以外的字串：伺服器忽略它（它這輪不在場），不能在 configure_train 裡當掉；其他 VD 照常
         inner = self.g._grid
 
         class Bad:
@@ -165,7 +165,8 @@ class EphemeralTest(unittest.TestCase):
                 return [Message(content=RecordDict({"secagg": ConfigRecord(c)}), reply_to=messages[0])] + out[1:]
         self.g._grid = Bad()
         msgs = self._train_msgs()
-        self.assertNotIn("secagg-eph", msgs[1].content.keys())
+        self.assertNotIn("secagg-eph", msgs[0].content.keys())
+        self.assertEqual(msgs[1].content["secagg-eph"]["epubs"][0], b"")
 
 
 if __name__ == "__main__":

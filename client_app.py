@@ -257,13 +257,16 @@ def train_fn(msg: Message, context: Context) -> Message:
                                                                          msg.content["secagg-eph"],
                                                                          k=cfg["secagg_neighbors"])
         k = cfg["secagg_neighbors"] if cfg["secagg_shamir"] else 0
-        masked = mask_update(delta, len(d["y_train"]), pid, neighbors(pid, n, k, rnd, context.run_id), priv, pubs, rnd, context.run_id,
+        # 秘密分享模式只和這輪公告過（伺服器轉交、驗過）的鄰居遮罩
+        peers = sorted(pair["pair_pubs"]) if pair else neighbors(pid, n, k, rnd, context.run_id)
+        masked = mask_update(delta, len(d["y_train"]), pid, peers, priv, pubs, rnd, context.run_id,
                              self_mask=cfg["secagg_self_mask"], **ring, **pair, num_vd=n)
-        claim_mask_round(context, rnd)
+        claim_mask_round(context, rnd, adv=[int(i) for i in msg.content["secagg-eph"]["present"]] if pair else None)
         arrays = ArrayRecord({k: Array(v) for k, v in masked.items()})
         if cfg["secagg_shamir"]:  # 自我遮罩種子切份、各自加密給持有者，經伺服器轉交
             b = self_seed(priv, pid, rnd, context.run_id)
-            shares = encrypt_shares(b, pid, share_holders(pid, n, k, rnd, context.run_id), priv, pubs, rnd, context.run_id,
+            hold = [j for j in share_holders(pid, n, k, rnd, context.run_id) if j == pid or j in pair["pair_pubs"]]
+            shares = encrypt_shares(b, pid, hold, priv, pubs, rnd, context.run_id,
                                     t=share_threshold(n, k))
             metrics["secagg-self-tag"] = seed_tag(b)  # HMAC 涵蓋：伺服器還原後拿來比對
         metrics["secagg-num-vd"] = n
@@ -302,8 +305,19 @@ def pair_keys_from_config(priv, pubs: dict, pid: int, n: int, rnd: int, run: int
         epubs, macs = [_hex(x) for x in rec["epubs"]], [_hex(x) for x in rec["macs"]]
         if len(epubs) != n or len(macs) != n or epubs[pid] != eph.public_key().public_bytes_raw().hex():
             raise ValueError
-        nb = neighbors(pid, n, k, rnd, run)  # 只需要（也只驗）鄰居的臨時公鑰
+        # 在場名單（伺服器說這輪有公告的 VD）：自己要在裡面、至少一致性門檻那麼多台（不然伺服器把誠實 VD 都說成
+        # 缺席，就能讓這台只和共謀者遮罩），而且鄰居的公鑰有沒有給要和名單一致；名單之後綁進一致性證明
+        present = {int(i) for i in rec["present"]}
+        if pid not in present or len(present) < consistency_threshold(n) or any(not 0 <= i < n for i in present):
+            raise ValueError
+        # 只需要（也只驗）鄰居的臨時公鑰；空的表示那台這輪沒公告，不和它遮罩
+        nb = [i for i in neighbors(pid, n, k, rnd, run) if epubs[i]]
+        if set(nb) != set(neighbors(pid, n, k, rnd, run)) & present:
+            raise ValueError
         if not all(hmac.compare_digest(macs[i], epub_mac(priv, pubs[i], i, pid, rnd, run, epubs[i], k=k)) for i in nb):
+            raise ValueError
+        # 在場的持有者（含自己）要夠門檻：不然伺服器謊稱鄰居都沒公告，就能讓這台只剩一兩個成對遮罩
+        if len([j for j in share_holders(pid, n, k, rnd, run) if j == pid or j in nb]) < share_threshold(n, k):
             raise ValueError
         keys = {i: X25519PublicKey.from_public_bytes(bytes.fromhex(epubs[i])) for i in nb}
         for i in nb:
@@ -323,13 +337,15 @@ def use_advertised_round(context: Context, rnd: int) -> None:
         raise RuntimeError(f"第 {rnd} 輪不是剛公告的輪次，拒絕訓練")
 
 
-def claim_mask_round(context: Context, rnd: int) -> None:
+def claim_mask_round(context: Context, rnd: int, adv: list | None = None) -> None:
     """每輪只遮罩一次：重送同一輪（或更舊）的訓練請求會重設「每輪只回答一次復原」，讓惡意伺服器問兩次不同名單。"""
     st = context.state[SECAGG_STATE_KEY] if SECAGG_STATE_KEY in context.state else None
     if st is not None and int(st["masked-round"]) >= int(rnd):
         raise RuntimeError(f"第 {rnd} 輪已經遮罩過（或比上次更舊），拒絕重新遮罩")
     context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": int(rnd), "revealed-round": -1,
                                                     "attested-round": -1})
+    if adv is not None:  # 這輪在場（公告過）的鄰居＋自己：復原時只交這些 VD 的份
+        context.state[SECAGG_STATE_KEY + "-present"] = ConfigRecord({"list": json.dumps(sorted(int(j) for j in adv))})
 
 
 @app.query()
@@ -349,9 +365,13 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         # 輪次只能連續往前（第一次是 1）：鄰居圖由 (run, 輪次) 決定，伺服器跳輪就能挑一張對它有利的圖
         # shortcut: 伺服器仍可「只公告不訓練」一輪一輪往前試（每試一次就廢一輪，看得出來）；不鎖「公告過要訓練過」
         # 是因為斷線的 VD 丟例外時狀態不會存，會被永久鎖住；要擋時改用 VD 共同 commit-reveal 的洗牌種子
-        # shortcut: 漏收某輪公告的 VD 會被鎖到這次執行結束（下次執行狀態重來）
+        # 容許連續漏收 2 次公告（網路掉包、公告時斷線）：代價是伺服器每輪最多能在 3 張圖裡挑，而且每跳一輪就廢一輪
+        # shortcut: 連續漏收 3 次以上的 VD 會被鎖到這次執行結束（下次執行狀態重來），這期間它只是不在場
+        if drops_out(int(context.run_config.get("seed", 0)), pid, rnd + 200_000,
+                     float(context.run_config.get("secagg-advertise-dropout", 0.0))):
+            raise RuntimeError(f"VD {pid} 第 {rnd} 輪公告時斷線（模擬）")
         last = int(context.state[ADV_KEY]["round"]) if ADV_KEY in context.state else 0
-        if rnd != last + 1:
+        if not last < rnd <= last + 3:
             raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪公告：上次是第 {last} 輪")
         # shortcut: run_id 仍由伺服器決定，可離線試；要更強時改用 VD 共同 commit-reveal 的亂數當洗牌種子
         priv, pubs = load_agreement_keys(str(context.run_config.get("key-dir", "keys")), pid)
@@ -394,7 +414,13 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
     att_list = str(context.state[att_key]["list"]) if att_key in context.state else ""
     shamir = bool(context.run_config.get("secagg-shamir", False))
     knb = int(context.run_config.get("secagg-neighbors", 0)) if shamir else 0
-    if shamir and n - len(dropped) < consistency_threshold(n):
+    pk = SECAGG_STATE_KEY + "-present"  # 這輪在場名單（訓練時驗過、存下來的）
+    if shamir and pk not in context.state:  # 沒照流程遮罩過：不當成全部在場
+        raise RuntimeError(f"VD {pid} 第 {rnd} 輪沒有在場名單，拒絕復原")
+    present = set(json.loads(str(context.state[pk]["list"]))) if pk in context.state else set(range(n))
+    bind = sorted(present) if shamir else None
+    # 在線＝在場名單 − 斷線名單（缺席的 VD 不會作證）；斷線名單只能是在場的 VD
+    if shamir and (not set(dropped) <= present or len(present - set(dropped)) < consistency_threshold(n)):
         # 在線的少於一致性門檻：證明一定湊不滿，直接拒絕（例如 n=3 有任何一台斷線）
         raise RuntimeError(f"VD {pid} 第 {rnd} 輪在線 VD 不足一致性門檻，無法復原")
     if consist:
@@ -404,7 +430,7 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         context.state[SECAGG_STATE_KEY] = MetricRecord({"masked-round": rnd, "revealed-round": int(st["revealed-round"]),
                                                         "attested-round": rnd})
         context.state[att_key] = ConfigRecord({"list": json.dumps(dropped)})
-        macs = ["" if j == pid else consist_mac(priv, pubs[j], pid, j, rnd, context.run_id, dropped, k=knb)
+        macs = ["" if j == pid else consist_mac(priv, pubs[j], pid, j, rnd, context.run_id, dropped, k=knb, present=bind)
                 for j in range(n)]
         return Message(content=RecordDict({"secagg": ConfigRecord({"pid": pid, "macs": macs})}), reply_to=msg)
     reply = {"pid": pid}
@@ -414,8 +440,9 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         frm = [int(i) for i in q["attest-from"]] if "attest-from" in q else []
         macs = [str(x) for x in q["attest-macs"]] if "attest-macs" in q else []
         import hmac
-        ok = {i for i, m in zip(frm, macs) if 0 <= i < n and i != pid and i not in dropped
-              and hmac.compare_digest(m, consist_mac(priv, pubs[i], i, pid, rnd, context.run_id, dropped, k=knb))}
+        ok = {i for i, m in zip(frm, macs) if i in present and i != pid and i not in dropped
+              and hmac.compare_digest(m, consist_mac(priv, pubs[i], i, pid, rnd, context.run_id, dropped, k=knb,
+                                                    present=bind))}
         if (att_round != rnd or att_list != json.dumps(dropped) or len(frm) != len(macs)
                 or len(ok) + 1 < consistency_threshold(n)):
             raise RuntimeError(f"VD {pid} 第 {rnd} 輪的斷線名單沒有足夠一致的證明")
@@ -424,7 +451,7 @@ def secagg_recover_fn(msg: Message, context: Context) -> Message:
         cts = [str(x) for x in q["share-cts"]] if "share-cts" in q else []
         # 份只給「名單上在線」的那些 VD，而且要剛好是名單的補集（不能挑著要）
         held = set(range(n)) if not knb else set(neighbors(pid, n, knb, rnd, context.run_id))  # 我持有誰的份
-        if len(owners) != len(cts) or sorted(owners) != sorted(held - set(dropped)):
+        if len(owners) != len(cts) or sorted(owners) != sorted((held & present) - set(dropped)):
             raise RuntimeError(f"VD {pid} 拒絕第 {rnd} 輪交出斷線 VD 的份")
         got = {i: open_share(ct, i, pid, priv, pubs, rnd, context.run_id) for i, ct in zip(owners, cts)}
         if any(v is None for v in got.values()):

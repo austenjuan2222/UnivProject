@@ -8,7 +8,8 @@ from flwr.app import Array, ArrayRecord, ConfigRecord, Context, Message, MetricR
 from client_app import ADV_KEY, use_advertised_round, claim_mask_round, pair_keys_from_config, secagg_recover_fn
 from guard import GuardedStrategy, secure_average
 from secagg import (encrypt_shares, load_agreement_keys, load_agreement_pubs, load_server_agreement_key, mask_update,
-                    neighbors, provision_agreement_keys, seed_tag, self_seed, share_threshold)
+                    consist_mac, consistency_threshold, neighbors, provision_agreement_keys, prune_present, seed_tag, self_seed,
+                    share_holders, share_threshold)
 from security import load_server_secrets, provision_keys
 
 N, K, RND = 10, 6, 3
@@ -76,7 +77,7 @@ class NeighborRecoveryTest(unittest.TestCase):
                                 state=RecordDict({ADV_KEY: MetricRecord({"round": RND - 1})}),
                                 run_config={"key-dir": d, "secagg-shamir": True, "secagg-neighbors": K})
                      for i in range(N)}
-        self.silent = set()
+        self.silent, self.adv_silent = set(), set()
         test = self
 
         class Grid:
@@ -85,7 +86,7 @@ class NeighborRecoveryTest(unittest.TestCase):
                 for m in messages:
                     pid = m.metadata.dst_node_id - 100
                     phase = str(m.content["secagg"]["phase"]) if "phase" in m.content["secagg"] else ""
-                    if pid in test.silent and phase == "":
+                    if pid in test.silent and phase == "" or pid in test.adv_silent and phase == "advertise":
                         continue
                     try:
                         out.append(secagg_recover_fn(m, test.ctxs[pid]))
@@ -124,7 +125,7 @@ class NeighborRecoveryTest(unittest.TestCase):
                               self.ctxs[0])
 
     def test_advertise_rounds_must_be_consecutive(self):
-        # 伺服器不能跳輪次挑一張對它有利的鄰居圖：公告回合只接受上一輪＋1
+        # 伺服器不能跳輪次挑一張對它有利的鄰居圖：公告回合只接受上一輪＋1～＋3（容許漏收 2 次公告）
         ctx = self.ctxs[0]
 
         def adv(r):
@@ -132,7 +133,7 @@ class NeighborRecoveryTest(unittest.TestCase):
             return secagg_recover_fn(Message(content=RecordDict({"secagg": q}), dst_node_id=100, message_type="query"),
                                      ctx)
         adv(RND)
-        for r in (RND, RND + 2, RND - 1):  # 重送、跳輪、倒退
+        for r in (RND, RND + 4, RND - 1):  # 重送、跳太多輪、倒退
             with self.assertRaises(RuntimeError):
                 adv(r)
         with self.assertRaises(RuntimeError):
@@ -141,6 +142,18 @@ class NeighborRecoveryTest(unittest.TestCase):
         adv(RND + 1)
         with self.assertRaises(RuntimeError):
             use_advertised_round(ctx, RND)  # 不能回頭挑之前公告過的輪次
+        adv(RND + 3)  # 漏收第 RND+2 輪的公告（網路掉包）還能接回來，不會被永久鎖住
+
+    def test_vd_missing_an_advertise_rejoins_next_round(self):
+        # 模擬公告回合斷線：VD 這輪不在場，下一輪照常公告
+        ctx = self.ctxs[0]
+        ctx.run_config["secagg-advertise-dropout"] = 1.0
+        q = lambda r: Message(content=RecordDict({"secagg": ConfigRecord({"round": r, "phase": "advertise"})}),
+                              dst_node_id=100, message_type="query")
+        with self.assertRaises(RuntimeError):
+            secagg_recover_fn(q(RND), ctx)
+        ctx.run_config["secagg-advertise-dropout"] = 0.0
+        secagg_recover_fn(q(RND + 1), ctx)
 
     def test_train_dropout_plus_silent_recovery_gives_exact_average(self):
         msgs = self._train_msgs()
@@ -153,7 +166,7 @@ class NeighborRecoveryTest(unittest.TestCase):
         for i in alive:
             eph, epubs = pair_keys_from_config(self.privs[i], self.pubs, i, N, RND, 0,
                                                msgs[i].content["secagg-eph"], k=K)
-            claim_mask_round(self.ctxs[i], RND)
+            claim_mask_round(self.ctxs[i], RND, adv=range(N))
             masked = mask_update(upd[i], n_ex[i], i, neighbors(i, N, K, rnd=RND), self.privs[i], self.pubs, RND, 0,
                                  self_mask=True, pair_priv=eph, pair_pubs=epubs, num_vd=N)
             b = self_seed(self.privs[i], i, RND, 0)
@@ -170,6 +183,107 @@ class NeighborRecoveryTest(unittest.TestCase):
         want = sum(n_ex[i] * upd[i]["w"] for i in alive) / sum(n_ex.values())
         np.testing.assert_allclose(np.asarray(got["w"].numpy()), want, atol=1e-3)
 
+    def _round(self, msgs, alive):
+        """模擬 alive 這些 VD 照訓練流程遮罩、切份（遮罩對象只用伺服器轉交來、驗得過的鄰居公鑰）。"""
+        rng = np.random.default_rng(2)
+        upd = {i: {"w": rng.normal(0, 0.01, (3, 4))} for i in alive}
+        n_ex = {i: 10 + i for i in alive}
+        contents, kept = [], []
+        for i in alive:
+            eph, epubs = pair_keys_from_config(self.privs[i], self.pubs, i, N, RND, 0,
+                                               msgs[i].content["secagg-eph"], k=K)
+            claim_mask_round(self.ctxs[i], RND, adv=[int(j) for j in msgs[i].content["secagg-eph"]["present"]])
+            masked = mask_update(upd[i], n_ex[i], i, sorted(epubs), self.privs[i], self.pubs, RND, 0,
+                                 self_mask=True, pair_priv=eph, pair_pubs=epubs, num_vd=N)
+            b = self_seed(self.privs[i], i, RND, 0)
+            self.g._shares[i] = encrypt_shares(b, i, sorted(epubs), self.privs[i], self.pubs, RND, 0,
+                                               t=share_threshold(N, K))
+            self.g._self_hash[i] = seed_tag(b)
+            contents.append(RecordDict({"arrays": ArrayRecord({k: Array(v) for k, v in masked.items()}),
+                                        "metrics": MetricRecord({"num-examples": n_ex[i]})}))
+            kept.append(Message(content=RecordDict({"metrics": MetricRecord({"partition-id": i})}),
+                                reply_to=msgs[i]))
+        return upd, n_ex, contents, kept
+
+    def test_vd_silent_at_advertise_is_left_out_not_fatal(self):
+        # 公告回合沒回的 VD 這輪不參加（不和它遮罩、不分份給它），其他 VD 照常；再加 1 台訓練斷線
+        # （每台最多少 2 個持有者，還有 4 個 ≥ 門檻 4）
+        self.adv_silent = {7}
+        msgs = self._train_msgs()
+        self.assertNotIn("secagg-eph", msgs[7].content.keys())  # 沒公告的 VD 拿不到公鑰，會拒絕遮罩
+        alive = [i for i in range(N) if i not in (7, 9)]  # VD 9 訓練斷線
+        upd, n_ex, contents, kept = self._round(msgs, alive)
+        rev = self.g._recover(RND, kept)
+        self.assertIsNotNone(rev)
+        got = secure_average(contents, N, rev)
+        want = sum(n_ex[i] * upd[i]["w"] for i in alive) / sum(n_ex.values())
+        np.testing.assert_allclose(np.asarray(got["w"].numpy()), want, atol=1e-3)
+
+    def test_vd_refuses_when_too_few_neighbors_advertised(self):
+        # 伺服器謊稱大部分鄰居沒公告（只轉交 1 把公鑰）：持有者少於門檻，VD 拒絕遮罩（不然只剩 1 個成對遮罩保護它）
+        rec = self._train_msgs()[0].content["secagg-eph"]
+        nb = neighbors(0, N, K, rnd=RND)
+        epubs = [x if i == 0 or i == nb[0] else b"" for i, x in enumerate(rec["epubs"])]
+        macs = [x if i == nb[0] else b"" for i, x in enumerate(rec["macs"])]
+        with self.assertRaises(RuntimeError):
+            pair_keys_from_config(self.privs[0], self.pubs, 0, N, RND, 0,
+                                  ConfigRecord({"epubs": epubs, "macs": macs}), k=K)
+
+    def test_server_attaches_present_list(self):
+        self.adv_silent = {7}
+        rec = self._train_msgs()[0].content["secagg-eph"]
+        self.assertEqual(sorted(int(i) for i in rec["present"]), [i for i in range(N) if i != 7])
+
+    def _eph(self, drop_from_present=(), blank=()):
+        if not hasattr(self, "_rec0"):  # 同一輪只能公告一次
+            self._rec0 = self._train_msgs()[0].content["secagg-eph"]
+        rec = self._rec0
+        a = [int(i) for i in rec["present"] if int(i) not in drop_from_present]
+        epubs = [b"" if i in blank else x for i, x in enumerate(rec["epubs"])]
+        macs = [b"" if i in blank else x for i, x in enumerate(rec["macs"])]
+        return ConfigRecord({"epubs": epubs, "macs": macs, "present": a})
+
+    def test_vd_checks_present_list_matches_epubs(self):
+        h = neighbors(0, N, K, rnd=RND)[0]
+        for rec in (self._eph(drop_from_present=[h]),  # 名單說 h 不在、卻給了 h 的公鑰
+                    self._eph(blank=[h]),  # 名單說 h 在、卻沒給 h 的公鑰
+                    self._eph(drop_from_present=[0])):  # 自己不在名單上
+            with self.assertRaises(RuntimeError):
+                pair_keys_from_config(self.privs[0], self.pubs, 0, N, RND, 0, rec, k=K)
+        pair_keys_from_config(self.privs[0], self.pubs, 0, N, RND, 0, self._eph(), k=K)
+
+    def test_vd_refuses_when_too_many_absent(self):
+        # 在場名單少於一致性門檻：伺服器可能把誠實 VD 都說成缺席，拒絕遮罩
+        nb = neighbors(0, N, K, rnd=RND)
+        out = ([i for i in range(N) if i != 0 and i not in nb] + nb)[:N - consistency_threshold(N) + 1]
+        with self.assertRaises(RuntimeError):
+            pair_keys_from_config(self.privs[0], self.pubs, 0, N, RND, 0, self._eph(drop_from_present=out), k=K)
+
+    def test_consistency_mac_binds_present_list(self):
+        a = consist_mac(self.privs[0], self.pubs[1], 0, 1, RND, 0, [2], k=K, present=range(N))
+        b = consist_mac(self.privs[0], self.pubs[1], 0, 1, RND, 0, [2], k=K, present=[i for i in range(N) if i != 5])
+        self.assertNotEqual(a, b)
+
+    def test_recovery_refuses_when_online_present_below_threshold(self):
+        # 在線＝在場名單 − 斷線名單；不能用 n − 斷線數（缺席的 VD 不會作證）
+        ctx, t = self.ctxs[0], consistency_threshold(N)
+        present = list(range(t))
+        claim_mask_round(ctx, RND, adv=present)
+        q = ConfigRecord({**self.g._ask(RND, [t - 1]), "phase": "consist"})
+        with self.assertRaises(RuntimeError):
+            secagg_recover_fn(Message(content=RecordDict({"secagg": q}), dst_node_id=100, message_type="query"), ctx)
+
+    def test_prune_drops_vds_with_too_few_present_holders(self):
+        # 持有者在場數不到門檻的 VD 反正會拒絕遮罩；留在名單裡會讓整輪的份湊不滿，伺服器先剔除（反覆到穩定）
+        t = share_threshold(N, K)
+        h = share_holders(0, N, K, RND, 0)
+        absent = set(h[:len(h) - t + 1])  # VD 0 只剩 t-1 個在場持有者
+        a = prune_present(set(range(N)) - absent, N, K, RND, 0)
+        self.assertNotIn(0, a)
+        for i in a:
+            self.assertGreaterEqual(sum(1 for j in share_holders(i, N, K, RND, 0) if j == i or j in a), t)
+        self.assertEqual(prune_present(set(range(N)), N, K, RND, 0), set(range(N)))
+
     def test_too_few_holders_gives_up(self):
         # VD 1 的 6 個持有者裡，1 台斷線、2 台沉默，只剩 3 個 < 門檻 4 → 放棄（不默默算錯）
         h = neighbors(1, N, K, rnd=RND)
@@ -178,7 +292,7 @@ class NeighborRecoveryTest(unittest.TestCase):
         msgs = self._train_msgs()
         alive = [i for i in range(N) if i != drop]
         for i in alive:
-            claim_mask_round(self.ctxs[i], RND)
+            claim_mask_round(self.ctxs[i], RND, adv=range(N))
             self.g._shares[i] = encrypt_shares(self_seed(self.privs[i], i, RND, 0), i, neighbors(i, N, K, rnd=RND),
                                                self.privs[i], self.pubs, RND, 0, t=share_threshold(N, K))
             self.g._self_hash[i] = seed_tag(self_seed(self.privs[i], i, RND, 0))

@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from compress import quantize_update
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
-from secagg import (neighbors, share_holders, share_threshold, drop_correction, open_seeds, open_shares, pair_seed, seed_tag, shamir_combine, shamir_threshold,
+from secagg import (neighbors, prune_present, share_holders, share_threshold, drop_correction, open_seeds, open_shares, pair_seed, seed_tag, shamir_combine, shamir_threshold,
                     unmask_sum)
 from security import canonical_metrics, sign_model, sign_recover, sign_update, tamper, update_digest, verify_update
 
@@ -394,9 +394,13 @@ class GuardedStrategy(Strategy):
                     and {j for j, x in enumerate(m0) if x} == set(neighbors(pid, n, self.secagg_k, rnd, self._run_id())):
                 self._epubs[pid], macs[pid], pid_of[r.metadata.src_node_id] = epub, m0, pid
                 self._eshares[pid] = {j: e for j, e in enumerate(e0) if e}
-        # shortcut: 少了任何一台的公告就不附公鑰（VD 會拒絕遮罩、這輪作廢）；要支援部分 VD 先離線時，改成只在公告過的 VD 之間遮罩
-        if set(self._epubs) != set(range(n)):
-            return messages
+        # 只在公告過的 VD 之間遮罩：沒公告的 VD 收不到公鑰（會拒絕遮罩），這輪當作不在場；
+        # 每台 VD 自己檢查在場的持有者夠不夠門檻（伺服器謊稱別人沒公告來削弱它時會拒絕）
+        # 先剔除在場持有者不夠門檻的 VD（反覆到穩定）：它反正會拒絕遮罩，留著會讓整輪的份湊不滿
+        adv = prune_present(self._epubs, n, self.secagg_k, rnd, self._run_id())
+        for i in set(self._epubs) - adv:
+            del self._epubs[i], self._eshares[i]
+            pid_of = {node: p for node, p in pid_of.items() if p != i}
         out = []
         for m in messages:
             pid = pid_of.get(m.metadata.dst_node_id)
@@ -404,10 +408,11 @@ class GuardedStrategy(Strategy):
                 out.append(m)
                 continue
             content = RecordDict(dict(m.content.items()))  # 同一輪的訊息共用 RecordDict，每台要自己的一份
-            nb = set(neighbors(pid, n, self.secagg_k, rnd, self._run_id()))  # 只轉交鄰居的公鑰（LPWAN 下行）
+            nb = set(neighbors(pid, n, self.secagg_k, rnd, self._run_id())) & adv  # 只轉交在場鄰居的公鑰
             content["secagg-eph"] = ConfigRecord({
                 "epubs": [bytes.fromhex(self._epubs[i]) if i in nb or i == pid else b"" for i in range(n)],
-                "macs": [bytes.fromhex(macs[i][pid]) if i in nb else b"" for i in range(n)]})
+                "macs": [bytes.fromhex(macs[i][pid]) if i in nb else b"" for i in range(n)],
+                "present": sorted(adv)})  # VD 核對公鑰和名單一致，並把名單綁進一致性證明
             m.content = content
             out.append(m)
         return out
@@ -512,7 +517,7 @@ class GuardedStrategy(Strategy):
             def ids(m):
                 pid = int(m.content["metrics"]["partition-id"])
                 return {str(j) for j in share_holders(pid, self.secure_agg_clients, self.secagg_k, server_round,
-                                                         self._run_id())}
+                                                         self._run_id()) if j in self._epubs}
             good = {id(m) for m in kept if id(m) in shares_of and set(shares_of[id(m)].keys()) == ids(m)}
             stats["n_rejected"] += len(kept) - len(good)
             kept = [m for m in kept if id(m) in good]
@@ -608,7 +613,10 @@ class GuardedStrategy(Strategy):
     def _recover(self, rnd: int, kept: list[Message]) -> dict | None:
         """向還在線的 VD 要它們和斷線 VD 之間的成對種子；任何一台沒回應就放棄（回傳 None）。"""
         alive = {int(m.content["metrics"]["partition-id"]): m.metadata.src_node_id for m in kept}
-        dropped = sorted(set(range(self.secure_agg_clients)) - set(alive))
+        everyone = set(self._epubs) if self.secagg_shamir and self._epubs else set(range(self.secure_agg_clients))
+        if not set(alive) <= everyone:
+            return None  # 沒公告的 VD 不該有遮罩過的上傳
+        dropped = sorted(everyone - set(alive))  # 公告過、卻沒交上傳的；沒公告的 VD 這輪本來就不在
         if self._grid is None or not (dropped or self.secagg_self_mask):
             return None
         owners = sorted(alive)
