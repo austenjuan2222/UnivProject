@@ -319,5 +319,65 @@ class IntegerPayloadTest(unittest.TestCase):
         self.assertFalse(verify_update(key, {"w": np.array([2 ** 31 + 1], dtype=np.uint32)}, 1, 0, tag))
 
 
+class KeyExpiryTest(unittest.TestCase):
+    """金鑰有效期限（像 TLS 憑證的到期日）：超過 max_age_days 沒輪替的 VD 金鑰，伺服器不再接受。"""
+    DAY = 86400
+
+    def test_expired_keys_are_dropped_and_fresh_ones_kept(self):
+        import time
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 3)
+            now = time.time()
+            self.assertEqual(sorted(load_server_secrets(d, max_age_days=30, now=now + 29 * self.DAY)[1]), [0, 1, 2])
+            self.assertEqual(load_server_secrets(d, max_age_days=30, now=now + 31 * self.DAY)[1], {})
+            self.assertEqual(load_vd_verify_keys(d, max_age_days=30, now=now + 31 * self.DAY), {})
+            self.assertEqual(sorted(load_server_secrets(d, now=now + 999 * self.DAY)[1]), [0, 1, 2])  # 0 表示不檢查
+
+    def test_reprovisioning_does_not_renew_but_rotation_does(self):
+        import time
+        from security import rotate_vd
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 3)
+            later = time.time() + 31 * self.DAY
+            provision_keys(d, 3)  # 伺服器每次啟動都會跑配發，不能順便把到期日往後延
+            rotate_vd(d, 1, now=later)
+            self.assertEqual(sorted(load_server_secrets(d, max_age_days=30, now=later)[1]), [1])
+            self.assertEqual(sorted(load_vd_verify_keys(d, max_age_days=30, now=later)), [1])
+
+    def test_unknown_issue_time_is_rejected(self):
+        import json
+        import time
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 4)
+            p = Path(d) / "server" / "key_issued.json"
+            t = json.loads(p.read_text(encoding="utf-8"))
+            del t["0"]
+            t["1"] = "abc"
+            t["2"] = float("nan")
+            t["3"] = time.time() + 3650 * self.DAY  # 簽發時間在未來：等於永不過期，不能接受
+            p.write_text(json.dumps(t), encoding="utf-8")
+            self.assertEqual(load_server_secrets(d, max_age_days=30, now=time.time())[1], {})
+
+    def test_missing_record_is_not_renewed_by_provisioning(self):
+        import json
+        import time
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 2)
+            old = time.time() - 400 * self.DAY
+            os.utime(Path(d) / "vd-0.key", (old, old))  # 舊版本配發、還沒有簽發紀錄的金鑰
+            p = Path(d) / "server" / "key_issued.json"
+            t = json.loads(p.read_text(encoding="utf-8"))
+            del t["0"]
+            p.write_text(json.dumps(t), encoding="utf-8")
+            provision_keys(d, 2)  # 伺服器重開：不能把舊金鑰當成剛簽發
+            self.assertEqual(sorted(load_server_secrets(d, max_age_days=30)[1]), [1])
+
+    def test_huge_issue_time_is_rejected_not_crash(self):
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 1)
+            (Path(d) / "server" / "key_issued.json").write_text('{"0": 1' + "0" * 400 + '}', encoding="utf-8")
+            self.assertEqual(load_server_secrets(d, max_age_days=30)[1], {})
+
 if __name__ == "__main__":
     unittest.main()

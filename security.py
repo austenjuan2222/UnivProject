@@ -16,9 +16,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
 import struct
+import time
 from pathlib import Path
 
 import numpy as np
@@ -73,12 +75,43 @@ def provision_keys(key_dir, num_clients: int) -> None:
     pub_table_path.write_text(json.dumps(sign_pubs), encoding="utf-8")
     table_path = server / "vd_keys.json"
     table = json.loads(table_path.read_text(encoding="utf-8")) if table_path.exists() else {}
+    issued_path = server / "key_issued.json"
+    issued = json.loads(issued_path.read_text(encoding="utf-8")) if issued_path.exists() else {}
+    now = time.time()
     for pid in range(num_clients):
         if str(pid) not in table:
             table[str(pid)] = secrets.token_hex(32)
-        if not (key_dir / f"vd-{pid}.key").exists():
-            _write_secret(key_dir / f"vd-{pid}.key", table[str(pid)])
+            issued[str(pid)] = now
+        vd_key = key_dir / f"vd-{pid}.key"
+        if str(pid) not in issued:  # 舊金鑰沒有紀錄：用金鑰檔的寫入時間，不能當成剛簽發（不然每次重開都延期）
+            issued[str(pid)] = vd_key.stat().st_mtime if vd_key.exists() else 0
+        if not vd_key.exists():
+            _write_secret(vd_key, table[str(pid)])
     _write_secret(table_path, json.dumps(table))
+    _write_atomic(issued_path, json.dumps(issued))
+
+
+def _fresh(key_dir, max_age_days: float, now) -> callable:
+    """金鑰有效期限（像 TLS 憑證的到期日）：回傳判斷某台 VD 金鑰還有效的函式；max_age_days=0 不檢查。
+    沒有紀錄、不是數字、或簽發時間在未來超過一天的，一律當過期（fail closed）。"""
+    if not max_age_days:
+        return lambda pid: True
+    p = Path(key_dir) / "server" / "key_issued.json"
+    issued = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    now = time.time() if now is None else now
+
+    def ok(pid) -> bool:
+        t = issued.get(str(pid))
+        if isinstance(t, bool) or not isinstance(t, (int, float)):
+            return False
+        try:
+            t = float(t)
+        except OverflowError:
+            return False
+        if not math.isfinite(t):
+            return False
+        return now - max_age_days * 86400 <= t <= now + 86400
+    return ok
 
 
 def _revoked(key_dir) -> set[int]:
@@ -92,7 +125,8 @@ def revoke_vd(key_dir, pid: int) -> None:
     key_dir, pid = Path(key_dir), int(pid)
     _write_secret(key_dir / "server" / "revoked.json", json.dumps(sorted(_revoked(key_dir) | {pid})))
     # 舊金鑰可能已外洩：一併刪掉，之後就算從清單移除，provision_keys 也只會配發新的
-    for table_path, secret in ((key_dir / "server" / "vd_keys.json", True), (key_dir / "vd_sign_pub.json", False)):
+    for table_path, secret in ((key_dir / "server" / "vd_keys.json", True), (key_dir / "vd_sign_pub.json", False),
+                               (key_dir / "server" / "key_issued.json", True)):
         if table_path.exists():
             table = json.loads(table_path.read_text(encoding="utf-8"))
             table.pop(str(pid), None)
@@ -102,7 +136,7 @@ def revoke_vd(key_dir, pid: int) -> None:
         f.unlink(missing_ok=True)
 
 
-def rotate_vd(key_dir, pid: int) -> None:
+def rotate_vd(key_dir, pid: int, now=None) -> None:
     """定期換新一台 VD 的 HMAC 金鑰和 Ed25519 簽章金鑰（不撤銷）：舊金鑰就算外洩，下次伺服器啟動後也無效。
     先改伺服器的表、再寫 VD 的檔：中途失敗時兩邊不一致只會讓這台 VD 被拒絕（fail closed），重跑即可。"""
     key_dir, pid = Path(key_dir), int(pid)
@@ -128,6 +162,10 @@ def rotate_vd(key_dir, pid: int) -> None:
         _write_atomic(agree_path, json.dumps(agree), secret=False)
     table[str(pid)] = secrets.token_hex(32)
     _write_atomic(table_path, json.dumps(table))
+    issued_path = key_dir / "server" / "key_issued.json"
+    issued = json.loads(issued_path.read_text(encoding="utf-8")) if issued_path.exists() else {}
+    issued[str(pid)] = time.time() if now is None else now
+    _write_atomic(issued_path, json.dumps(issued))
     _write_secret(key_dir / f"vd-{pid}.ed25519",
                   sign.private_bytes(_RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption()).hex())
     _write_secret(key_dir / f"vd-{pid}.key", table[str(pid)])
@@ -143,24 +181,25 @@ def load_vd_signing_key(key_dir, pid: int) -> Ed25519PrivateKey:
     return Ed25519PrivateKey.from_private_bytes(bytes.fromhex((Path(key_dir) / f"vd-{pid}.ed25519").read_text().strip()))
 
 
-def load_vd_verify_keys(key_dir) -> dict:
+def load_vd_verify_keys(key_dir, max_age_days: float = 0, now=None) -> dict:
     """伺服器端：各 VD 的簽章公鑰（只能驗證，不能簽）。"""
     table = json.loads((Path(key_dir) / "vd_sign_pub.json").read_text(encoding="utf-8"))
-    revoked = _revoked(key_dir)
-    return {int(k): Ed25519PublicKey.from_public_bytes(bytes.fromhex(v)) for k, v in table.items() if int(k) not in revoked}
+    revoked, fresh = _revoked(key_dir), _fresh(key_dir, max_age_days, now)
+    return {int(k): Ed25519PublicKey.from_public_bytes(bytes.fromhex(v)) for k, v in table.items()
+            if int(k) not in revoked and fresh(k)}
 
 
 def load_server_public_key(key_dir) -> Ed25519PublicKey:
     return Ed25519PublicKey.from_public_bytes(bytes.fromhex((Path(key_dir) / "server.pub").read_text().strip()))
 
 
-def load_server_secrets(key_dir) -> tuple[Ed25519PrivateKey, dict]:
+def load_server_secrets(key_dir, max_age_days: float = 0, now=None) -> tuple[Ed25519PrivateKey, dict]:
     """伺服器端：簽章私鑰與 VD 金鑰驗證表。"""
     server = Path(key_dir) / "server"
     priv = Ed25519PrivateKey.from_private_bytes(bytes.fromhex((server / "ed25519.key").read_text().strip()))
     table = json.loads((server / "vd_keys.json").read_text(encoding="utf-8"))
-    revoked = _revoked(key_dir)
-    return priv, {int(k): bytes.fromhex(v) for k, v in table.items() if int(k) not in revoked}
+    revoked, fresh = _revoked(key_dir), _fresh(key_dir, max_age_days, now)
+    return priv, {int(k): bytes.fromhex(v) for k, v in table.items() if int(k) not in revoked and fresh(k)}
 
 
 def _payload(arrays: dict, header: str) -> bytes:

@@ -165,16 +165,19 @@ def main(grid: Grid, context: Context) -> None:
             strategy, noise_multiplier=cl_sigma, clipping_norm=cl_clip, num_sampled_clients=n_train)
     # 安全閘道（最外層）：簽全域模型、剔除斷線 VD、驗證上傳更新的 HMAC，再交給 DP／聚合
     verify = bool(cfg.get("verify-updates", False))
+    if float(cfg.get("key-max-age-days", 0)) and not verify:
+        raise ValueError("key-max-age-days 要搭配 verify-updates=true，不然伺服器不檢查金鑰，設了也沒效果")
     sign = bool(cfg.get("sign-models", False))
     priv, vd_keys = None, None
     if verify or sign:
         # 模擬：第一次執行時產生金鑰（已有的不會換）；實際部署由安裝流程配發
         key_dir = str(cfg.get("key-dir", "keys"))
         provision_keys(key_dir, num_clients)
-        priv, vd_keys = load_server_secrets(key_dir)
+        max_age = float(cfg.get("key-max-age-days", 0))  # 金鑰有效期限：超過沒輪替的 VD 金鑰不收
+        priv, vd_keys = load_server_secrets(key_dir, max_age)
         auth = str(cfg.get("update-auth", "hmac"))
         if auth == "ed25519":
-            vd_keys = load_vd_verify_keys(key_dir)  # 伺服器只拿公鑰：偽造不了 VD 的簽章
+            vd_keys = load_vd_verify_keys(key_dir, max_age)  # 伺服器只拿公鑰：偽造不了 VD 的簽章
         elif auth != "hmac":
             raise ValueError(f"update-auth 必須是 hmac 或 ed25519，收到 {auth}")
     secure_agg = bool(cfg.get("secure-agg", False))
