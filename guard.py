@@ -33,6 +33,23 @@ def arrays_of(record: ArrayRecord) -> dict:
     return {k: v.numpy() for k, v in record.items()}
 
 
+def npy_header(data: bytes) -> tuple[tuple, np.dtype] | None:
+    """自己解析 Array 資料裡的 npy 標頭，回傳 (形狀, 型別)；格式錯、Fortran 順序、物件型別或總長度不等於標頭＋資料時回傳 None。
+    np.load（Array.numpy()）會照這個標頭先配置記憶體才讀資料，一百多 bytes 的標頭就能要 4 TB；
+    長度剛好相符時，配置量就不會超過實際收到的 bytes。Array.shape／dtype 欄位是傳送方另外填的，不能信。"""
+    import io
+    f = io.BytesIO(data)
+    try:
+        major, _ = np.lib.format.read_magic(f)
+        read = np.lib.format.read_array_header_1_0 if major == 1 else np.lib.format.read_array_header_2_0
+        shape, fortran, dtype = read(f)
+    except ValueError:
+        return None
+    if fortran or dtype.hasobject or len(data) != f.tell() + dtype.itemsize * int(np.prod(shape)):
+        return None
+    return tuple(shape), dtype
+
+
 def _array_record(arrays: dict) -> ArrayRecord:
     return ArrayRecord({k: Array(np.ascontiguousarray(v)) for k, v in arrays.items()})
 
@@ -70,6 +87,8 @@ def verify_reply(c: RecordDict, rnd: int, vd_keys: dict, run: int = 0) -> bool:
     c.pop(AUTH, None)
     pid = int(c["metrics"]["partition-id"])
     key = vd_keys.get(pid)
+    if "arrays" in c and any(npy_header(a.data) is None for a in c["arrays"].values()):
+        return False  # 先看標頭再 np.load，見 npy_header
     return bool(tag) and key is not None and verify_update(key, _arrays_or_empty(c), rnd, pid, tag, _meta(c), run)
 
 
@@ -86,7 +105,10 @@ def _well_formed_metrics(c: RecordDict) -> bool:
 def _well_formed(c: RecordDict, kinds_ok: frozenset = frozenset("f")) -> bool:
     """可用性：指標合格、參數都是浮點數（安全聚合時是 mod 2^32 的 uint32）。不合格的連 HMAC 都不算（字串陣列會讓驗證本身當掉）。"""
     try:
-        kinds = {v.numpy().dtype.kind for v in c["arrays"].values()}
+        heads = [npy_header(v.data) for v in c["arrays"].values()]
+        if None in heads:
+            return False
+        kinds = {d.kind for _, d in heads}
     except (KeyError, TypeError, ValueError, AttributeError):
         return False
     return _has_records(c, "arrays", "metrics") and _well_formed_metrics(c) and kinds <= kinds_ok

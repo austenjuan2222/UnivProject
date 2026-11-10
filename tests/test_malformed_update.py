@@ -4,7 +4,23 @@ import unittest
 import numpy as np
 from flwr.app import Array, ArrayRecord, ConfigRecord, Message, MetricRecord, RecordDict
 
-from guard import GuardedStrategy, attach_update_tag
+from guard import GuardedStrategy, attach_update_tag, verify_reply
+
+
+def huge_npy_header() -> bytes:
+    import io
+    buf = io.BytesIO()
+    np.lib.format.write_array_header_1_0(buf, {"descr": "<f4", "fortran_order": False, "shape": (2 ** 40,)})
+    return buf.getvalue() + b"\0" * 8
+
+
+class EvalReplyArraysTest(unittest.TestCase):
+    def test_eval_reply_with_lying_array_header_is_rejected_without_loading(self):
+        a = Array(np.zeros(2, np.float32))
+        c = RecordDict({"metrics": MetricRecord({"partition-id": 0, "num-examples": 10}),
+                        "arrays": ArrayRecord({"x": Array(dtype=a.dtype, shape=a.shape, stype=a.stype, data=huge_npy_header())}),
+                        "auth": ConfigRecord({"tag": "00"})})
+        self.assertFalse(verify_reply(c, 1, {0: b"k" * 32}))
 
 
 class MalformedUpdateTest(unittest.TestCase):
@@ -32,6 +48,20 @@ class MalformedUpdateTest(unittest.TestCase):
         if after_tag:
             after_tag(c)
         return Message(content=c, reply_to=sent)
+
+    def test_npy_header_claiming_a_huge_shape_does_not_crash_the_round(self):
+        # np.load 照資料裡 npy 標頭的形狀先配置記憶體：一百多 bytes 就能要 4 TB；這發生在 HMAC 之前
+        import io
+        buf = io.BytesIO()
+        np.lib.format.write_array_header_1_0(buf, {"descr": "<f4", "fortran_order": False, "shape": (2 ** 40,)})
+        buf.write(b"\0" * 8)
+
+        def lie(c):
+            a = c["arrays"]["s"]
+            c["arrays"]["s"] = Array(dtype=a.dtype, shape=a.shape, stype=a.stype, data=buf.getvalue())
+        self.g.aggregate_train(1, [self.reply(0, [1, 1]), self.reply(1, [1, 1], after_tag=lie), self.reply(2, [1, 1])])
+        self.assertEqual(self.seen[-1], [0, 2])
+        self.assertEqual(self.stats["n_rejected"], 1)
 
     def test_nan_update_with_valid_hmac_is_rejected(self):
         self.g.aggregate_train(1, [self.reply(0, [1, 1]), self.reply(1, [np.nan, 1]), self.reply(2, [1, 1])])
