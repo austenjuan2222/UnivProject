@@ -168,6 +168,46 @@ class EphemeralTest(unittest.TestCase):
         self.assertNotIn("secagg-eph", msgs[0].content.keys())
         self.assertEqual(msgs[1].content["secagg-eph"]["epubs"][0], b"")
 
+    def _bad_advertise(self, field, value):
+        inner = self.g._grid
+
+        class Bad:
+            def send_and_receive(self, messages, timeout=None):
+                out = inner.send_and_receive(messages, timeout)
+                c = dict(out[0].content["secagg"])
+                c[field] = [value if x else x for x in c[field]]
+                return [Message(content=RecordDict({"secagg": ConfigRecord(c)}), reply_to=messages[0])] + out[1:]
+        self.g._grid = Bad()
+        return self._train_msgs()
+
+    def test_oversized_advertise_fields_are_ignored(self):
+        # 資源耗盡（講義攻擊類型／Edge 資源）：每格長度固定，MAC 32 bytes、加密份 82 bytes，超過或不足都不收
+        for field, value in (("epub-macs", b"\0" * 100_000), ("eshares", b"\0" * 81)):
+            with self.subTest(field=field):
+                self.ctxs[0].state[ADV_KEY] = MetricRecord({"round": RND - 1})
+                for c in self.ctxs.values():
+                    c.state[ADV_KEY] = MetricRecord({"round": RND - 1})
+                inner = self.g._grid
+                msgs = self._bad_advertise(field, value)
+                self.g._grid = inner
+                self.assertNotIn("secagg-eph", msgs[0].content.keys())
+
+    def test_wrong_size_consistency_mac_is_ignored(self):
+        for i in range(N):
+            claim_mask_round(self.ctxs[i], RND, adv=range(N))
+        inner = self.g._grid
+
+        class Bad:
+            def send_and_receive(self, messages, timeout=None):
+                out = inner.send_and_receive(messages, timeout)
+                for r in out:
+                    if int(r.content["secagg"]["pid"]) == 0:
+                        r.content["secagg"]["macs"] = [x + bytes(1) if x else x for x in r.content["secagg"]["macs"]]
+                return out
+        self.g._grid = Bad()
+        macs = self.g._consist(RND, [], {i: 100 + i for i in range(N)})
+        self.assertEqual(sorted(macs), list(range(1, N)))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -233,6 +233,7 @@ def unmask_sum(masked: list[dict], total_n: float, correction: dict | None = Non
 # 惡意伺服器對不同 VD 送不同名單也拿不到同一台的兩種種子；在線卻在復原時沉默的 VD，伺服器湊滿門檻份數就能還原。
 SHAMIR_P = 2 ** 521 - 1  # 梅森質數，比 256 位元的種子大
 _SHARE_LEN = 66
+SHARE_CT_LEN, MAC_LEN = _SHARE_LEN + 16, 32  # 加密份（含 16 bytes 認證標籤）與 HMAC 的固定長度
 
 
 def shamir_threshold(n: int) -> int:

@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from compress import quantize_update
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
-from secagg import (neighbors, prune_present, share_holders, share_threshold, drop_correction, open_seeds, open_shares, pair_seed, seed_tag, shamir_combine, shamir_threshold,
+from secagg import (MAC_LEN, SHARE_CT_LEN, neighbors, prune_present, share_holders, share_threshold, drop_correction, open_seeds, open_shares, pair_seed, seed_tag, shamir_combine, shamir_threshold,
                     unmask_sum)
 from security import canonical_metrics, sign_model, sign_recover, sign_update, tamper, update_digest, verify_update
 
@@ -384,6 +384,10 @@ class GuardedStrategy(Strategy):
                 c = r.content["secagg"]
                 if not all(isinstance(x, bytes) for x in [c["epub"], *c["epub-macs"], *c["eshares"]]):
                     continue  # 只收二進位（之後要 bytes.fromhex 轉回去，字串可能不是合法十六進位）
+                if len(c["epub"]) != 32 or len(c["epub-macs"]) != n or len(c["eshares"]) != n \
+                        or any(len(x) not in (0, MAC_LEN) for x in c["epub-macs"]) \
+                        or any(len(x) not in (0, SHARE_CT_LEN) for x in c["eshares"]):
+                    continue  # 長度固定：超大的格子會讓伺服器存下並轉發給所有人（資源耗盡）
                 pid, epub = int(c["pid"]), _hex(c["epub"])
                 m0, e0 = [_hex(x) for x in c["epub-macs"]], [_hex(x) for x in c["eshares"]]
             except (KeyError, TypeError, ValueError, AttributeError):
@@ -518,10 +522,11 @@ class GuardedStrategy(Strategy):
                 pid = int(m.content["metrics"]["partition-id"])
                 return {str(j) for j in share_holders(pid, self.secure_agg_clients, self.secagg_k, server_round,
                                                          self._run_id()) if j in self._epubs}
-            good = {id(m) for m in kept if id(m) in shares_of and set(shares_of[id(m)].keys()) == ids(m)}
+            good = {id(m) for m in kept if id(m) in shares_of and set(shares_of[id(m)].keys()) == ids(m)
+                    and all(isinstance(v, bytes) and len(v) == SHARE_CT_LEN for v in shares_of[id(m)].values())}
             stats["n_rejected"] += len(kept) - len(good)
             kept = [m for m in kept if id(m) in good]
-            self._shares = {int(m.content["metrics"]["partition-id"]): {int(j): v.hex() if isinstance(v, bytes) else str(v)
+            self._shares = {int(m.content["metrics"]["partition-id"]): {int(j): v.hex()
                                                                         for j, v in shares_of[id(m)].items()} for m in kept}
             self._self_hash = {int(m.content["metrics"]["partition-id"]):
                                int(float(m.content["metrics"].get("secagg-self-tag", -1))) for m in kept}
@@ -587,8 +592,8 @@ class GuardedStrategy(Strategy):
             try:
                 pid0 = int(r.content["secagg"]["pid"])
                 raw = list(r.content["secagg"]["macs"])
-                if not all(isinstance(x, bytes) for x in raw):
-                    continue  # 只收二進位
+                if not all(isinstance(x, bytes) and len(x) in (0, MAC_LEN) for x in raw):
+                    continue  # 只收二進位、固定長度
                 m0 = [_hex(x) for x in raw]
             except (KeyError, TypeError, ValueError, AttributeError):
                 continue  # 沒回或回錯：少一份證明，門檻由 VD 自己檢查
@@ -664,8 +669,10 @@ class GuardedStrategy(Strategy):
                     sealed = dict(zip(got_owners, sealed_list))
                 except (KeyError, TypeError, ValueError):
                     return None
+                if sorted(got_owners) != [i for i in owners if pid in self._shares[i]]:
+                    return None  # 先核對名單再解密，不替多送的份做白工
                 opened = open_shares(sealed, pid, *self._seal_pair(pid), rnd, self._run_id())
-                if sorted(got_owners) != [i for i in owners if pid in self._shares[i]] or opened is None:
+                if opened is None:
                     return None
                 for i, y in opened.items():
                     shares[i][pid] = y

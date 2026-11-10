@@ -1,0 +1,286 @@
+{
+  "started_at": "2026-11-11T01:37:05",
+  "run_config": {
+    "num-server-rounds": 20,
+    "num-clients": 32,
+    "local-epochs": 1,
+    "batch-size": 64,
+    "learning-rate": 0.2,
+    "lookback": 12,
+    "horizon": 1,
+    "hidden-size": 32,
+    "loss": "mse",
+    "calendar": "tod",
+    "lag-day": false,
+    "residual": true,
+    "train-frac": 0.8,
+    "use-dp": true,
+    "noise-multiplier": 1.1,
+    "max-grad-norm": 1.0,
+    "target-delta": 1e-05,
+    "finetune-epochs": 3,
+    "finetune-lr": 0.05,
+    "client-dp-noise": 0.0,
+    "client-fraction": 1.0,
+    "client-dp-adaptive": false,
+    "nodp-grad-clip": 0.0,
+    "client-dp-clip": 0.1,
+    "verify-updates": true,
+    "update-auth": "hmac",
+    "edge-runtime": "torch",
+    "sign-models": true,
+    "key-dir": "keys",
+    "aggregator": "fedavg",
+    "attack-clients": 0,
+    "attack-ids": "",
+    "attack-type": "flip",
+    "attack-scale": 10.0,
+    "attack-shift-kmh": 30.0,
+    "attack-adaptive-tol": 0.0,
+    "attack-ref-offset": 0,
+    "validation-offset": 0,
+    "tamper-rate": 0.0,
+    "replay-rate": 0.0,
+    "collusion-filter": false,
+    "norm-cap": 0.0,
+    "collusion-z": 3.0,
+    "validation-dir": "",
+    "validation-vds": 4,
+    "validation-z": 3.0,
+    "validation-margin": 0.0,
+    "validation-group": 1,
+    "validation-match": "",
+    "validation-memory": 0.0,
+    "validation-strata": 0.0,
+    "secure-agg": true,
+    "secagg-bits": 32,
+    "secagg-frac-bits": 12,
+    "secagg-self-mask": true,
+    "secagg-advertise-dropout": 0.05,
+    "secagg-neighbors": 12,
+    "secagg-shamir": true,
+    "secagg-recover-dropout": 0.05,
+    "secagg-consist-dropout": 0.05,
+    "upload-bits": 32,
+    "download-bits": 32,
+    "dropout-rate": 0.05,
+    "seed": 1,
+    "data-dir": "C:/Users/TESTER/Documents/UnivProject-run/data/processed_28d_32",
+    "results-dir": "C:/Users/TESTER/Documents/UnivProject-git/results/night11/len/20261111-013658",
+    "run-name": "dp_sigma1.1_seed1"
+  },
+  "client_level_dp": null,
+  "versions": {
+    "flwr": "1.26.1",
+    "torch": "2.14.1",
+    "opacus": "1.6.0",
+    "numpy": "2.4.6",
+    "pandas": "3.0.6"
+  },
+  "data": {
+    "start": "2024-03-03 23:55:00",
+    "end": "2024-03-31 23:55:00",
+    "num_steps": 8065,
+    "selection": {
+      "vd_ids": null,
+      "pattern": "N1-N-.*-M-",
+      "min_valid_ratio": 0.8,
+      "max_gap_steps": 3,
+      "min_valid_minutes": 3
+    }
+  },
+  "clients": [
+    {
+      "partition": 0,
+      "vdid": "VD-N1-N-0.590-M-RS",
+      "file": "VD-N1-N-0.590-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 1,
+      "vdid": "VD-N1-N-10.060-M-RS",
+      "file": "VD-N1-N-10.060-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 2,
+      "vdid": "VD-N1-N-103.880-M-RS",
+      "file": "VD-N1-N-103.880-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 3,
+      "vdid": "VD-N1-N-105.160-M-LOOP",
+      "file": "VD-N1-N-105.160-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 4,
+      "vdid": "VD-N1-N-107.505-M-RS",
+      "file": "VD-N1-N-107.505-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 5,
+      "vdid": "VD-N1-N-109.470-M-RS",
+      "file": "VD-N1-N-109.470-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 6,
+      "vdid": "VD-N1-N-112.280-M-LOOP",
+      "file": "VD-N1-N-112.280-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 7,
+      "vdid": "VD-N1-N-114.610-M-RS",
+      "file": "VD-N1-N-114.610-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 8,
+      "vdid": "VD-N1-N-118.250-M-RS",
+      "file": "VD-N1-N-118.250-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 9,
+      "vdid": "VD-N1-N-120.230-M-RS",
+      "file": "VD-N1-N-120.230-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 10,
+      "vdid": "VD-N1-N-122.260-M-RS",
+      "file": "VD-N1-N-122.260-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 11,
+      "vdid": "VD-N1-N-123.880-M-RS",
+      "file": "VD-N1-N-123.880-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 12,
+      "vdid": "VD-N1-N-128.179-M-RS",
+      "file": "VD-N1-N-128.179-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 13,
+      "vdid": "VD-N1-N-13.400-M-RS",
+      "file": "VD-N1-N-13.400-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 14,
+      "vdid": "VD-N1-N-131.410-M-RS",
+      "file": "VD-N1-N-131.410-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 15,
+      "vdid": "VD-N1-N-132.150-M-RS",
+      "file": "VD-N1-N-132.150-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 16,
+      "vdid": "VD-N1-N-135.835-M-RS",
+      "file": "VD-N1-N-135.835-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 17,
+      "vdid": "VD-N1-N-137.425-M-RS",
+      "file": "VD-N1-N-137.425-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 18,
+      "vdid": "VD-N1-N-138.990-M-RS",
+      "file": "VD-N1-N-138.990-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 19,
+      "vdid": "VD-N1-N-142.200-M-RS",
+      "file": "VD-N1-N-142.200-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 20,
+      "vdid": "VD-N1-N-143.720-M-RS",
+      "file": "VD-N1-N-143.720-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 21,
+      "vdid": "VD-N1-N-146.740-M-RS",
+      "file": "VD-N1-N-146.740-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 22,
+      "vdid": "VD-N1-N-151.990-M-RS",
+      "file": "VD-N1-N-151.990-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 23,
+      "vdid": "VD-N1-N-154.980-M-RS",
+      "file": "VD-N1-N-154.980-M-RS.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 24,
+      "vdid": "VD-N1-N-160.410-M-LOOP",
+      "file": "VD-N1-N-160.410-M-LOOP.csv",
+      "valid_ratio": 0.9952
+    },
+    {
+      "partition": 25,
+      "vdid": "VD-N1-N-26.780-M-RS",
+      "file": "VD-N1-N-26.780-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 26,
+      "vdid": "VD-N1-N-27.970-M-LOOP",
+      "file": "VD-N1-N-27.970-M-LOOP.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 27,
+      "vdid": "VD-N1-N-28.670-M-LOOP",
+      "file": "VD-N1-N-28.670-M-LOOP.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 28,
+      "vdid": "VD-N1-N-34.010-M-RS",
+      "file": "VD-N1-N-34.010-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 29,
+      "vdid": "VD-N1-N-39.000-M-RS",
+      "file": "VD-N1-N-39.000-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 30,
+      "vdid": "VD-N1-N-89.990-M-RS",
+      "file": "VD-N1-N-89.990-M-RS.csv",
+      "valid_ratio": 0.9954
+    },
+    {
+      "partition": 31,
+      "vdid": "VD-N1-N-91.800-M-LOOP",
+      "file": "VD-N1-N-91.800-M-LOOP.csv",
+      "valid_ratio": 0.9954
+    }
+  ]
+}
