@@ -41,7 +41,7 @@ def _write_secret(path: Path, data: str) -> None:
 
 def _write_atomic(path: Path, data: str, secret: bool = True) -> None:
     """先寫暫存檔再 os.replace：中途當掉時舊表還在，不會留下寫一半、讓伺服器起不來的 JSON。"""
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")  # 每次不同：多個行程同時寫也不會互相蓋到暫存檔
     if secret:
         _write_secret(tmp, data)
     else:
@@ -60,8 +60,9 @@ def provision_keys(key_dir, num_clients: int) -> None:
         _write_secret(priv_path, Ed25519PrivateKey.generate().private_bytes(
             _RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption()).hex())
     priv = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(priv_path.read_text().strip()))
-    (key_dir / "server.pub").write_text(priv.public_key().public_bytes(
-        _RAW, serialization.PublicFormat.Raw).hex(), encoding="utf-8")
+    if not (key_dir / "server.pub").exists():  # VD 安裝時釘住的公鑰；輪替後靠 server_chain.json 跟上，不在這裡改寫
+        (key_dir / "server.pub").write_text(priv.public_key().public_bytes(
+            _RAW, serialization.PublicFormat.Raw).hex(), encoding="utf-8")
     # 不可否認性用：每個 VD 一把 Ed25519 簽章私鑰，公鑰表 vd_sign_pub.json 公開
     pub_table_path = key_dir / "vd_sign_pub.json"
     sign_pubs = json.loads(pub_table_path.read_text(encoding="utf-8")) if pub_table_path.exists() else {}
@@ -189,8 +190,67 @@ def load_vd_verify_keys(key_dir, max_age_days: float = 0, now=None) -> dict:
             if int(k) not in revoked and fresh(k)}
 
 
+def _rollover_msg(new_pub: bytes) -> bytes:
+    return b"its-fl server rollover v1\x00" + new_pub
+
+
+def rotate_server(key_dir) -> None:
+    """換新伺服器的 Ed25519 簽章金鑰：用舊私鑰簽新公鑰，接在 server_chain.json 後面（像憑證鏈），
+    VD 不必重新安裝 server.pub，從自己釘住的公鑰一路驗到最新的。
+    順序：新私鑰先存成 ed25519.key.next → 寫鏈 → 換上新私鑰。中途當掉時重跑會接續（鏈最後一把就是 .next）或重來（.next 還沒公告）。"""
+    key_dir = Path(key_dir)
+    priv_path = key_dir / "server" / "ed25519.key"
+    next_path = priv_path.with_name("ed25519.key.next")
+    chain_path = key_dir / "server_chain.json"
+    chain = json.loads(chain_path.read_text(encoding="utf-8")) if chain_path.exists() else []
+    if next_path.exists():
+        pending = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(next_path.read_text().strip()))
+        if chain and chain[-1].get("pub") == pending.public_key().public_bytes(_RAW, serialization.PublicFormat.Raw).hex():
+            os.replace(next_path, priv_path)  # 上次已公告但沒換上：接續完成
+            return
+        next_path.unlink()  # 上次還沒公告：丟掉重來
+    old = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(priv_path.read_text().strip()))
+    new = Ed25519PrivateKey.generate()
+    new_pub = new.public_key().public_bytes(_RAW, serialization.PublicFormat.Raw)
+    _write_secret(next_path, new.private_bytes(_RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption()).hex())
+    chain.append({"pub": new_pub.hex(), "sig": old.sign(_rollover_msg(new_pub)).hex()})
+    _write_atomic(chain_path, json.dumps(chain), secret=False)
+    os.replace(next_path, priv_path)
+
+
 def load_server_public_key(key_dir) -> Ed25519PublicKey:
-    return Ed25519PublicKey.from_public_bytes(bytes.fromhex((Path(key_dir) / "server.pub").read_text().strip()))
+    """VD 端：從釘住的 server.pub 沿著 server_chain.json 驗到最新的伺服器公鑰；任何一段驗不過就報錯（fail closed）。
+    跟上之後把最新公鑰寫回 server.pub，之後偷到舊私鑰的人就不能從舊金鑰另外接一條鏈。"""
+    key_dir = Path(key_dir)
+    pin_path = key_dir / "server.pub"
+    for attempt in range(20):
+        try:
+            pin = bytes.fromhex(pin_path.read_text().strip())
+            break
+        except PermissionError:  # Windows：別台 VD 正在 os.replace 這個檔（模擬時共用資料夾），稍等再讀
+            if attempt == 19:
+                raise
+            time.sleep(0.05)
+    chain_path = key_dir / "server_chain.json"
+    chain = json.loads(chain_path.read_text(encoding="utf-8")) if chain_path.exists() else []
+    try:
+        entries = [(bytes.fromhex(e["pub"]), bytes.fromhex(e["sig"])) for e in chain]
+    except (TypeError, KeyError, ValueError) as e:
+        raise ValueError(f"server_chain.json 格式錯誤：{e}") from None
+    start = next((i + 1 for i, (pub, _) in enumerate(entries) if pub == pin), 0)
+    current = pin
+    for pub, sig in entries[start:]:
+        try:
+            Ed25519PublicKey.from_public_bytes(current).verify(sig, _rollover_msg(pub))
+        except (InvalidSignature, ValueError):
+            raise ValueError("伺服器金鑰鏈驗不過：可能被竄改，拒絕使用") from None
+        current = pub
+    if current != pin:
+        try:
+            _write_atomic(pin_path, current.hex(), secret=False)
+        except OSError:
+            pass  # shortcut: 多個 VD 共用資料夾（模擬）時可能同時寫；下次仍會從鏈驗到同一把，部署時每台 VD 有自己的檔
+    return Ed25519PublicKey.from_public_bytes(current)
 
 
 def load_server_secrets(key_dir, max_age_days: float = 0, now=None) -> tuple[Ed25519PrivateKey, dict]:

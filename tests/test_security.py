@@ -379,5 +379,78 @@ class KeyExpiryTest(unittest.TestCase):
             (Path(d) / "server" / "key_issued.json").write_text('{"0": 1' + "0" * 400 + '}', encoding="utf-8")
             self.assertEqual(load_server_secrets(d, max_age_days=30)[1], {})
 
+class ServerKeyRotationTest(unittest.TestCase):
+    """伺服器簽章金鑰輪替（像憑證鏈）：舊金鑰簽新公鑰，VD 從安裝時的 server.pub 一路驗到最新的。"""
+    W = {"w": np.ones(3, dtype=np.float32)}
+
+    def test_vd_follows_rollover_and_old_key_stops_working(self):
+        from security import rotate_server
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 2)
+            old_priv, _ = load_server_secrets(d)
+            pinned = (Path(d) / "server.pub").read_text()
+            rotate_server(d)
+            provision_keys(d, 2)  # 伺服器重開：不能把 VD 釘住的 server.pub 換掉
+            new_priv, _ = load_server_secrets(d)
+            pub = load_server_public_key(d)
+            self.assertTrue(verify_model(pub, self.W, 1, sign_model(new_priv, self.W, 1)))
+            self.assertFalse(verify_model(pub, self.W, 1, sign_model(old_priv, self.W, 1)))
+            rotate_server(d)  # 連續換兩次也跟得上
+            self.assertTrue(verify_model(load_server_public_key(d), self.W, 1, sign_model(load_server_secrets(d)[0], self.W, 1)))
+
+    def test_forged_rollover_is_rejected(self):
+        import json
+        from security import rotate_server
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 2)
+            rotate_server(d)
+            p = Path(d) / "server_chain.json"
+            chain = json.loads(p.read_text(encoding="utf-8"))
+            evil = Ed25519PrivateKey.generate()
+            chain[0]["pub"] = evil.public_key().public_bytes_raw().hex()  # 換掉新公鑰，簽章就對不上
+            p.write_text(json.dumps(chain), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_server_public_key(d)
+
+    def test_stolen_old_key_cannot_fork_after_vd_moved_on(self):
+        import json
+        from security import rotate_server
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 2)
+            old_priv, _ = load_server_secrets(d)
+            rotate_server(d)
+            load_server_public_key(d)  # VD 已經跟到新金鑰
+            evil = Ed25519PrivateKey.generate()
+            evil_pub = evil.public_key().public_bytes_raw()
+            p = Path(d) / "server_chain.json"
+            chain = json.loads(p.read_text(encoding="utf-8"))
+            from security import _rollover_msg
+            chain.append({"pub": evil_pub.hex(), "sig": old_priv.sign(_rollover_msg(evil_pub)).hex()})
+            p.write_text(json.dumps(chain), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_server_public_key(d)
+
+    def test_crash_mid_rotation_can_be_resumed(self):
+        import security
+        from security import rotate_server
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 2)
+            real = os.replace
+
+            def crash(src, dst):
+                if Path(dst).name == "ed25519.key":
+                    raise OSError("模擬斷電")
+                return real(src, dst)
+            security.os.replace = crash
+            try:
+                with self.assertRaises(OSError):
+                    rotate_server(d)
+            finally:
+                security.os.replace = real
+            rotate_server(d)  # 管理者重跑：要接續完成，不能讓 VD 永久驗不過
+            priv, _ = load_server_secrets(d)
+            self.assertTrue(verify_model(load_server_public_key(d), self.W, 1, sign_model(priv, self.W, 1)))
+
+
 if __name__ == "__main__":
     unittest.main()
