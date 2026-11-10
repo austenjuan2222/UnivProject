@@ -452,5 +452,24 @@ class ServerKeyRotationTest(unittest.TestCase):
             self.assertTrue(verify_model(load_server_public_key(d), self.W, 1, sign_model(priv, self.W, 1)))
 
 
+    def test_failed_pin_update_fails_closed(self):
+        import security
+        from security import rotate_server
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 2)
+            rotate_server(d)
+            real = security._write_atomic
+
+            def broken(path, *a, **k):
+                if Path(path).name == "server.pub":
+                    raise OSError("磁碟滿了")
+                return real(path, *a, **k)
+            security._write_atomic = broken
+            try:
+                with self.assertRaises(OSError):  # 存不下新公鑰就不能用：不然 VD 一直釘在舊公鑰，舊私鑰可以另接一條鏈
+                    load_server_public_key(d)
+            finally:
+                security._write_atomic = real
+
 if __name__ == "__main__":
     unittest.main()

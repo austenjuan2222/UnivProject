@@ -245,11 +245,15 @@ def load_server_public_key(key_dir) -> Ed25519PublicKey:
         except (InvalidSignature, ValueError):
             raise ValueError("伺服器金鑰鏈驗不過：可能被竄改，拒絕使用") from None
         current = pub
-    if current != pin:
-        try:
-            _write_atomic(pin_path, current.hex(), secret=False)
-        except OSError:
-            pass  # shortcut: 多個 VD 共用資料夾（模擬）時可能同時寫；下次仍會從鏈驗到同一把，部署時每台 VD 有自己的檔
+    if current != pin:  # 一定要存下來才用：不然 VD 一直釘在舊公鑰，偷到舊私鑰的人可以另接一條鏈
+        for attempt in range(20):
+            try:
+                _write_atomic(pin_path, current.hex(), secret=False)
+                break
+            except PermissionError:  # Windows：模擬時別台 VD 正在換同一個檔，稍等再試
+                if attempt == 19:
+                    raise
+                time.sleep(0.05)
     return Ed25519PublicKey.from_public_bytes(current)
 
 
