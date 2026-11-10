@@ -84,7 +84,14 @@ def _cfg(context: Context) -> dict:
 
 
 def _check_global_signature(cfg: dict, msg: Message, rnd: int, run: int) -> None:
-    """VD 只接受伺服器簽過名的全域模型（避免被騙去載入假的模型更新）。"""
+    """VD 只接受伺服器簽過名的全域模型（避免被騙去載入假的模型更新）。
+    先比對名稱、形狀、float32（只看標頭，不讀資料）：超大或多出來的陣列不必先雜湊完才拒絕；
+    簽章把浮點數轉成 float32 才雜湊，所以型別要在這裡擋。"""
+    n_extra = n_calendar(cfg["calendar"]) + int(cfg["lag_day"])
+    want = {k: (tuple(v.shape), "float32")
+            for k, v in TrafficModel(cfg["lookback"], cfg["hidden"], cfg["residual"], n_extra).state_dict().items()}
+    if {k: (tuple(a.shape), a.dtype) for k, a in msg.content["arrays"].items()} != want:
+        raise RuntimeError(f"第 {rnd} 輪全域模型的名稱、形狀或型別不符，VD 拒絕使用這個模型")
     if not cfg["sign_models"]:
         return
     sig = str(msg.content[AUTH]["sig"]) if AUTH in msg.content else ""
