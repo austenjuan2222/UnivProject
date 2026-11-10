@@ -83,13 +83,13 @@ def _cfg(context: Context) -> dict:
     }
 
 
-def _check_global_signature(cfg: dict, msg: Message, rnd: int) -> None:
+def _check_global_signature(cfg: dict, msg: Message, rnd: int, run: int) -> None:
     """VD 只接受伺服器簽過名的全域模型（避免被騙去載入假的模型更新）。"""
     if not cfg["sign_models"]:
         return
     sig = str(msg.content[AUTH]["sig"]) if AUTH in msg.content else ""
     if not (sig and verify_model(load_server_public_key(cfg["key_dir"]), arrays_of(msg.content["arrays"]),
-                                 rnd, sig)):
+                                 rnd, sig, run)):
         raise RuntimeError(f"第 {rnd} 輪全域模型的簽章驗證失敗，VD 拒絕使用這個模型")
 
 
@@ -176,7 +176,7 @@ def train_fn(msg: Message, context: Context) -> Message:
         use_advertised_round(context, rnd)
     if drops_out(cfg["seed"], pid, rnd, cfg["dropout_rate"]):
         raise RuntimeError(f"模擬 VD {pid} 在第 {rnd} 輪斷線")  # 伺服器會收到錯誤回覆並略過這個 VD
-    _check_global_signature(cfg, msg, rnd)
+    _check_global_signature(cfg, msg, rnd, context.run_id)
     set_seed(cfg["seed"] + 1000 * pid + rnd)
     t0 = time.perf_counter()
 
@@ -285,7 +285,7 @@ def train_fn(msg: Message, context: Context) -> Message:
         # 不在 HMAC 範圍內：每份都有 AEAD（綁擁有者、持有者、輪次），伺服器和中間人改不了也讀不到
         content["secagg-shares"] = ConfigRecord({str(j): bytes.fromhex(ct) for j, ct in shares.items()})  # 二進位，LPWAN 上省一半
     if cfg["verify_updates"]:
-        attach_update_tag(content, _vd_key(cfg, pid), rnd, pid)
+        attach_update_tag(content, _vd_key(cfg, pid), rnd, pid, context.run_id)
     return Message(content=content, reply_to=msg)
 
 
@@ -506,7 +506,7 @@ def evaluate_fn(msg: Message, context: Context) -> Message:
     cfg = _cfg(context)
     pid, d = _client_data(context, cfg)
     rnd = int(msg.content["config"]["server-round"])
-    _check_global_signature(cfg, msg, rnd)
+    _check_global_signature(cfg, msg, rnd, context.run_id)
     model = _model(cfg, msg)
     r = evaluate(model, d["X_test"], d["y_test"], d["mean"], d["std"])
     metrics = {
@@ -525,7 +525,7 @@ def evaluate_fn(msg: Message, context: Context) -> Message:
         metrics.update(_finetune(model, d, cfg, context, pid))
     content = RecordDict({"metrics": MetricRecord(metrics)})
     if cfg["verify_updates"]:
-        attach_update_tag(content, _vd_key(cfg, pid), rnd, pid)  # 評估指標也簽，中間人改誤差會被發現
+        attach_update_tag(content, _vd_key(cfg, pid), rnd, pid, context.run_id)  # 評估指標也簽，中間人改誤差會被發現
     return Message(content=content, reply_to=msg)
 
 

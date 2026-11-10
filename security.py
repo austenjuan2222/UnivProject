@@ -152,38 +152,39 @@ def canonical_metrics(metrics: dict) -> str:
     return json.dumps({str(k): f(v) for k, v in metrics.items()}, sort_keys=True, separators=(",", ":"))
 
 
-def _update_header(rnd: int, pid: int, meta) -> str:
+def _update_header(rnd: int, pid: int, meta, run: int = 0) -> str:
     # meta 是指標的序列化（含 FedAvg 的加權 num-examples）：不簽進去的話，中間人改它就能讓模型變 NaN、
     # 讓一台 VD 蓋過全部，或改 train-loss／誤差讓紀錄失真
-    return f"update|{rnd}|{pid}" + ("" if meta is None else "|" + str(meta))
+    # run：執行編號，上一次執行同一輪的更新不能重送進這次（金鑰跨執行沿用）
+    return f"update|{int(run)}|{rnd}|{pid}" + ("" if meta is None else "|" + str(meta))
 
 
-def sign_update(key, arrays: dict, rnd: int, pid: int, meta=None) -> str:
+def sign_update(key, arrays: dict, rnd: int, pid: int, meta=None, run: int = 0) -> str:
     """key 是 bytes：HMAC-SHA256（完整性、鑑別性）；是 Ed25519 私鑰：數位簽章（再加上不可否認性）。"""
-    msg = _payload(arrays, _update_header(rnd, pid, meta))
+    msg = _payload(arrays, _update_header(rnd, pid, meta, run))
     if isinstance(key, Ed25519PrivateKey):
         return key.sign(msg).hex()
     return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
-def verify_update(key, arrays: dict, rnd: int, pid: int, tag: str, meta=None) -> bool:
+def verify_update(key, arrays: dict, rnd: int, pid: int, tag: str, meta=None, run: int = 0) -> bool:
     """key 是 bytes：比對 HMAC；是 Ed25519 公鑰：驗簽章。"""
     if isinstance(key, Ed25519PublicKey):
         try:
-            key.verify(bytes.fromhex(str(tag)), _payload(arrays, _update_header(rnd, pid, meta)))
+            key.verify(bytes.fromhex(str(tag)), _payload(arrays, _update_header(rnd, pid, meta, run)))
             return True
         except (InvalidSignature, ValueError):
             return False
-    return hmac.compare_digest(sign_update(key, arrays, rnd, pid, meta), str(tag))
+    return hmac.compare_digest(sign_update(key, arrays, rnd, pid, meta, run), str(tag))
 
 
-def sign_model(priv: Ed25519PrivateKey, arrays: dict, rnd: int) -> str:
-    return priv.sign(_payload(arrays, f"global|{rnd}")).hex()
+def sign_model(priv: Ed25519PrivateKey, arrays: dict, rnd: int, run: int = 0) -> str:
+    return priv.sign(_payload(arrays, f"global|{int(run)}|{rnd}")).hex()
 
 
-def verify_model(pub: Ed25519PublicKey, arrays: dict, rnd: int, sig: str) -> bool:
+def verify_model(pub: Ed25519PublicKey, arrays: dict, rnd: int, sig: str, run: int = 0) -> bool:
     try:
-        pub.verify(bytes.fromhex(sig), _payload(arrays, f"global|{rnd}"))
+        pub.verify(bytes.fromhex(sig), _payload(arrays, f"global|{int(run)}|{rnd}"))
         return True
     except (InvalidSignature, ValueError):
         return False

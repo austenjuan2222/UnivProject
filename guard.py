@@ -37,9 +37,9 @@ def _array_record(arrays: dict) -> ArrayRecord:
     return ArrayRecord({k: Array(np.ascontiguousarray(v)) for k, v in arrays.items()})
 
 
-def attach_update_tag(content: RecordDict, key: bytes, rnd: int, pid: int) -> None:
+def attach_update_tag(content: RecordDict, key: bytes, rnd: int, pid: int, run: int = 0) -> None:
     """VD 端：替要上傳的模型參數加上 HMAC。"""
-    content[AUTH] = ConfigRecord({"tag": sign_update(key, _arrays_or_empty(content), rnd, pid, _meta(content))})
+    content[AUTH] = ConfigRecord({"tag": sign_update(key, _arrays_or_empty(content), rnd, pid, _meta(content), run)})
 
 
 def _arrays_or_empty(c: RecordDict) -> dict:
@@ -64,13 +64,13 @@ def _has_records(c: RecordDict, *names: str) -> bool:
     return set(c.keys()) - {AUTH} == set(names)
 
 
-def verify_reply(c: RecordDict, rnd: int, vd_keys: dict) -> bool:
+def verify_reply(c: RecordDict, rnd: int, vd_keys: dict, run: int = 0) -> bool:
     """驗證並移除 auth 紀錄；驗證表沒有的 VD、沒附簽章、或參數／指標被改過都回傳 False。"""
     tag = _tag(c)
     c.pop(AUTH, None)
     pid = int(c["metrics"]["partition-id"])
     key = vd_keys.get(pid)
-    return bool(tag) and key is not None and verify_update(key, _arrays_or_empty(c), rnd, pid, tag, _meta(c))
+    return bool(tag) and key is not None and verify_update(key, _arrays_or_empty(c), rnd, pid, tag, _meta(c), run)
 
 
 def _well_formed_metrics(c: RecordDict) -> bool:
@@ -94,7 +94,7 @@ def _well_formed(c: RecordDict, kinds_ok: frozenset = frozenset("f")) -> bool:
 
 def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: bool,
                    tamper_rate: float, rng: np.random.Generator, replay_rate: float = 0.0,
-                   last: dict | None = None, kinds_ok: frozenset = frozenset("f")) -> tuple[list[bool], dict]:
+                   last: dict | None = None, kinds_ok: frozenset = frozenset("f"), run: int = 0) -> tuple[list[bool], dict]:
     """回傳每個回覆是否可用於聚合，以及統計（被竄改、被重送、被拒絕數）。會移除 auth 紀錄。
     replay_rate > 0：模擬中間人把該 VD 上一輪的整份訊息（參數＋簽章）再送一次；last 由呼叫端保存跨輪的上一份訊息。"""
     keep, n_tampered, n_replayed, n_rejected, audit = [], 0, 0, 0, []
@@ -121,7 +121,7 @@ def screen_replies(contents: list[RecordDict], rnd: int, vd_keys: dict, verify: 
         ok = True
         if verify:
             key = vd_keys.get(pid)  # 驗證表裡沒有的 VD 一律拒絕
-            ok = bool(tag) and key is not None and verify_update(key, arrays_of(c["arrays"]), rnd, pid, tag, _meta(c))
+            ok = bool(tag) and key is not None and verify_update(key, arrays_of(c["arrays"]), rnd, pid, tag, _meta(c), run)
         n_rejected += int(not ok)
         keep.append(ok)
         # 稽核紀錄：哪個 VD、哪一輪、送了什麼（內容雜湊）、附了什麼簽章、有沒有被採用
@@ -343,7 +343,7 @@ class GuardedStrategy(Strategy):
     def _sign(self, messages: Iterable[Message], arrays: ArrayRecord, rnd: int) -> list[Message]:
         messages = list(messages)
         if self._priv is not None and messages:
-            sig = sign_model(self._priv, arrays_of(arrays), rnd)
+            sig = sign_model(self._priv, arrays_of(arrays), rnd, self._run_id())
             for m in messages:  # 同一輪所有訊息共用同一份 RecordDict
                 m.content[AUTH] = ConfigRecord({"sig": sig})
         return messages
@@ -441,7 +441,8 @@ class GuardedStrategy(Strategy):
                                      self.verify_updates, self.tamper_rate, self.rng,
                                      self.replay_rate, self._last if self.replay_rate > 0 else None,
                                      # 安全聚合上傳的是 mod 2^32 的遮罩整數，一般模式只收浮點數
-                                     frozenset("u") if self.secure_agg_clients else frozenset("f"))
+                                     frozenset("u") if self.secure_agg_clients else frozenset("f"),
+                                     run=self._run_id())
         stats["n_dropped"] = len(replies) - len(ok_replies)
         audit = stats.pop("audit")
         if self.verify_updates:
@@ -723,6 +724,7 @@ class GuardedStrategy(Strategy):
 
     def configure_evaluate(self, server_round: int, arrays: ArrayRecord, config: ConfigRecord,
                            grid: Grid) -> Iterable[Message]:
+        self._grid = grid  # 簽章要綁這次執行的編號
         arrays = self._broadcast(arrays)
         return self._sign(self.inner.configure_evaluate(server_round, arrays, config, grid),
                           arrays, server_round)
@@ -737,7 +739,7 @@ class GuardedStrategy(Strategy):
             seen, good = set(), []
             for m in ok:
                 node = m.metadata.src_node_id
-                if not verify_reply(m.content, server_round, self.vd_keys) or node in seen:
+                if not verify_reply(m.content, server_round, self.vd_keys, self._run_id()) or node in seen:
                     continue
                 pid = int(m.content["metrics"]["partition-id"])
                 if self._node_of_pid.get(pid, node) == node and self._pid_of_node.get(node, pid) == pid:

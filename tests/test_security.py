@@ -111,6 +111,12 @@ class UpdateMacTest(unittest.TestCase):
         tag = sign_update(self.key, _arrays(), rnd=4, pid=3)
         self.assertFalse(verify_update(self.key, _arrays(), 5, 3, tag))
 
+    def test_replayed_from_previous_run_is_rejected(self):
+        # 講義攻擊類型（重送）：上一次執行同一輪的更新原封不動送進這次執行，金鑰沒換時以前驗得過
+        tag = sign_update(self.key, _arrays(), rnd=5, pid=3, run=11)
+        self.assertTrue(verify_update(self.key, _arrays(), 5, 3, tag, run=11))
+        self.assertFalse(verify_update(self.key, _arrays(), 5, 3, tag, run=12))
+
     def test_other_vd_key_cannot_forge(self):
         tag = sign_update(os.urandom(32), _arrays(), rnd=5, pid=3)
         self.assertFalse(verify_update(self.key, _arrays(), 5, 3, tag))
@@ -132,6 +138,12 @@ class ModelSignatureTest(unittest.TestCase):
         sig = sign_model(self.priv, _arrays(), rnd=2)
         self.assertFalse(verify_model(self.pub, _arrays(0.6), 2, sig))
         self.assertFalse(verify_model(self.pub, _arrays(), 3, sig))
+
+    def test_model_from_previous_run_is_rejected(self):
+        # 上一次執行第 2 輪的全域模型（舊的，或當時被下毒的）不能拿來騙這次執行第 2 輪的 VD
+        sig = sign_model(self.priv, _arrays(), rnd=2, run=11)
+        self.assertTrue(verify_model(self.pub, _arrays(), 2, sig, run=11))
+        self.assertFalse(verify_model(self.pub, _arrays(), 2, sig, run=12))
 
     def test_signature_from_other_server_is_rejected(self):
         sig = sign_model(Ed25519PrivateKey.generate(), _arrays(), rnd=2)
