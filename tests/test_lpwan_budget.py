@@ -50,3 +50,45 @@ class EnergyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MulticastFecTest(unittest.TestCase):
+    # 講義 LPWAN：下行頻段整個閘道器共用。群播一次送給所有 VD，各台掉的包不同，用 FEC 冗餘包讓每台自己補回（LoRaWAN FUOTA 的做法）
+    def test_decodes_original_bytes_despite_losses(self):
+        import numpy as np
+        from lpwan_budget import fec_decode, fec_packet
+        rng = np.random.default_rng(0)
+        data = rng.integers(0, 256, 1000, dtype=np.uint8).tobytes()
+        cap = 50
+        got = [(i, fec_packet(data, cap, i)) for i in range(60) if rng.random() > 0.3]
+        self.assertEqual(fec_decode(got, len(data), cap), data)
+
+    def test_too_few_packets_cannot_decode(self):
+        from lpwan_budget import fec_decode, fec_packet
+        data = bytes(range(200))
+        got = [(i, fec_packet(data, 50, i)) for i in (0, 1, 7)]  # 4 個來源包只收到 3 個獨立的
+        self.assertIsNone(fec_decode(got, len(data), 50))
+
+    def test_first_k_packets_are_the_plain_source(self):
+        from lpwan_budget import fec_packet
+        data = bytes(range(120))
+        self.assertEqual(fec_packet(data, 50, 1), data[50:100])
+        self.assertEqual(fec_packet(data, 50, 2), data[100:] + bytes(30))
+
+    def test_multicast_sends_without_loss_is_k(self):
+        from lpwan_budget import multicast_sends
+        self.assertEqual(multicast_sends(18, 32, 0.0, seed=0), 18)
+
+    def test_multicast_beats_unicast_retry(self):
+        # 32 台逐台補送要 32 × k／0.9 包；群播＋FEC 只要比最慢那台多一點
+        from lpwan_budget import multicast_sends
+        k = 18
+        n = multicast_sends(k, 32, 0.1, seed=1)
+        self.assertGreater(n, k / 0.9)
+        self.assertLess(n, 2 * k)
+
+    def test_multicast_repeat_each_packet_until_everyone_has_it(self):
+        # 沒有 FEC 的群播：每包重送到 32 台都收到；期望次數 = Σ_t [1 − (1 − loss^t)^n]
+        from lpwan_budget import multicast_repeat
+        self.assertEqual(multicast_repeat(18, 32, 0.0), 18)
+        self.assertAlmostEqual(multicast_repeat(1, 1, 0.5), 2.0, places=6)

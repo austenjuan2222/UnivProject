@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 LORAWAN_OVERHEAD = 13
 # 各資料速率每包最大應用層酬載（LoRaWAN Regional Parameters，未啟用停留時間限制）
 MAX_PAYLOAD = {7: 242, 9: 115, 12: 51}
@@ -45,6 +47,80 @@ def expected_sends(packets: int, loss: float, mode: str) -> float:
     packet：每包各自確認、掉了只補那一包；whole：沒有逐包回報，任何一包掉了就整份重送（每次都整份送完）。"""
     ok = 1.0 - loss
     return packets / ok if mode == "packet" else packets / ok ** packets
+
+
+def _mask(i: int, k: int) -> int:
+    """第 i 包是哪些來源包的 XOR（位元遮罩）。前 k 包就是來源包本身（不掉包時不用解碼）；
+    之後的冗餘包由包序號決定的亂數選，VD 自己算得出來，不用多傳係數。"""
+    if i < k:
+        return 1 << i
+    bits = np.flatnonzero(np.random.default_rng([i, k]).integers(0, 2, k))
+    return sum(1 << int(j) for j in bits) or 1 << (i % k)
+
+
+def fec_packet(data: bytes, cap: int, i: int) -> bytes:
+    """GF(2) 隨機線性碼的第 i 包（每包 cap bytes）。"""
+    k = math.ceil(len(data) / cap)
+    src = np.frombuffer(data + bytes(k * cap - len(data)), dtype=np.uint8).reshape(k, cap)
+    m = _mask(i, k)
+    return np.bitwise_xor.reduce(src[[j for j in range(k) if m >> j & 1]], axis=0).tobytes()
+
+
+def _insert(basis: dict, m: int, y=None) -> bool:
+    """高斯消去：把一包加進已收到的基底，線性獨立（帶來新資訊）才回傳 True。"""
+    while m:
+        p = m.bit_length() - 1
+        if p not in basis:
+            basis[p] = (m, y)
+            return True
+        m ^= basis[p][0]
+        if y is not None:
+            y = y ^ basis[p][1]
+    return False
+
+
+def fec_decode(got: list, nbytes: int, cap: int):
+    """got 是收到的（包序號, 內容）；收到 k 個線性獨立的包就解得回來，不夠回傳 None。"""
+    k = math.ceil(nbytes / cap)
+    basis = {}
+    for i, y in got:
+        _insert(basis, _mask(i, k), np.frombuffer(y, dtype=np.uint8))
+    if len(basis) < k:
+        return None
+    out = {}
+    for p in sorted(basis):  # 由低位往上回代：每列只剩 p 和比 p 低、已解出的位元
+        m, y = basis[p]
+        for q in range(p):
+            if m >> q & 1:
+                y = y ^ out[q]
+        out[p] = y
+    return b"".join(out[j].tobytes() for j in range(k))[:nbytes]
+
+
+def multicast_sends(k: int, n_vd: int, loss: float, seed: int = 0) -> int:
+    """閘道器群播（Class C／B，FUOTA）：每包同時送給所有 VD，各台獨立以機率 loss 掉包；
+    一直送冗餘包，直到每台都收到 k 個線性獨立的包。回傳總共送了幾包。"""
+    rng = np.random.default_rng(seed)
+    bases = [{} for _ in range(n_vd)]
+    i = 0
+    while any(len(b) < k for b in bases):
+        m = _mask(i, k)
+        for b in bases:
+            if len(b) < k and rng.random() >= loss:
+                _insert(b, m)
+        i += 1
+    return i
+
+
+def multicast_repeat(k: int, n_vd: int, loss: float) -> float:
+    """沒有 FEC 的群播：每包重送到 n_vd 台都收到為止（VD 回報缺哪包）。
+    一包要送的期望次數 = Σ_{t≥0} P(還有人沒收到) = Σ_t [1 − (1 − loss^t)^n_vd]。"""
+    if loss <= 0:
+        return k
+    per, t = 0.0, 0
+    while (term := 1 - (1 - loss ** t) ** n_vd) > 1e-12:
+        per, t = per + term, t + 1
+    return k * per
 
 
 # SX1276 資料手冊：PA_BOOST +20 dBm 發射約 120 mA（+13 dBm 約 29 mA），3.3 V 供電
@@ -105,6 +181,18 @@ def main() -> int:
         n, _ = upload_cost(b + 64, 12)
         for loss in (0.05, 0.1, 0.2):
             print(f"| {name} | {n} | {loss:.0%} | {expected_sends(n, loss, 'packet'):.0f} | {expected_sends(n, loss, 'whole'):,.0f} |")
+    # 群播＋FEC（第 50 項）：每包多 2 bytes 包序號，所以 SF12 每包只放 49 bytes；20 個亂數種子的平均與範圍
+    print("\n| 下行（SF12，32 台） | 來源包數 | 遺失率 | 逐台補送：總包數 | 群播逐包重送：總包數 | 群播＋FEC：總包數（20 種子平均，最少～最多） | 10% 工作週期下：逐台 → 群播＋FEC |")
+    print("|---|---|---|---|---|---|---|")
+    for name, b in down.items():
+        k = math.ceil((b + 64) / (MAX_PAYLOAD[12] - 2))
+        t_pkt = time_on_air_ms(MAX_PAYLOAD[12] + LORAWAN_OVERHEAD, 12) / 1000 / 0.10
+        n_uni = 32 * upload_cost(b + 64, 12)[1] / 1000 / 0.10  # 逐台、不掉包的秒數
+        for loss in (0.05, 0.1, 0.2):
+            runs = [multicast_sends(k, 32, loss, seed=s) for s in range(20)]
+            uni = 32 * upload_cost(b + 64, 12)[0] / (1 - loss)
+            print(f"| {name} | {k} | {loss:.0%} | {uni:,.0f} | {multicast_repeat(k, 32, loss):.0f} | {np.mean(runs):.1f}（{min(runs)}～{max(runs)}） "
+                  f"| {n_uni / (1 - loss) / 3600:.1f} 小時 → {np.mean(runs) * t_pkt / 60:.0f} 分鐘 |")
     return 0
 
 
