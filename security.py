@@ -91,6 +91,26 @@ def revoke_vd(key_dir, pid: int) -> None:
         f.unlink(missing_ok=True)
 
 
+def rotate_vd(key_dir, pid: int) -> None:
+    """定期換新一台 VD 的 HMAC 金鑰和 Ed25519 簽章金鑰（不撤銷）：舊金鑰就算外洩，下次伺服器啟動後也無效。
+    先改伺服器的表、再寫 VD 的檔：中途失敗時兩邊不一致只會讓這台 VD 被拒絕（fail closed），重跑即可。"""
+    key_dir, pid = Path(key_dir), int(pid)
+    if pid in _revoked(key_dir):
+        raise ValueError(f"VD {pid} 已撤銷；要重新加入請先從撤銷清單移除再配發")
+    sign = Ed25519PrivateKey.generate()
+    pubs_path = key_dir / "vd_sign_pub.json"
+    pubs = json.loads(pubs_path.read_text(encoding="utf-8"))
+    pubs[str(pid)] = sign.public_key().public_bytes(_RAW, serialization.PublicFormat.Raw).hex()
+    pubs_path.write_text(json.dumps(pubs), encoding="utf-8")
+    table_path = key_dir / "server" / "vd_keys.json"
+    table = json.loads(table_path.read_text(encoding="utf-8"))
+    table[str(pid)] = secrets.token_hex(32)
+    _write_secret(table_path, json.dumps(table))
+    _write_secret(key_dir / f"vd-{pid}.ed25519",
+                  sign.private_bytes(_RAW, serialization.PrivateFormat.Raw, serialization.NoEncryption()).hex())
+    _write_secret(key_dir / f"vd-{pid}.key", table[str(pid)])
+
+
 def load_vd_key(key_dir, pid: int) -> bytes:
     """VD 端：只讀自己的金鑰。"""
     return bytes.fromhex((Path(key_dir) / f"vd-{pid}.key").read_text().strip())

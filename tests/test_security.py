@@ -217,6 +217,39 @@ class AdaptiveShrinkTest(unittest.TestCase):
         np.testing.assert_allclose(out["w"], 0.0)
 
 
+class KeyRotationTest(unittest.TestCase):
+    """金鑰輪替（講義 TLS／金鑰管理：金鑰有使用期限）：不撤銷 VD，只把它的金鑰換新，偷到的舊金鑰從此無效。"""
+
+    def test_rotation_replaces_both_keys_and_old_ones_stop_working(self):
+        from security import rotate_vd, sign_update, verify_update
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 3)
+            old_hmac, others = load_vd_key(d, 1), {p: load_vd_key(d, p) for p in (0, 2)}
+            old_pub = load_vd_verify_keys(d)[1].public_bytes_raw()
+            arrays = {"w": np.ones(3, np.float32)}
+            stolen_tag = sign_update(old_hmac, arrays, 4, 1)
+            rotate_vd(d, 1)
+            _, table = load_server_secrets(d)
+            self.assertEqual(table[1], load_vd_key(d, 1))  # VD 拿到的新金鑰和伺服器表一致
+            self.assertNotEqual(table[1], old_hmac)
+            self.assertFalse(verify_update(table[1], arrays, 4, 1, stolen_tag))
+            pub = load_vd_verify_keys(d)[1]
+            self.assertNotEqual(pub.public_bytes_raw(), old_pub)
+            self.assertEqual(pub.public_bytes_raw(), load_vd_signing_key(d, 1).public_key().public_bytes_raw())
+            self.assertEqual({p: load_vd_key(d, p) for p in (0, 2)}, others)  # 別台不受影響
+            provision_keys(d, 3)  # 之後再跑配發不會把舊金鑰換回來
+            self.assertEqual(load_server_secrets(d)[1][1], table[1])
+
+    def test_revoked_vd_cannot_be_rotated_back_in(self):
+        from security import revoke_vd, rotate_vd
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 2)
+            revoke_vd(d, 1)
+            with self.assertRaises(ValueError):
+                rotate_vd(d, 1)
+            self.assertEqual(sorted(load_server_secrets(d)[1]), [0])
+
+
 class PersistentRevocationTest(unittest.TestCase):
     def test_revoked_vd_stays_revoked_after_server_restart(self):
         from security import revoke_vd
