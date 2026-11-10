@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Callable, Iterable
 
@@ -40,12 +41,16 @@ def npy_header(data: bytes) -> tuple[tuple, np.dtype] | None:
     import io
     f = io.BytesIO(data)
     try:
-        major, _ = np.lib.format.read_magic(f)
+        major, minor = np.lib.format.read_magic(f)
+        if (major, minor) not in ((1, 0), (2, 0)):  # np.save 寫的是 1.0；其他版本 np.load 不一定收
+            return None
         read = np.lib.format.read_array_header_1_0 if major == 1 else np.lib.format.read_array_header_2_0
         shape, fortran, dtype = read(f)
     except ValueError:
         return None
-    if fortran or dtype.hasobject or len(data) != f.tell() + dtype.itemsize * int(np.prod(shape)):
+    # 負的維度、int64 乘積溢位都會讓長度看似相符，接著 np.load 丟例外；用 Python 整數相乘不會溢位
+    if (fortran or dtype.hasobject or any(d < 0 for d in shape)
+            or len(data) != f.tell() + dtype.itemsize * math.prod(shape)):
         return None
     return tuple(shape), dtype
 
@@ -87,9 +92,13 @@ def verify_reply(c: RecordDict, rnd: int, vd_keys: dict, run: int = 0) -> bool:
     c.pop(AUTH, None)
     pid = int(c["metrics"]["partition-id"])
     key = vd_keys.get(pid)
-    if "arrays" in c and any(npy_header(a.data) is None for a in c["arrays"].values()):
-        return False  # 先看標頭再 np.load，見 npy_header
-    return bool(tag) and key is not None and verify_update(key, _arrays_or_empty(c), rnd, pid, tag, _meta(c), run)
+    try:
+        if "arrays" in c and any(npy_header(a.data) is None for a in c["arrays"].values()):
+            return False  # 先看標頭再 np.load，見 npy_header
+        arrays = _arrays_or_empty(c)
+    except (TypeError, AttributeError, ValueError, MemoryError):
+        return False  # arrays 不是 ArrayRecord，或標頭過了但 np.load 仍不收
+    return bool(tag) and key is not None and verify_update(key, arrays, rnd, pid, tag, _meta(c), run)
 
 
 def _well_formed_metrics(c: RecordDict) -> bool:
@@ -108,8 +117,9 @@ def _well_formed(c: RecordDict, kinds_ok: frozenset = frozenset("f")) -> bool:
         heads = [npy_header(v.data) for v in c["arrays"].values()]
         if None in heads:
             return False
+        arrays_of(c["arrays"])  # 備援：標頭過了才真的 np.load（長度有上限，不會大量配置），解析器之間的差異也只會變成拒絕
         kinds = {d.kind for _, d in heads}
-    except (KeyError, TypeError, ValueError, AttributeError):
+    except (KeyError, TypeError, ValueError, AttributeError, MemoryError):
         return False
     return _has_records(c, "arrays", "metrics") and _well_formed_metrics(c) and kinds <= kinds_ok
 

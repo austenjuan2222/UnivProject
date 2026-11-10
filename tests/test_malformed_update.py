@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 from flwr.app import Array, ArrayRecord, ConfigRecord, Message, MetricRecord, RecordDict
 
-from guard import GuardedStrategy, attach_update_tag, verify_reply
+from guard import GuardedStrategy, attach_update_tag, npy_header, verify_reply
 
 
 def huge_npy_header() -> bytes:
@@ -14,7 +14,31 @@ def huge_npy_header() -> bytes:
     return buf.getvalue() + b"\0" * 8
 
 
+def raw_npy(shape, body: int) -> bytes:
+    import io
+    buf = io.BytesIO()
+    np.lib.format.write_array_header_1_0(buf, {"descr": "<f4", "fortran_order": False, "shape": shape})
+    return buf.getvalue() + b"\0" * body
+
+
+class NpyHeaderTest(unittest.TestCase):
+    def test_headers_np_load_would_reject_are_rejected_up_front(self):
+        # 負的維度、乘積溢位成 0 都能讓「長度相符」成立，接著 np.load 丟 ValueError，讓伺服器整輪當掉
+        bad_version = bytearray(raw_npy((2,), 8))
+        bad_version[6] = 9
+        for data in (raw_npy((-1, -1), 4), raw_npy((-2, -3), 24), raw_npy((2 ** 32, 2 ** 32), 0), bytes(bad_version)):
+            self.assertIsNone(npy_header(data))
+
+    def test_valid_header_still_parses(self):
+        self.assertEqual(npy_header(raw_npy((2, 3), 24)), ((2, 3), np.dtype("<f4")))
+
+
 class EvalReplyArraysTest(unittest.TestCase):
+    def test_eval_reply_whose_arrays_is_not_an_array_record_is_rejected(self):
+        c = RecordDict({"metrics": MetricRecord({"partition-id": 0, "num-examples": 10}),
+                        "arrays": ConfigRecord({"x": 1}), "auth": ConfigRecord({"tag": "00"})})
+        self.assertFalse(verify_reply(c, 1, {0: b"k" * 32}))
+
     def test_eval_reply_with_lying_array_header_is_rejected_without_loading(self):
         a = Array(np.zeros(2, np.float32))
         c = RecordDict({"metrics": MetricRecord({"partition-id": 0, "num-examples": 10}),

@@ -1088,6 +1088,14 @@ VD 上一次執行的更新也一樣能塞進這次執行（安全聚合的種�
 後面的去重、驗證、安全聚合只處理通過篩選的回覆。
 測試先寫，改之前都丟出「Unable to allocate 4.00 TiB」：一份訓練回覆標頭謊報，該輪只拒絕它、其他 VD 照常聚合；評估回覆夾帶謊報標頭的陣列，回傳拒絕、不當掉（`tests/test_malformed_update.py`）。
 實跑 1 seed、3 輪：每輪 32 台都進聚合，拒絕 0 份，MAE 和第 53 項的同設定 3 輪相同（2.269356，`results/night11/npysrv/`）。
+獨立安全審查（子代理）和自動資安檢查又抓到第一版標頭檢查的漏洞。
+負的維度（`(-1,-1)` 配 4 bytes、`(-2,-3)` 配 24 bytes）和 int64 乘積溢位（`(2^32, 2^32)` 乘起來變 0）都能讓「長度相符」成立，接著 `np.load` 丟 ValueError；不認得的版本號也一樣。
+訓練回覆的 ValueError 會在 `screen_replies` 的稽核雜湊裡、評估回覆的會在 HMAC 之前冒出來，沒有金鑰也能讓整輪當掉；惡意伺服器也能這樣讓 VD 當掉。
+另外 `arrays` 不是 ArrayRecord 的評估回覆會丟 AttributeError。
+已補：維度不得為負，元素數改用 Python 整數相乘（`math.prod`，不會溢位），版本只收 1.0、2.0。
+備援：`_well_formed` 和 `verify_reply` 在標頭檢查通過後，各自在 try 裡真的 `np.load` 一次，失敗就當成拒絕，兩邊解析器若還有差異也不會當掉。
+測試先寫，改之前失敗（`NpyHeaderTest`、`test_eval_reply_whose_arrays_is_not_an_array_record_is_rejected`）；全部 347 個測試通過。
+這次修補只多幾個比較，沒有重跑實驗。
 
 **名單一致性回合（11-08，第 39 項，秘密分享模式自動啟用）**：復原前多一次往返。每台在線 VD 驗過伺服器簽章後，
 用和每台 VD 兩兩之間的金鑰（X25519 → HKDF）替「自己收到的斷線名單」各做一個 HMAC，伺服器只能轉交，改不了也偽造不了。
