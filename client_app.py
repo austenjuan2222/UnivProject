@@ -90,7 +90,10 @@ def _check_global_signature(cfg: dict, msg: Message, rnd: int, run: int) -> None
     n_extra = n_calendar(cfg["calendar"]) + int(cfg["lag_day"])
     want = {k: (tuple(v.shape), "float32")
             for k, v in TrafficModel(cfg["lookback"], cfg["hidden"], cfg["residual"], n_extra).state_dict().items()}
-    if {k: (tuple(a.shape), a.dtype) for k, a in msg.content["arrays"].items()} != want:
+    rec = msg.content["arrays"]
+    # Array.shape／dtype 是傳送方填的，numpy() 讀的是資料裡的 npy 標頭，所以資料長度也要限制（npy 標頭約 128 bytes）
+    if ({k: (tuple(a.shape), a.dtype) for k, a in rec.items()} != want
+            or any(len(a.data) > 4 * int(np.prod(a.shape)) + 256 for a in rec.values())):
         raise RuntimeError(f"第 {rnd} 輪全域模型的名稱、形狀或型別不符，VD 拒絕使用這個模型")
     if not cfg["sign_models"]:
         return

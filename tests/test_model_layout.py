@@ -51,6 +51,21 @@ class ModelLayoutTest(unittest.TestCase):
                     client_app._check_global_signature(CFG, msg(arrays), 1, 7)
                 self.assertFalse(v.called)
 
+    def test_header_that_lies_about_a_large_payload_is_rejected(self):
+        # Array.shape／dtype 是傳送方自己填的；numpy() 實際讀的是資料裡的 npy 標頭
+        p = good()
+        k = next(iter(p))
+        big = Array(np.zeros(1_000_000, np.float32))
+        rec = ArrayRecord({n: Array(v) for n, v in p.items()})
+        rec[k] = Array(dtype="float32", shape=tuple(p[k].shape), stype=big.stype, data=big.data)
+        m = Message(content=RecordDict({"arrays": rec, "config": ConfigRecord({"server-round": 1}),
+                                        AUTH: ConfigRecord({"sig": "00"})}), dst_node_id=1, message_type="train")
+        with mock.patch.object(client_app, "verify_model", return_value=True) as v, \
+                mock.patch.object(client_app, "load_server_public_key", return_value=None):
+            with self.assertRaises(RuntimeError):
+                client_app._check_global_signature(CFG, m, 1, 7)
+            self.assertFalse(v.called)
+
 
 if __name__ == "__main__":
     unittest.main()
