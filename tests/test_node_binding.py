@@ -89,3 +89,38 @@ class NodeBindingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeyExpiryMidRunTest(NodeBindingTest.__base__):
+    """金鑰在執行途中到期：伺服器每輪檢查，不必等重開（第 56 項的限制）。"""
+
+    def setUp(self):
+        self.keys = {p: bytes([p + 1]) * 32 for p in range(4)}
+        self.seen, self.now = [], [50.0]
+        outer = self
+
+        class Inner:
+            def aggregate_train(self, rnd, replies):
+                outer.seen.append(sorted(int(m.content["metrics"]["partition-id"]) for m in replies))
+                return None, None
+        self.g = GuardedStrategy(Inner(), None, dict(self.keys), key_expiry={0: 100.0, 1: 1e18},
+                                 clock=lambda: self.now[0])
+
+    reply = NodeBindingTest.reply
+
+    def test_key_expiring_mid_run_is_rejected_from_then_on(self):
+        self.g.aggregate_train(1, [self.reply(100 + p, p, 1) for p in range(4)])
+        self.assertEqual(self.seen[-1], [0, 1, 2, 3])
+        self.now[0] = 150.0
+        self.g.aggregate_train(2, [self.reply(100 + p, p, 2) for p in range(4)])
+        self.assertEqual(self.seen[-1], [1, 2, 3])
+
+    def test_expiry_with_basic_secure_aggregation_is_an_error(self):
+        # 基本版安全聚合不容許斷線：一台到期被拒，之後每輪聚合都作廢，模型停住
+        with self.assertRaises(ValueError):
+            GuardedStrategy(None, None, dict(self.keys), secure_agg_clients=4, key_expiry={0: 1.0})
+
+    def test_expiry_without_verification_is_an_error(self):
+        with self.assertRaises(ValueError):
+            GuardedStrategy(None, None, None, key_expiry={0: 1.0})
+

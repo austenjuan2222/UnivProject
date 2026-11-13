@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from typing import Callable, Iterable
 
 import numpy as np
@@ -326,7 +327,8 @@ class GuardedStrategy(Strategy):
                  validation_filter: ValidationFilter | None = None, download_bits: int = 32,
                  norm_cap: float = 0.0, secagg_keys: tuple | None = None,
                  secagg_self_mask: bool = False, secagg_bits: int = 32, secagg_frac_bits: int = 12,
-                 secagg_shamir: bool = False, secagg_neighbors: int = 0):
+                 secagg_shamir: bool = False, secagg_neighbors: int = 0,
+                 key_expiry: dict | None = None, clock: Callable[[], float] = time.time):
         """signing_key=None：不簽全域模型；vd_keys=None：不驗證上傳更新。
         norm_cap > 0：更新長度超過這輪中位數 norm_cap 倍的，縮回 norm_cap 倍。"""
         if norm_cap and (norm_cap < 1 or secure_agg_clients):
@@ -335,6 +337,11 @@ class GuardedStrategy(Strategy):
         self.inner = inner
         self.vd_keys = vd_keys or {}
         self.verify_updates = vd_keys is not None
+        if key_expiry and not self.verify_updates:
+            raise ValueError("金鑰有效期限要搭配 verify-updates=true（沒有驗證時到期不會有任何效果）")
+        if key_expiry and secure_agg_clients and not secagg_shamir:
+            raise ValueError("金鑰有效期限不能和基本版安全聚合一起用：一台到期被拒，基本版不容許少人，之後每輪都作廢；請開 secagg-shamir")
+        self.key_expiry, self.clock = dict(key_expiry or {}), clock
         self.tamper_rate = tamper_rate
         self.rng = np.random.default_rng(seed + 7919)
         self.on_round = on_round
@@ -462,8 +469,16 @@ class GuardedStrategy(Strategy):
         # 只放開「編號 → 節點」（重新配發金鑰後可由新節點綁定）；被撤銷的節點仍綁在這個已無金鑰的編號上，不能改用別的編號
         self._node_of_pid.pop(pid, None)
 
+    def _expire_keys(self) -> None:
+        """金鑰有效期限每輪檢查：執行中到期的 VD 金鑰從這輪起移除（和撤銷一樣），不必等伺服器重開。"""
+        now = self.clock()
+        for pid in [p for p, t in self.key_expiry.items() if now > t]:
+            self.vd_keys.pop(pid, None)
+            del self.key_expiry[pid]
+
     def aggregate_train(self, server_round: int, replies: Iterable[Message]
                         ) -> tuple[ArrayRecord | None, MetricRecord | None]:
+        self._expire_keys()
         replies = list(replies)
         ok_replies = [m for m in replies if not m.has_error()]
         # 秘密分享的加密份不在 HMAC 範圍（每份有 AEAD），先拿出來，其他檢查照舊只看參數＋指標
@@ -762,6 +777,7 @@ class GuardedStrategy(Strategy):
                           arrays, server_round)
 
     def aggregate_evaluate(self, server_round: int, replies: Iterable[Message]) -> MetricRecord | None:
+        self._expire_keys()
         # 評估的 num-examples 是紀錄加權用：NaN 會讓紀錄程式當掉。誤差本身可以是 NaN（模型發散時要照實記錄）
         replies = [m for m in replies if not m.has_error()]
         ok = [m for m in replies if _has_records(m.content, "metrics") and _well_formed_metrics(m.content)]

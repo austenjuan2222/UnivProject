@@ -20,7 +20,7 @@ from flwr.serverapp.strategy import (DifferentialPrivacyServerSideAdaptiveClippi
 from data import load_client_arrays, n_calendar
 from guard import CollusionFilter, GuardedStrategy, ValidationFilter
 from secagg import load_agreement_pubs, load_server_agreement_key, provision_agreement_keys
-from security import load_server_secrets, load_vd_verify_keys, provision_keys
+from security import key_expiry, load_server_secrets, load_vd_verify_keys, provision_keys
 from privacy import client_level_epsilon
 from results_log import RunLogger, make_run_name
 from task import JAM_KMH, TrafficModel, jam_scorer, set_seed
@@ -168,7 +168,7 @@ def main(grid: Grid, context: Context) -> None:
     if float(cfg.get("key-max-age-days", 0)) and not verify:
         raise ValueError("key-max-age-days 要搭配 verify-updates=true，不然伺服器不檢查金鑰，設了也沒效果")
     sign = bool(cfg.get("sign-models", False))
-    priv, vd_keys = None, None
+    priv, vd_keys, expiry = None, None, {}
     if verify or sign:
         # 模擬：第一次執行時產生金鑰（已有的不會換）；實際部署由安裝流程配發
         key_dir = str(cfg.get("key-dir", "keys"))
@@ -180,6 +180,7 @@ def main(grid: Grid, context: Context) -> None:
             vd_keys = load_vd_verify_keys(key_dir, max_age)  # 伺服器只拿公鑰：偽造不了 VD 的簽章
         elif auth != "hmac":
             raise ValueError(f"update-auth 必須是 hmac 或 ed25519，收到 {auth}")
+        expiry = key_expiry(key_dir, max_age) if verify else {}  # 跑到一半到期的也要擋
     secure_agg = bool(cfg.get("secure-agg", False))
     if secure_agg:
         # 伺服器看不到個別更新：不能做伺服器端裁剪（client-level DP）或中位數；基本版也不容許斷線、抽樣
@@ -232,7 +233,7 @@ def main(grid: Grid, context: Context) -> None:
                                secagg_bits=int(cfg.get("secagg-bits", 32)),
                                secagg_frac_bits=int(cfg.get("secagg-frac-bits", 12)),
                                secagg_shamir=secure_agg and bool(cfg.get("secagg-shamir", False)),
-                               secagg_neighbors=int(cfg.get("secagg-neighbors", 0)))
+                               secagg_neighbors=int(cfg.get("secagg-neighbors", 0)), key_expiry=expiry)
     init = ArrayRecord(TrafficModel(int(cfg["lookback"]), int(cfg["hidden-size"]),
                                     bool(cfg.get("residual", False)),
                                     n_calendar(str(cfg.get("calendar", "")))

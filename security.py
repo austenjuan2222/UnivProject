@@ -115,6 +115,26 @@ def _fresh(key_dir, max_age_days: float, now) -> callable:
     return ok
 
 
+def key_expiry(key_dir, max_age_days: float) -> dict:
+    """給伺服器每輪檢查用：{VD 編號: 到期時間}。已經過期的也列（第一輪就移除），不然啟動瞬間剛好跨過期限的會載入了卻永遠不過期；
+    紀錄壞掉的不列（載入時已經被 _fresh 擋掉，不在驗證表裡）。"""
+    if not max_age_days:
+        return {}
+    p = Path(key_dir) / "server" / "key_issued.json"
+    issued = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    out = {}
+    for k, t in issued.items():
+        if isinstance(t, bool) or not isinstance(t, (int, float)):
+            continue
+        try:
+            t = float(t)
+        except OverflowError:
+            continue
+        if math.isfinite(t):
+            out[int(k)] = t + max_age_days * 86400
+    return out
+
+
 def _revoked(key_dir) -> set[int]:
     p = Path(key_dir) / "server" / "revoked.json"
     return {int(x) for x in json.loads(p.read_text(encoding="utf-8"))} if p.exists() else set()  # 讀不到就報錯（fail closed）

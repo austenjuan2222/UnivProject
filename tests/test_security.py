@@ -344,6 +344,19 @@ class KeyExpiryTest(unittest.TestCase):
             self.assertEqual(sorted(load_server_secrets(d, max_age_days=30, now=later)[1]), [1])
             self.assertEqual(sorted(load_vd_verify_keys(d, max_age_days=30, now=later)), [1])
 
+    def test_expiry_times_for_the_guard(self):
+        import time
+        from security import key_expiry
+        with tempfile.TemporaryDirectory() as d:
+            provision_keys(d, 2)
+            t0 = time.time()
+            exp = key_expiry(d, 30)
+            self.assertEqual(sorted(exp), [0, 1])
+            self.assertAlmostEqual(exp[0], t0 + 30 * self.DAY, delta=60)
+            self.assertEqual(key_expiry(d, 0), {})
+            # 啟動當下剛好跨過期限的金鑰也要列進去（第一輪就移除），不然會載入了卻永遠不過期
+            self.assertEqual(sorted(key_expiry(d, 1e-9)), [0, 1])
+
     def test_unknown_issue_time_is_rejected(self):
         import json
         import time
