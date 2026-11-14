@@ -141,6 +141,38 @@ class EphemeralTest(unittest.TestCase):
                 for i in range(5)]
         self.assertIsNone(self.g._recover(RND, kept))
 
+    def test_vd_without_valid_key_is_left_out_of_advertise(self):
+        # 金鑰到期或撤銷的 VD 上傳反正會被拒：不列進公告名單，免得每輪被當成斷線、白做復原（第 58 項審查）
+        d = self.tmp.name
+        _, table = load_server_secrets(d)
+        del table[2]
+        grid = self.g._grid
+        self.g = GuardedStrategy(object(), self.spriv, table, secure_agg_clients=N, secagg_self_mask=True,
+                                 secagg_keys=(load_server_agreement_key(d), self.pubs), secagg_shamir=True)
+        self.g._grid = grid
+        msgs = self._train_msgs()
+        self.assertNotIn("secagg-eph", msgs[2].content.keys())
+        self.assertNotIn(2, list(msgs[0].content["secagg-eph"]["present"]))
+
+    def test_bound_vd_cannot_be_impersonated_in_advertise(self):
+        # 節點 105（5 號）搶先用 1 號的身分公告：1 號已綁在節點 101，冒用的要擋掉，真的 1 號照常拿到公鑰
+        self.g._node_of_pid = {i: 100 + i for i in range(N)}
+        self.g._pid_of_node = {100 + i: i for i in range(N)}
+        import copy
+        test, fake = self, copy.deepcopy(self.ctxs[1])  # 冒用者自己的一份狀態（不影響真的 1 號）
+
+        class Grid:
+            def send_and_receive(self, messages, timeout=None):
+                out = []
+                for m in reversed(list(messages)):
+                    pid = m.metadata.dst_node_id - 100
+                    out.append(secagg_recover_fn(m, fake if pid == 5 else test.ctxs[pid]))
+                return out
+        self.g._grid = Grid()
+        msgs = self._train_msgs()
+        self.assertIn("secagg-eph", msgs[1].content.keys())
+        self.assertNotIn("secagg-eph", msgs[5].content.keys())
+
     def test_advertise_payload_is_binary(self):
         # LPWAN：公告回合的公鑰、MAC、份都用二進位傳（十六進位會多一倍）
         q = ConfigRecord({"round": RND, "phase": "advertise"})

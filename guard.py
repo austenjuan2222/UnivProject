@@ -408,6 +408,7 @@ class GuardedStrategy(Strategy):
         self._grid = grid  # 安全聚合斷線復原時要再問一次在線 VD
         msgs = self.inner.configure_train(server_round, arrays, config, grid)
         if self.secure_agg_clients and self.secagg_shamir:
+            self._expire_keys()  # 公告前先移除到期的金鑰，這輪就不把它列進名單
             msgs = self._advertise(server_round, msgs)
         return self._sign(msgs, arrays, server_round)
 
@@ -431,6 +432,11 @@ class GuardedStrategy(Strategy):
                 m0, e0 = [_hex(x) for x in c["epub-macs"]], [_hex(x) for x in c["eshares"]]
             except (KeyError, TypeError, ValueError, AttributeError):
                 continue
+            if self.verify_updates and pid not in self.vd_keys:
+                continue  # 金鑰到期或撤銷：上傳反正會被拒，列進名單只會每輪被當成斷線、白做復原
+            node = r.metadata.src_node_id
+            if self._node_of_pid.get(pid, node) != node or self._pid_of_node.get(node, pid) != pid:
+                continue  # 編號已綁別的節點（或這個節點已綁別的編號）：冒用者搶先公告會讓真的 VD 這輪拿不到公鑰
             if 0 <= pid < n and pid not in pid_of.values() and len(m0) == n and len(e0) == n \
                     and re.fullmatch(r"[0-9a-f]{64}", epub) \
                     and {j for j, e in enumerate(e0) if e} == set(share_holders(pid, n, self.secagg_k, rnd, self._run_id())) \
