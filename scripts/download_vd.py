@@ -33,10 +33,13 @@ def day_urls(day: dt.date, base: str = DEFAULT_BASE) -> list[str]:
     return [f"{base}/{ymd}/VDLive_{h:02d}{m:02d}.xml.gz" for h in range(24) for m in range(60)]
 
 
-def http_fetch(url: str, timeout: float = 20.0) -> bytes:
+def http_fetch(url: str, timeout: float = 20.0, max_bytes: int = 256 * 2**20) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "UnivProject-research/1.0"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read()
+        data = resp.read(max_bytes + 1)  # 上限：伺服器出錯或被冒充時不會把記憶體吃光
+    if len(data) > max_bytes:
+        raise ValueError(f"回應超過 {max_bytes} 位元組，不收")
+    return data
 
 
 def _fetch_parse(url, fetch, keep, retries, backoff):

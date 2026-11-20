@@ -161,6 +161,64 @@ class ValidationFilterTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             f.screen({p: {"s": np.array([5.0])} for p in range(6)})
 
+    def test_group_memory_colluders_cannot_frame_honest_vds(self):
+        # 8 台串通的 VD 每輪都交很差的更新：誠實 VD 大半輪次會和其中一台同組，組分數平均也偏高。
+        # 只看「平均超過 memory」會把大批誠實 VD 永久排除；要和所有 VD 的平均相比也明顯突出才排除
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, group=4, memory=1.5, seed=0)
+        ups = {p: {"s": np.array([5.0 + 0.2 * (p % 5)])} for p in range(24)} | {p: {"s": np.array([30.0])} for p in range(24, 32)}
+        ids = {p: f"vd{p}" for p in ups}
+        rounds = [f.screen(ups, ids) for _ in range(14)]
+        always = set(range(24)).intersection(*rounds[-4:])
+        self.assertLessEqual(len(always), 2, always)
+
+    def test_group_memory_rejects_every_copy_of_a_duplicated_vd(self):
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, group=4, memory=1.5, seed=0)
+        ups = {p: {"s": np.array([5.0 + 0.01 * p])} for p in range(17)}
+        ids = {p: f"vd{p}" for p in range(16)} | {16: "vd3"}
+        out = f.screen(ups, ids)
+        self.assertTrue({3, 16} <= out)
+        self.assertEqual(len(f.history["vd3"]), 1)  # 同一台同一輪只記一筆
+
+    def test_group_memory_keeps_an_excluded_vd_out_when_few_updates_arrive(self):
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, group=4, memory=1.5, seed=0)
+        ups = {p: {"s": np.array([5.0 + 0.2 * (p % 5)])} for p in range(19)} | {19: {"s": np.array([30.0])}}
+        ids = {p: f"vd{p}" for p in ups}
+        for _ in range(10):
+            f.screen(ups, ids)
+        few = {p: {"s": np.array([5.0 + 0.01 * p])} for p in range(5)} | {19: {"s": np.array([5.02])}}
+        self.assertIn(19, f.screen(few, ids))  # 只來 6 份、不夠分組時，已排除的 VD 也不能混回來
+
+    def test_group_memory_lets_an_excluded_vd_back_after_a_while(self):
+        # 排除不是永久的：一段時間後清掉紀錄重新觀察，誠實 VD 不會因為某幾輪運氣差就再也回不來
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, group=4, memory=1.5, seed=0)
+        ups = {p: {"s": np.array([5.0 + 0.2 * (p % 5)])} for p in range(19)} | {19: {"s": np.array([30.0])}}
+        ids = {p: f"vd{p}" for p in ups}
+        for _ in range(10):
+            f.screen(ups, ids)
+        ups[19] = {"s": np.array([5.0])}
+        later = [f.screen(ups, ids) for _ in range(22)]
+        self.assertFalse(all(19 in r for r in later[-4:]))
+
+    def test_group_memory_catches_a_returning_attacker_quickly(self):
+        # 放回來後還是交壞更新：不用再等 8 輪，3 輪就再排除，而且這次排除更久
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, group=4, memory=1.5, seed=0)
+        ups = {p: {"s": np.array([5.0 + 0.2 * (p % 5)])} for p in range(19)} | {19: {"s": np.array([30.0])}}
+        ids = {p: f"vd{p}" for p in ups}
+        for _ in range(8):
+            f.screen(ups, ids)
+        f.screen(ups, ids)
+        until = f.banned["vd19"]
+        for _ in range(until - f._round + 3):
+            f.screen(ups, ids)
+        self.assertGreater(f.banned.get("vd19", 0), until + 16)
+
+    def test_group_with_mismatched_update_rejects_only_that_vd(self):
+        # 參數名稱或形狀是公開資訊，分組前就能個別擋掉；不能讓一份格式不對的更新拖垮整組誠實 VD
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, group=4, memory=1.5, seed=0)
+        ups = {p: {"s": np.array([5.0])} for p in range(15)} | {15: {"x": np.array([5.0])}}
+        ids = {p: f"vd{p}" for p in ups}
+        self.assertEqual([f.screen(ups, ids) for _ in range(3)], [{15}] * 3)
+
     def test_strata_compare_each_vd_only_with_its_own_kind_of_road(self):
         # 0～3 號是幾乎不塞車的路段，參考資料的塞車時段本來就預測得比較差（約 6.0）；4～17 號常塞車（約 5.0）
         free = {p: 6.0 + 0.01 * (p % 3) for p in range(4)}

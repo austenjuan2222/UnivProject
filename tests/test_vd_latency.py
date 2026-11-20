@@ -33,6 +33,27 @@ class LatencyTest(unittest.TestCase):
         r = latency(bad, now)
         self.assertEqual(r["n_vd"], 2)
 
+    def test_time_without_zone_is_taiwan_time(self):
+        naive = XML.replace(b"+08:00", b"")
+        now = dt.datetime(2026, 11, 20, 14, 32, 15, tzinfo=dt.timezone.utc)  # 台灣 22:32:15
+        r = latency(naive, now, keep={"VD-A", "VD-B"})
+        self.assertEqual(r["update_lag_s"], 135)
+        self.assertEqual(r["collect_lag_s"], [195, 315])
+
+
+class FetchCapTest(unittest.TestCase):
+    def test_oversized_response_is_refused(self):
+        import io
+        from unittest import mock
+        from scripts import download_vd
+        resp = mock.MagicMock()
+        resp.__enter__.return_value = io.BytesIO(b"x" * 101)
+        with mock.patch.object(download_vd.urllib.request, "urlopen", return_value=resp):
+            with self.assertRaises(ValueError):
+                download_vd.http_fetch("https://example.invalid/a", max_bytes=100)
+            resp.__enter__.return_value = io.BytesIO(b"x" * 100)
+            self.assertEqual(len(download_vd.http_fetch("https://example.invalid/a", max_bytes=100)), 100)
+
 
 if __name__ == "__main__":
     unittest.main()

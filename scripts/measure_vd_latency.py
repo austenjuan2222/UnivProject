@@ -27,9 +27,11 @@ LIVE_URL = "https://tisvcloud.freeway.gov.tw/history/motc20/VDLive.xml"
 
 def _ts(s: str | None):
     try:
-        return dt.datetime.fromisoformat(s) if s else None
+        t = dt.datetime.fromisoformat(s) if s else None
     except ValueError:
         return None
+    # 沒標時區的當台灣時間；不然和 UTC 的抓取時間相減會丟 TypeError，整筆被吞掉
+    return t.replace(tzinfo=dt.timezone(dt.timedelta(hours=8))) if t and t.tzinfo is None else t
 
 
 def latency(data: bytes, now: dt.datetime, keep: set | None = None) -> dict:

@@ -14,6 +14,7 @@ import re
 import time
 from typing import Callable, Iterable
 
+from collections import Counter
 import numpy as np
 from flwr.app import Array, ArrayRecord, ConfigRecord, Message, MetricRecord, RecordDict
 from flwr.serverapp import Grid
@@ -217,7 +218,7 @@ class ValidationFilter:
     memory > 0：記住每個 VD 每輪的可疑程度（(分數 − 中位數) / (1.4826 × MAD)，截在 0～z，好的輪次不能抵銷壞的），
     看過至少 3 輪、平均超過 memory 的也拒絕，用來抓每輪都只差一點、單輪門檻抓不到的攻擊者。
     group > 1 時看不到個別更新，改記「這台這輪所在小組的可疑程度」：每輪重新隨機分組，攻擊者每輪都在壞組裡，
-    誠實 VD 只是偶爾同組；平均超過 memory 的 VD 之後不再分組、單獨排除（不會再回來），它的組就不再連坐誠實 VD。
+    誠實 VD 只是偶爾同組；平均夠突出的 VD 之後不再分組、單獨排除一段時間（見 _update_bans），它的組就不再連坐誠實 VD。
     歷史要用穩定的 VD 身分記：screen 的 ids 把每份訊息對應到它的 VD（伺服器驗過 HMAC 的編號）；同一 VD 同輪多份取最可疑的。
     strata：VD 編號 → 路段類別（例如依交通單位的歷史塞車比例分成「常塞車／順暢」），每類各自算中位數與門檻，
     避免幾乎不塞車的誠實路段只因為本地沒看過塞車就被當成可疑。需要 ids，只用在 group = 1。
@@ -238,6 +239,31 @@ class ValidationFilter:
             raise ValueError("validation-strata 只能搭配 validation-group = 1")
         self.rng = np.random.default_rng(seed + 31337)
         self.last_scores: dict = {}
+        self.banned: dict = {}  # 分組＋記憶：VD → 排除到第幾輪
+        self._strikes: dict = {}
+        self._round = 0
+
+    def _update_bans(self):
+        """分組＋記憶：看過至少 8 輪、平均可疑程度超過 memory，而且在所有 VD 的平均裡也明顯突出（中位數 + z × MAD）
+        才排除；只看絕對門檻時，誠實 VD 碰巧常和攻擊者同組也會被永久排除。排除 16 輪後清掉紀錄重新觀察，
+        回來後只要 3 輪就再判斷一次（不用重等 8 輪），再被排除時期限加倍（16、32、64…輪）：
+        誠實 VD 能回來，一直作怪的攻擊者大部分時間都在外面。"""
+        for vd, until in list(self.banned.items()):
+            if self._round >= until:
+                del self.banned[vd]
+                self.history[vd] = []
+        means = {vd: float(np.mean(h)) for vd, h in self.history.items() if len(h) >= 8 and vd not in self.banned}
+        if len(means) < self.min_updates:
+            return
+        m = np.array(list(means.values()))  # 比較基準只用看滿 8 輪的 VD
+        means |= {vd: float(np.mean(h)) for vd, h in self.history.items()
+                  if vd in self._strikes and 3 <= len(h) < 8 and vd not in self.banned}
+        med = float(np.median(m))
+        limit = max(self.memory, med + self.z * float(np.median(np.abs(m - med))) * 1.4826)
+        for vd, mu in means.items():
+            if mu > limit:
+                self._strikes[vd] = self._strikes.get(vd, 0) + 1
+                self.banned[vd] = self._round + 16 * 2 ** (self._strikes[vd] - 1)
 
     def _score(self, a: dict):
         try:
@@ -250,12 +276,24 @@ class ValidationFilter:
         if self.group > 1 and self.memory > 0 and ids is None:
             raise ValueError("分組＋跨輪記憶需要每份訊息的 VD 編號（ids）")
         out_pre: set = set()
-        if self.group > 1 and self.memory > 0:
-            # 分組時一輪只有一個組分數、還混了別人，要看比較多輪才下判斷（單獨看是 3 輪，這裡 8 輪）
-            out_pre = {p for p in updates if len(self.history.get(ids[p], [])) >= 8
-                       and np.mean(self.history[ids[p]]) > self.memory}
-            if len(updates) - len(out_pre) >= 2 * self.group:
-                updates = {p: a for p, a in updates.items() if p not in out_pre}
+        if self.group > 1:
+            if self.memory > 0:
+                self._round += 1
+                self._update_bans()
+                # 同一個 VD 編號這輪送了不只一份：全部拒絕，歷史只記一筆最可疑
+                n_of = Counter(ids[p] for p in updates)
+                out_pre = {p for p in updates if n_of[ids[p]] > 1 or ids[p] in self.banned}
+                for vd in {ids[p] for p in out_pre if n_of[ids[p]] > 1}:
+                    self.history.setdefault(vd, []).append(self.z)
+            # 參數名稱與形狀是公開資訊，分組前就個別擋掉格式不對的，免得整組變 nan、連坐誠實 VD
+            shape = {p: tuple((k, np.shape(v)) for k, v in sorted(a.items())) for p, a in updates.items()}
+            common = Counter(shape.values()).most_common(1)[0][0] if shape else None
+            odd = {p for p in updates if shape[p] != common and p not in out_pre}
+            if self.memory > 0:
+                for p in odd:
+                    self.history.setdefault(ids[p], []).append(self.z)
+            out_pre |= odd
+            updates = {p: a for p, a in updates.items() if p not in out_pre}
         if self.group > 1 and len(updates) >= 2 * self.group:
             keys = [list(updates)[i] for i in self.rng.permutation(len(updates))]
             groups = [keys[i:i + self.group] for i in range(0, len(keys), self.group)]
@@ -264,22 +302,23 @@ class ValidationFilter:
                 groups[-1] += last
             gs = {}
             for g, members in enumerate(groups):
-                try:
-                    avg = {k: np.mean([np.asarray(updates[m][k], np.float64) for m in members], axis=0)
-                           for k in updates[members[0]]}
-                except (ValueError, KeyError):  # 組內形狀或參數名稱不一致
-                    avg = None
-                gs[g] = self._score(avg) if avg is not None else float("nan")
+                avg = {k: np.mean([np.asarray(updates[m][k], np.float64) for m in members], axis=0)
+                       for k in updates[members[0]]}
+                gs[g] = self._score(avg)
             self.last_scores = {m: gs[g] for g, members in enumerate(groups) for m in members}
             if self.memory > 0:
                 v = np.array([s for s in gs.values() if np.isfinite(s)])
                 med = float(np.median(v)) if len(v) else 0.0
                 mad = float(np.median(np.abs(v - med))) * 1.4826 + 1e-9 if len(v) else 1.0
                 for g, members in enumerate(groups):
-                    zp = min(max((gs[g] - med) / mad, 0.0), self.z) if np.isfinite(gs[g]) else self.z
+                    if not np.isfinite(gs[g]):
+                        continue  # 格式已先檢查過，組分數仍是 nan 時分不出是誰，不記進任何人的歷史
+                    zp = min(max((gs[g] - med) / mad, 0.0), self.z)
                     for m in members:
                         self.history.setdefault(ids[m], []).append(zp)
             return out_pre | {m for g in self._outliers(gs) for m in groups[g]}
+        if self.group > 1:  # 太少份不夠分組，退回個別檢查（不記跨輪歷史）；已排除、重複、格式不對的照樣拒絕
+            return out_pre | self._outliers({p: self._score(a) for p, a in updates.items()})
         self.last_scores = {p: self._score(a) for p, a in updates.items()}
         if self.contrast > 0:
             self.last_free = {p: s[1] for p, s in self.last_scores.items()}
