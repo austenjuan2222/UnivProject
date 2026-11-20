@@ -50,6 +50,52 @@ class ValidationFilterTest(unittest.TestCase):
         self.assertEqual(f.last_scores[9], 5.1)
 
 
+    def test_contrast_tells_jam_only_worse_apart_from_worse_everywhere(self):
+        # 分數 = (塞車時段誤差, 順暢時段誤差)。8 號兩邊都差（沒塞車經驗的誠實 VD 的樣子），
+        # 9 號塞車時段差、順暢時段反而好（把塞車標籤改高的攻擊者的樣子），兩者塞車誤差一樣
+        jam = {p: 5.0 + 0.01 * p for p in range(8)} | {8: 5.18, 9: 5.18}
+        free = {p: 2.0 + 0.01 * p for p in range(8)} | {8: 2.2, 9: 1.8}
+        ups = {p: {"s": np.array([jam[p], free[p]])} for p in jam}
+        pair = lambda a: (float(a["s"][0]), float(a["s"][1]))
+        self.assertEqual(ValidationFilter(lambda a: float(a["s"][0]), z=4.0).screen(ups), set())
+        f = ValidationFilter(pair, z=4.0, contrast=1.0)
+        self.assertEqual(f.screen(ups), {9})
+        self.assertEqual(f.last_scores[9], 5.18)  # 存下來的仍是塞車誤差
+
+    def test_contrast_forgiveness_is_capped(self):
+        # 順暢時段也故意弄很差，不能換到更多寬容：塞車時段差很多的照樣擋
+        jam = {p: 5.0 + 0.01 * p for p in range(8)} | {8: 9.0}
+        free = {p: 2.0 + 0.01 * p for p in range(8)} | {8: 50.0}
+        ups = {p: {"s": np.array([jam[p], free[p]])} for p in jam}
+        f = ValidationFilter(lambda a: (float(a["s"][0]), float(a["s"][1])), z=4.0, contrast=1.0)
+        self.assertEqual(f.screen(ups), {8})
+
+    def test_contrast_does_not_reject_typical_jam_error_with_better_free_flow(self):
+        # 塞車誤差和大家差不多、只是順暢時段特別好：沒有隱藏塞車的跡象，不擋
+        jam = {p: 5.0 + 0.01 * p for p in range(8)} | {8: 5.06}
+        free = {p: 2.0 + 0.01 * p for p in range(8)} | {8: 1.0}
+        ups = {p: {"s": np.array([jam[p], free[p]])} for p in jam}
+        f = ValidationFilter(lambda a: (float(a["s"][0]), float(a["s"][1])), z=4.0, contrast=1.0)
+        self.assertEqual(f.screen(ups), set())
+
+    def test_contrast_rejects_non_finite_free_flow_score(self):
+        ups = {p: {"s": np.array([5.0 + 0.01 * p, 2.0 + 0.01 * p])} for p in range(8)} | {8: {"s": np.array([5.0, np.nan])}}
+        f = ValidationFilter(lambda a: (float(a["s"][0]), float(a["s"][1])), z=4.0, contrast=1.0)
+        self.assertEqual(f.screen(ups), {8})
+
+    def test_contrast_ignores_tiny_free_flow_differences_when_all_alike(self):
+        # 順暢誤差幾乎完全一樣時 MAD≈0，只好一點點也不能被放大成「順暢時段好很多」
+        jam = {p: 5.0 + 0.01 * p for p in range(8)} | {8: 5.13}
+        free = {p: 2.0 for p in range(8)} | {8: 1.9999}
+        ups = {p: {"s": np.array([jam[p], free[p]])} for p in jam}
+        f = ValidationFilter(lambda a: (float(a["s"][0]), float(a["s"][1])), z=4.0, contrast=1.0)
+        self.assertEqual(f.screen(ups), set())
+
+    def test_contrast_needs_individual_updates(self):
+        with self.assertRaises(ValueError):
+            ValidationFilter(lambda a: (0.0, 0.0), contrast=1.0, group=2)
+
+
     def test_group_mode_scores_only_group_averages_and_rejects_whole_group(self):
         seen = []
 
@@ -215,6 +261,16 @@ class JamScorerTest(unittest.TestCase):
         hiding = score({"b": np.array(1.0, np.float32)})  # 全部預測快 20 km/h
         self.assertAlmostEqual(honest, 0.0, places=4)
         self.assertAlmostEqual(hiding, 20.0, places=3)
+        both = jam_scorer(refs, lambda: Shift(0.0), free=True)
+        self.assertEqual(len(both({"b": np.array(1.0, np.float32)})), 2)
+        j, f = both({"b": np.array(1.0, np.float32)})
+        self.assertAlmostEqual(j, 20.0, places=3)
+        self.assertAlmostEqual(f, 20.0, places=3)  # 100、90 km/h 這兩筆是順暢時段
+        # 參考資料完全沒有塞車樣本：塞車分數退回全部樣本，順暢分數就沒有意義，回傳 nan（不給寬容也不加懷疑）
+        flat = [{"X": X[2:], "y": y[2:], "mean": mean, "std": std}]
+        j, f = jam_scorer(flat, lambda: Shift(0.0), free=True)({"b": np.array(1.0, np.float32)})
+        self.assertAlmostEqual(j, 20.0, places=3)
+        self.assertTrue(np.isnan(f))
 
 
 if __name__ == "__main__":

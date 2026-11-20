@@ -206,13 +206,15 @@ def main(grid: Grid, context: Context) -> None:
     validation_filter = None
     if str(cfg.get("validation-dir", "")):
         refs = _reference_sets(cfg, set(vdids.values()), int(cfg.get("validation-vds", 4)), int(cfg.get("validation-offset", 0)))
+        contrast = float(cfg.get("validation-contrast", 0.0))
         validation_filter = ValidationFilter(jam_scorer(refs, lambda: TrafficModel(
             int(cfg["lookback"]), int(cfg["hidden-size"]), bool(cfg.get("residual", False)),
-            n_calendar(str(cfg.get("calendar", ""))) + int(bool(cfg.get("lag-day", False))))),
+            n_calendar(str(cfg.get("calendar", ""))) + int(bool(cfg.get("lag-day", False)))), free=contrast > 0),
             float(cfg.get("validation-z", 3.0)), margin=float(cfg.get("validation-margin", 0.0)),
             group=int(cfg.get("validation-group", 1)), seed=int(cfg["seed"]),
             memory=float(cfg.get("validation-memory", 0.0)),
-            strata=_strata(str(cfg["data-dir"]), vdids, strata_cut) if strata_cut > 0 else None)
+            strata=_strata(str(cfg["data-dir"]), vdids, strata_cut) if strata_cut > 0 else None,
+            contrast=contrast)
         if validation_filter.strata:
             print("路段分層：", {k: sorted(p for p, v in validation_filter.strata.items() if v == k)
                               for k in ("jam", "free")})

@@ -218,11 +218,19 @@ class ValidationFilter:
     看過至少 3 輪、平均超過 memory 的也拒絕，用來抓每輪都只差一點、單輪門檻抓不到的攻擊者（只用在 group = 1）。
     歷史要用穩定的 VD 身分記：screen 的 ids 把每份訊息對應到它的 VD（伺服器驗過 HMAC 的編號）；同一 VD 同輪多份取最可疑的。
     strata：VD 編號 → 路段類別（例如依交通單位的歷史塞車比例分成「常塞車／順暢」），每類各自算中位數與門檻，
-    避免幾乎不塞車的誠實路段只因為本地沒看過塞車就被當成可疑。需要 ids，只用在 group = 1。"""
+    避免幾乎不塞車的誠實路段只因為本地沒看過塞車就被當成可疑。需要 ids，只用在 group = 1。
+    contrast > 0：score 改回傳 (塞車時段誤差, 順暢時段誤差)。隱藏塞車的攻擊者塞車時段變差、順暢時段反而變好；
+    沒塞車經驗的誠實 VD 則是兩邊都差。判斷改用 塞車 robust z − contrast × min(順暢 robust z, 1)：
+    順暢時段比別人好的加重懷疑，兩邊都差的最多寬容 contrast（上限 1，故意弄差順暢時段換不到更多寬容）；
+    塞車誤差本身至少要比中位數差 z/2 個 MAD 才會被擋。只用在 group = 1。"""
 
     def __init__(self, score: Callable[[dict], float], z: float = 3.0, min_updates: int = 3, margin: float = 0.0,
-                 group: int = 1, seed: int = 0, memory: float = 0.0, strata: dict | None = None):
+                 group: int = 1, seed: int = 0, memory: float = 0.0, strata: dict | None = None,
+                 contrast: float = 0.0):
         self.score, self.z, self.min_updates, self.margin, self.group = score, z, min_updates, margin, group
+        self.contrast, self.last_free = contrast, {}
+        if contrast > 0 and group > 1:
+            raise ValueError("validation-contrast 只能搭配 validation-group = 1（分組時看不到個別 VD）")
         self.memory, self.history, self.strata = memory, {}, strata
         if strata and group > 1:
             raise ValueError("validation-strata 只能搭配 validation-group = 1")
@@ -231,11 +239,12 @@ class ValidationFilter:
         self.rng = np.random.default_rng(seed + 31337)
         self.last_scores: dict = {}
 
-    def _score(self, a: dict) -> float:
+    def _score(self, a: dict):
         try:
-            return float(self.score(a))
-        except (RuntimeError, ValueError, KeyError, TypeError):  # 形狀或參數名稱不符
-            return float("nan")
+            s = self.score(a)
+            return (float(s[0]), float(s[1])) if self.contrast > 0 else float(s)
+        except (RuntimeError, ValueError, KeyError, TypeError, IndexError):  # 形狀或參數名稱不符
+            return (float("nan"), float("nan")) if self.contrast > 0 else float("nan")
 
     def screen(self, updates: dict[int, dict], ids: dict | None = None) -> set[int]:
         if self.group > 1 and len(updates) >= 2 * self.group:
@@ -255,6 +264,9 @@ class ValidationFilter:
             self.last_scores = {m: gs[g] for g, members in enumerate(groups) for m in members}
             return {m for g in self._outliers(gs) for m in groups[g]}
         self.last_scores = {p: self._score(a) for p, a in updates.items()}
+        if self.contrast > 0:
+            self.last_free = {p: s[1] for p, s in self.last_scores.items()}
+            self.last_scores = {p: s[0] for p, s in self.last_scores.items()}
         mem_ids = ids if self.memory > 0 else None
         if not self.strata:
             return self._outliers(self.last_scores, mem_ids)
@@ -279,6 +291,23 @@ class ValidationFilter:
         mad = float(np.median(np.abs(v - med))) * 1.4826 + 1e-9
         limit = med + max(self.z * mad, self.margin * abs(med))
         out = bad | {p for p, s in scores.items() if p not in bad and s > limit}
+        if self.contrast > 0:
+            fv = np.array([self.last_free.get(p, np.nan) for p in scores])
+            fv = fv[np.isfinite(fv)]
+            fmed = float(np.median(fv)) if len(fv) else 0.0
+            # MAD 下限：順暢誤差幾乎一樣時，不能把一點點差距放大成很多個 MAD
+            fmad = max(float(np.median(np.abs(fv - fmed))) * 1.4826, 1e-3 * abs(fmed), 1e-9) if len(fv) else 1.0
+            # 順暢分數算不出來（模型在高車速輸入上壞掉）也算壞掉；參考資料沒塞車樣本時大家都是 nan，就不用這個訊號
+            if len(fv):
+                bad = bad | {p for p in scores if not np.isfinite(self.last_free.get(p, np.nan))}
+            out = bad
+            for p, s in scores.items():
+                fr = self.last_free.get(p, np.nan)
+                fz = min((fr - fmed) / fmad, 1.0) if np.isfinite(fr) else 0.0
+                jz = (s - med) / mad
+                # 塞車誤差至少要差 z/2 個 MAD：順暢時段特別好、塞車時段正常的不算可疑
+                if p not in bad and jz > self.z / 2 and jz - self.contrast * fz > self.z and s > med + self.margin * abs(med):
+                    out = out | {p}
         if ids is not None:
             now: dict = {}
             for p, s in scores.items():
