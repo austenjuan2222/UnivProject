@@ -215,7 +215,9 @@ class ValidationFilter:
     group > 1：每輪把更新隨機分成每組 group 份，只看各組的平均（模擬「組內安全聚合、伺服器只看得到小組加總」），
     整組一起採用或拒絕；最後一組不足 group 份時併進前一組。
     memory > 0：記住每個 VD 每輪的可疑程度（(分數 − 中位數) / (1.4826 × MAD)，截在 0～z，好的輪次不能抵銷壞的），
-    看過至少 3 輪、平均超過 memory 的也拒絕，用來抓每輪都只差一點、單輪門檻抓不到的攻擊者（只用在 group = 1）。
+    看過至少 3 輪、平均超過 memory 的也拒絕，用來抓每輪都只差一點、單輪門檻抓不到的攻擊者。
+    group > 1 時看不到個別更新，改記「這台這輪所在小組的可疑程度」：每輪重新隨機分組，攻擊者每輪都在壞組裡，
+    誠實 VD 只是偶爾同組；平均超過 memory 的 VD 之後不再分組、單獨排除（不會再回來），它的組就不再連坐誠實 VD。
     歷史要用穩定的 VD 身分記：screen 的 ids 把每份訊息對應到它的 VD（伺服器驗過 HMAC 的編號）；同一 VD 同輪多份取最可疑的。
     strata：VD 編號 → 路段類別（例如依交通單位的歷史塞車比例分成「常塞車／順暢」），每類各自算中位數與門檻，
     避免幾乎不塞車的誠實路段只因為本地沒看過塞車就被當成可疑。需要 ids，只用在 group = 1。
@@ -234,8 +236,6 @@ class ValidationFilter:
         self.memory, self.history, self.strata = memory, {}, strata
         if strata and group > 1:
             raise ValueError("validation-strata 只能搭配 validation-group = 1")
-        if memory > 0 and group > 1:
-            raise ValueError("validation-memory 只能搭配 validation-group = 1（分組時看不到個別 VD）")
         self.rng = np.random.default_rng(seed + 31337)
         self.last_scores: dict = {}
 
@@ -247,6 +247,15 @@ class ValidationFilter:
             return (float("nan"), float("nan")) if self.contrast > 0 else float("nan")
 
     def screen(self, updates: dict[int, dict], ids: dict | None = None) -> set[int]:
+        if self.group > 1 and self.memory > 0 and ids is None:
+            raise ValueError("分組＋跨輪記憶需要每份訊息的 VD 編號（ids）")
+        out_pre: set = set()
+        if self.group > 1 and self.memory > 0:
+            # 分組時一輪只有一個組分數、還混了別人，要看比較多輪才下判斷（單獨看是 3 輪，這裡 8 輪）
+            out_pre = {p for p in updates if len(self.history.get(ids[p], [])) >= 8
+                       and np.mean(self.history[ids[p]]) > self.memory}
+            if len(updates) - len(out_pre) >= 2 * self.group:
+                updates = {p: a for p, a in updates.items() if p not in out_pre}
         if self.group > 1 and len(updates) >= 2 * self.group:
             keys = [list(updates)[i] for i in self.rng.permutation(len(updates))]
             groups = [keys[i:i + self.group] for i in range(0, len(keys), self.group)]
@@ -262,7 +271,15 @@ class ValidationFilter:
                     avg = None
                 gs[g] = self._score(avg) if avg is not None else float("nan")
             self.last_scores = {m: gs[g] for g, members in enumerate(groups) for m in members}
-            return {m for g in self._outliers(gs) for m in groups[g]}
+            if self.memory > 0:
+                v = np.array([s for s in gs.values() if np.isfinite(s)])
+                med = float(np.median(v)) if len(v) else 0.0
+                mad = float(np.median(np.abs(v - med))) * 1.4826 + 1e-9 if len(v) else 1.0
+                for g, members in enumerate(groups):
+                    zp = min(max((gs[g] - med) / mad, 0.0), self.z) if np.isfinite(gs[g]) else self.z
+                    for m in members:
+                        self.history.setdefault(ids[m], []).append(zp)
+            return out_pre | {m for g in self._outliers(gs) for m in groups[g]}
         self.last_scores = {p: self._score(a) for p, a in updates.items()}
         if self.contrast > 0:
             self.last_free = {p: s[1] for p, s in self.last_scores.items()}

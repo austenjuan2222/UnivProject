@@ -145,9 +145,21 @@ class ValidationFilterTest(unittest.TestCase):
         ups = {p: {"s": np.array([5.0 + 0.01 * p])} for p in range(10)}
         self.assertEqual(f.screen(ups, {p: (3 if p == 7 else p) for p in range(10)}), {3, 7})
 
-    def test_memory_and_group_cannot_be_combined(self):
+    def test_group_memory_singles_out_the_vd_whose_groups_keep_failing(self):
+        # 只看 4 台一組的平均（模擬組內安全聚合）。每輪隨機重新分組，19 號那組每輪都壞；
+        # 和它同組的誠實 VD 每輪不同，只有 19 號每輪都在壞組裡，累積幾輪後單獨把它排除，之後它的組就不再連坐誠實 VD
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, group=4, memory=1.5, seed=0)
+        ups = {p: {"s": np.array([5.0 + 0.2 * (p % 5)])} for p in range(19)} | {19: {"s": np.array([30.0])}}
+        ids = {p: f"vd{p}" for p in ups}
+        rounds = [f.screen(ups, ids) for _ in range(10)]
+        self.assertTrue(all(19 in r for r in rounds))
+        self.assertTrue(all(len(r) >= 4 for r in rounds[:8]))  # 前 8 輪還不下判斷：整組一起擋
+        self.assertEqual(rounds[-1], {19})  # 之後單獨排除，同組的誠實 VD 不再被連帶擋掉
+
+    def test_group_memory_needs_ids(self):
+        f = ValidationFilter(lambda a: float(a["s"][0]), z=3.0, group=2, memory=1.0)
         with self.assertRaises(ValueError):
-            ValidationFilter(lambda a: 0.0, memory=1.0, group=2)
+            f.screen({p: {"s": np.array([5.0])} for p in range(6)})
 
     def test_strata_compare_each_vd_only_with_its_own_kind_of_road(self):
         # 0～3 號是幾乎不塞車的路段，參考資料的塞車時段本來就預測得比較差（約 6.0）；4～17 號常塞車（約 5.0）
