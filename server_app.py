@@ -14,14 +14,14 @@ import torch
 from flwr.app import ArrayRecord, ConfigRecord, Context, MetricRecord
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import (DifferentialPrivacyServerSideAdaptiveClipping,
-                                     DifferentialPrivacyServerSideFixedClipping, FedAvg, FedMedian,
-                                     FedTrimmedAvg)
+                                     DifferentialPrivacyServerSideFixedClipping)
 
 from data import load_client_arrays, n_calendar
 from guard import CollusionFilter, GuardedStrategy, ValidationFilter
 from secagg import load_agreement_pubs, load_server_agreement_key, provision_agreement_keys
 from security import key_expiry, load_server_secrets, load_vd_verify_keys, provision_keys
 from privacy import client_level_epsilon
+from robust_agg import make_strategy
 from results_log import RunLogger, make_run_name
 from task import JAM_KMH, TrafficModel, jam_scorer, set_seed
 
@@ -137,13 +137,11 @@ def main(grid: Grid, context: Context) -> None:
 
     _check_num_nodes(grid, num_clients)
 
-    # 聚合方式：fedavg（加權平均）、median（逐參數中位數）、trimmed（去掉頭尾各 20% 再平均）
-    # 中位數／截尾平均可抵抗少數被入侵 VD 的惡意更新（講義：IoT 攻擊面、botnet）
+    # 聚合方式：fedavg（加權平均）、median（逐參數中位數）、trimmed（去掉頭尾各 20% 再平均）、
+    # krum／multikrum／bulyan（依更新之間的距離挑掉離群者；byzantine-f＝假設最多幾台被入侵）
+    # 穩健聚合可抵抗少數被入侵 VD 的惡意更新（講義：IoT 攻擊面、botnet）
     agg_name = str(cfg.get("aggregator", "fedavg"))
-    agg_cls = {"fedavg": FedAvg, "median": FedMedian, "trimmed": FedTrimmedAvg}.get(agg_name)
-    if agg_cls is None:
-        raise ValueError(f"aggregator 必須是 fedavg／median／trimmed，收到 {agg_name}")
-    strategy = agg_cls(
+    strategy = make_strategy(agg_name, int(cfg.get("byzantine-f", 3)), n_train, dict(
         fraction_train=n_train / num_clients,
         fraction_evaluate=1.0,
         min_train_nodes=n_train,
@@ -153,7 +151,7 @@ def main(grid: Grid, context: Context) -> None:
             logger.on_train([dict(r["metrics"]) for r in replies])),
         evaluate_metrics_aggr_fn=lambda replies, _key: MetricRecord(
             logger.on_eval([dict(r["metrics"]) for r in replies])),
-    )
+    ), multikrum_m=int(cfg.get("multikrum-m", 0)))
     if client_dp and client_dp["adaptive"]:
         # 自適應裁剪（Andrew et al. 2021）：每輪依「被裁剪的 client 比例」調整裁剪值，目標中位數；
         # 計數查詢也加噪，Flower 會調高更新量的雜訊讓總隱私等同 noise_multiplier，ε 計算不變。

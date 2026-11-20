@@ -73,6 +73,27 @@ class QuickAblationTest(unittest.TestCase):
         self.assertGreater(len(d[0]["yte"]), 0)
         r = self.run_main("--fold", "1", "--nfolds", "3")
         self.assertTrue(0 < r["mae"] < 100)
+    def test_centralized_and_local_only_modes(self):
+        # 對照組：集中式（資料全部集中訓練一個模型）、各自訓練（每台 VD 只用自己的資料）
+        fed = self.run_main("--sigma", "-1")
+        cen = self.run_main("--sigma", "-1", "--mode", "central")
+        loc = self.run_main("--sigma", "-1", "--mode", "local")
+        for r in (cen, loc):
+            self.assertEqual(len(r["per"]), 3)       # 一樣逐台 VD 評估
+            self.assertAlmostEqual(r["naive"], fed["naive"])  # 同一份測試資料
+            self.assertTrue(0 < r["mae"] < 100)
+        self.assertEqual(cen["mode"], "central")
+
+    def test_centralized_dp_has_smaller_sample_rate_epsilon(self):
+        # 集中後資料變多、取樣率變小，同樣 σ 與輪數下 record-level ε 應該較小
+        fed = self.run_main()
+        cen = self.run_main("--mode", "central")
+        self.assertLess(cen["eps"], fed["eps"])
+
+    def test_finetune_rejected_outside_federated_mode(self):
+        with self.assertRaises(SystemExit):
+            self.run_main("--mode", "local", "--finetune", "1")
+
 
 if __name__ == "__main__":
     unittest.main()

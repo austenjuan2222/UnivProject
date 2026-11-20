@@ -24,7 +24,7 @@ dev = ["pytest"]
 [tool.setuptools]
 py-modules = [
     "task", "data", "privacy", "results_log", "vd_parse", "vd_preprocess",
-    "client_app", "server_app", "security", "guard",
+    "client_app", "server_app", "security", "guard", "robust_agg",
 ]
 
 [tool.flwr.app]
@@ -69,7 +69,9 @@ edge-runtime = "torch"       # "numpy"：VD 端 DP-SGD 改用只靠 numpy 的 ed
 sign-models = true         # 伺服器用 Ed25519 簽全域模型，VD 驗證通過才使用（防假更新）
 key-dir = "keys"           # 金鑰資料夾：vd-<編號>.key（各 VD 一把隨機金鑰）、server.pub；server/ 只給伺服器（不進 git）
 key-max-age-days = 0       # 金鑰有效期限（天）：VD 金鑰簽發超過這麼久沒輪替就不收（像憑證到期）；0 不檢查
-aggregator = "fedavg"      # fedavg／median（中位數）／trimmed（截尾平均）：後兩者可抵抗被入侵的 VD
+aggregator = "fedavg"      # fedavg／median（中位數）／trimmed（截尾平均）／krum／multikrum／bulyan：後五者可抵抗被入侵的 VD
+byzantine-f = 3            # Krum／Multi-Krum／Bulyan 假設最多幾台 VD 被入侵（Krum 需 n ≥ 2f+3，Bulyan 需 n ≥ 4f+3）
+multikrum-m = 0            # Multi-Krum 每輪平均幾份更新；0 = n − f
 attack-clients = 0         # > 0：最後幾個 VD 被入侵，送出惡意更新（仍有合法金鑰）
 attack-ids = ""            # 例如 "16,17,18"：改成指定這幾個 VD 被入侵（不看 attack-clients）
 attack-type = "flip"       # flip（反向並放大自己的更新）／noise（大幅隨機雜訊）／collude（串通、小幅同向偏移）／hidejam（塞車時段標籤改高、隱藏壅塞）

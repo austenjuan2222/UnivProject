@@ -8,6 +8,8 @@ python scripts/quick_ablation.py --data-dir data/processed --name dp            
 python scripts/quick_ablation.py --data-dir data/processed --name nodp --sigma -1   # 無 DP
 python scripts/quick_ablation.py --data-dir data/processed --name h3 --horizon 3    # 預測 15 分鐘後
 python scripts/quick_ablation.py --data-dir data/processed --name mia --mia         # 成員推論攻擊
+python scripts/quick_ablation.py --data-dir data/processed --name cen --mode central # 對照：資料集中訓練
+python scripts/quick_ablation.py --data-dir data/processed --name loc --mode local   # 對照：各 VD 各自訓練
 """
 import argparse, copy, json, sys, warnings, math
 from pathlib import Path
@@ -120,13 +122,15 @@ def ev(model, d):
     nv = ((X[:, d["last"]] - y) * d["std"]).abs()
     return e.sum().item(), nv.sum().item(), (((p - y) * d["std"]) ** 2).sum().item(), len(y)
 
-def run(a, seed, data):
-    set_seed(seed); g = build(a); hist = {i: [] for i in range(len(data))}; tail = []
+def run(a, seed, data, train=None):
+    """train：參與訓練的資料（預設＝data，即聯邦式每台 VD 一個 client）；評估一律逐台 VD 用 data。"""
+    train = data if train is None else train
+    set_seed(seed); g = build(a); hist = {i: [] for i in range(len(train))}; tail = []
     for rnd in range(1, a.rounds + 1):
         lr = a.lr if not a.cosine else a.lr * 0.5 * (1 + math.cos(math.pi * (rnd - 1) / a.rounds))
         states, ws = [], []
         gstate = copy.deepcopy(g.state_dict())
-        for i, d in enumerate(data):
+        for i, d in enumerate(train):
             set_seed(seed + 1000 * i + rnd)
             m = copy.deepcopy(g).train()
             opt = torch.optim.SGD(m.parameters(), lr=lr, momentum=a.momentum, weight_decay=a.wd)
@@ -211,7 +215,22 @@ def run(a, seed, data):
         non_mae = np.mean([ev(g, dict(d, Xte=d["Xnon"], yte=d["ynon"]))[0] / len(d["ynon"]) for d in data])
         mia = dict(auc=float(auc), train_mae=float(tr_mae), non_mae=float(non_mae))
     eps = compute_epsilon(hist[0], 1e-5) if a.sigma > 0 else float("inf")
-    return dict(mae=tot[0] / tot[3], naive=tot[1] / tot[3], rmse=math.sqrt(tot[2] / tot[3]), eps=eps, per=per, mia=mia)
+    return dict(mae=tot[0] / tot[3], naive=tot[1] / tot[3], rmse=math.sqrt(tot[2] / tot[3]), eps=eps, per=per, mia=mia,
+                tot=tot.tolist())
+
+
+def run_mode(a, seed, data):
+    """fed＝聯邦式；central＝把所有 VD 的訓練資料集中成一份訓練一個模型（資料要離開 VD，隱私最差的上限）；
+    local＝每台 VD 只用自己的資料訓練自己的模型（不合作的下限）。三者用同一份測試資料逐台評估。"""
+    if a.mode == "central":
+        pooled = dict(Xtr=np.concatenate([d["Xtr"] for d in data]), ytr=np.concatenate([d["ytr"] for d in data]))
+        return run(a, seed, data, train=[pooled])
+    if a.mode == "local":
+        rs = [run(a, seed, [d]) for d in data]
+        tot = np.sum([r["tot"] for r in rs], 0)
+        return dict(mae=tot[0] / tot[3], naive=tot[1] / tot[3], rmse=math.sqrt(tot[2] / tot[3]),
+                    eps=max(r["eps"] for r in rs), per=[r["per"][0] for r in rs], mia=None, tot=tot.tolist())
+    return run(a, seed, data)
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -250,12 +269,16 @@ def main(argv=None):
     p.add_argument("--ft-blend", type=float, default=1.0, help="微調模型與全域模型預測的混合比例 α")
     p.add_argument("--noresid", action="store_true")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
+    p.add_argument("--mode", default="fed", choices=["fed", "central", "local"],
+                   help="fed＝聯邦式；central＝資料集中訓練（對照上限）；local＝各 VD 各自訓練（對照下限）")
     a = p.parse_args(argv)
+    if a.mode != "fed" and (a.finetune or a.mia):
+        raise SystemExit("--finetune、--mia 只支援 --mode fed")
     data = load(a.data_dir, a.lookback, a.horizon, neigh=a.neigh, mia=a.mia, val=a.val, cal=a.cal, feats=a.feats, lagday=bool(a.lag_day),
                 fold=a.fold, nfolds=a.nfolds)
-    rs = [run(a, s, data) for s in a.seeds]
+    rs = [run_mode(a, s, data) for s in a.seeds]
     maes = [r["mae"] for r in rs]
-    out = dict(name=a.name, args=vars(a), mae=float(np.mean(maes)), std=float(np.std(maes, ddof=1)) if len(maes) > 1 else 0,
+    out = dict(name=a.name, mode=a.mode, args=vars(a), mae=float(np.mean(maes)), std=float(np.std(maes, ddof=1)) if len(maes) > 1 else 0,
                naive=rs[0]["naive"], rmse=float(np.mean([r["rmse"] for r in rs])), eps=rs[0]["eps"],
                per=list(np.mean([r["per"] for r in rs], 0)), maes=maes,
                mia=[r["mia"] for r in rs])
