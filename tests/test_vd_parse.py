@@ -37,6 +37,12 @@ def _doc(*vds, ns=NS):
 
 
 class ParseVDLiveTest(unittest.TestCase):
+    def test_gzip_bomb_is_refused(self):
+        import gzip
+        from vd_parse import parse_vdlive_xml
+        with self.assertRaises(ValueError):
+            parse_vdlive_xml(gzip.compress(b" " * 2 ** 20), max_bytes=2 ** 16)
+
     def test_volume_weighted_speed_across_lanes(self):
         xml = _doc(
             _vd("VD-N1-S-10", [

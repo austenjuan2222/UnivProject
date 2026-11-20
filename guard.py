@@ -14,7 +14,7 @@ import re
 import time
 from typing import Callable, Iterable
 
-from collections import Counter
+from collections import Counter, deque
 import numpy as np
 from flwr.app import Array, ArrayRecord, ConfigRecord, Message, MetricRecord, RecordDict
 from flwr.serverapp import Grid
@@ -51,7 +51,8 @@ def npy_header(data: bytes) -> tuple[tuple, np.dtype] | None:
     except ValueError:
         return None
     # 負的維度、int64 乘積溢位都會讓長度看似相符，接著 np.load 丟例外；用 Python 整數相乘不會溢位
-    if (fortran or dtype.hasobject or any(d < 0 for d in shape)
+    # 只收數值型別：字串、結構型別形狀對也轉不成 float，聚合或評分時丟例外讓整輪當掉
+    if (fortran or dtype.hasobject or dtype.kind not in "fiub" or any(d < 0 for d in shape)
             or len(data) != f.tell() + dtype.itemsize * math.prod(shape)):
         return None
     return tuple(shape), dtype
@@ -208,6 +209,9 @@ class CollusionFilter:
         return {p for p, s in means.items() if s > med + self.z * mad}
 
 
+HISTORY = 32  # 跨輪記憶只看最近 32 輪：記憶體有上限，也不讓長期表現好的 VD 存下大量額度再連續作怪
+
+
 class ValidationFilter:
     """伺服器用自己的參考資料檢查每份更新（概念同 Zeno，Xie et al. 2019；FLTrust，Cao et al. 2021）：
     score(更新後的模型) 越大越差；比這一輪多數 VD 明顯差（中位數 + z × 1.4826 × MAD）的不聚合。
@@ -251,7 +255,7 @@ class ValidationFilter:
         for vd, until in list(self.banned.items()):
             if self._round >= until:
                 del self.banned[vd]
-                self.history[vd] = []
+                self.history[vd] = deque(maxlen=HISTORY)
         means = {vd: float(np.mean(h)) for vd, h in self.history.items() if len(h) >= 8 and vd not in self.banned}
         if len(means) < self.min_updates:
             return
@@ -261,6 +265,8 @@ class ValidationFilter:
         med = float(np.median(m))
         limit = max(self.memory, med + self.z * float(np.median(np.abs(m - med))) * 1.4826)
         for vd, mu in means.items():
+            if mu <= limit and vd in self._strikes and len(self.history[vd]) >= 8:
+                del self._strikes[vd]  # 回來後乾淨地過了 8 輪：之前的紀錄不再加重
             if mu > limit:
                 self._strikes[vd] = self._strikes.get(vd, 0) + 1
                 self.banned[vd] = self._round + 16 * 2 ** (self._strikes[vd] - 1)
@@ -284,14 +290,14 @@ class ValidationFilter:
                 n_of = Counter(ids[p] for p in updates)
                 out_pre = {p for p in updates if n_of[ids[p]] > 1 or ids[p] in self.banned}
                 for vd in {ids[p] for p in out_pre if n_of[ids[p]] > 1}:
-                    self.history.setdefault(vd, []).append(self.z)
+                    self.history.setdefault(vd, deque(maxlen=HISTORY)).append(self.z)
             # 參數名稱與形狀是公開資訊，分組前就個別擋掉格式不對的，免得整組變 nan、連坐誠實 VD
             shape = {p: tuple((k, np.shape(v)) for k, v in sorted(a.items())) for p, a in updates.items()}
             common = Counter(shape.values()).most_common(1)[0][0] if shape else None
             odd = {p for p in updates if shape[p] != common and p not in out_pre}
             if self.memory > 0:
                 for p in odd:
-                    self.history.setdefault(ids[p], []).append(self.z)
+                    self.history.setdefault(ids[p], deque(maxlen=HISTORY)).append(self.z)
             out_pre |= odd
             updates = {p: a for p, a in updates.items() if p not in out_pre}
         if self.group > 1 and len(updates) >= 2 * self.group:
@@ -302,20 +308,23 @@ class ValidationFilter:
                 groups[-1] += last
             gs = {}
             for g, members in enumerate(groups):
-                avg = {k: np.mean([np.asarray(updates[m][k], np.float64) for m in members], axis=0)
-                       for k in updates[members[0]]}
-                gs[g] = self._score(avg)
+                try:
+                    avg = {k: np.mean([np.asarray(updates[m][k], np.float64) for m in members], axis=0)
+                           for k in updates[members[0]]}
+                except (ValueError, TypeError):  # 上游格式檢查之外的最後一道防線
+                    avg = None
+                gs[g] = self._score(avg) if avg is not None else float("nan")
             self.last_scores = {m: gs[g] for g, members in enumerate(groups) for m in members}
             if self.memory > 0:
                 v = np.array([s for s in gs.values() if np.isfinite(s)])
                 med = float(np.median(v)) if len(v) else 0.0
                 mad = float(np.median(np.abs(v - med))) * 1.4826 + 1e-9 if len(v) else 1.0
                 for g, members in enumerate(groups):
-                    if not np.isfinite(gs[g]):
-                        continue  # 格式已先檢查過，組分數仍是 nan 時分不出是誰，不記進任何人的歷史
-                    zp = min(max((gs[g] - med) / mad, 0.0), self.z)
+                    # 組分數算不出來（例如有人交了讓模型輸出變 nan 的權重）也記最可疑：作怪的那台每輪都在這種組裡，
+                    # 會被相對離群的規則單獨挑出來；誠實 VD 只是偶爾同組，平均不會突出
+                    zp = min(max((gs[g] - med) / mad, 0.0), self.z) if np.isfinite(gs[g]) else self.z
                     for m in members:
-                        self.history.setdefault(ids[m], []).append(zp)
+                        self.history.setdefault(ids[m], deque(maxlen=HISTORY)).append(zp)
             return out_pre | {m for g in self._outliers(gs) for m in groups[g]}
         if self.group > 1:  # 太少份不夠分組，退回個別檢查（不記跨輪歷史）；已排除、重複、格式不對的照樣拒絕
             return out_pre | self._outliers({p: self._score(a) for p, a in updates.items()})
@@ -370,7 +379,7 @@ class ValidationFilter:
                 zp = self.z if p in bad else min(max((s - med) / mad, 0.0), self.z)
                 now[ids[p]] = max(now.get(ids[p], 0.0), zp)
             for vd, zp in now.items():
-                self.history.setdefault(vd, []).append(zp)
+                self.history.setdefault(vd, deque(maxlen=HISTORY)).append(zp)
             out |= {p for p in scores
                     if len(self.history[ids[p]]) >= 3 and np.mean(self.history[ids[p]]) > self.memory}
             # 同一個 VD 編號這輪送了不只一份：視為異常，全部拒絕（歷史照樣記最可疑的那份）

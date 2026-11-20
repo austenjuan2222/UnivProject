@@ -1,4 +1,5 @@
 """可用性：持有合法金鑰的 VD 送 NaN／形狀不對的更新，不能讓全域模型變 NaN 或讓聚合當掉（沒開串通偵測時也要擋）。"""
+import io
 import unittest
 
 import numpy as np
@@ -28,6 +29,12 @@ class NpyHeaderTest(unittest.TestCase):
         bad_version[6] = 9
         for data in (raw_npy((-1, -1), 4), raw_npy((-2, -3), 24), raw_npy((2 ** 32, 2 ** 32), 0), bytes(bad_version)):
             self.assertIsNone(npy_header(data))
+
+    def test_non_numeric_dtype_is_rejected(self):
+        # 形狀對、型別是字串或結構：轉 float64 時丟例外，伺服器整輪當掉
+        for a in (np.array(["ab", "cd"], dtype="<U8"), np.zeros(2, dtype=[("a", "<f4"), ("b", "<i4")])):
+            buf = io.BytesIO(); np.save(buf, a)
+            self.assertIsNone(npy_header(buf.getvalue()))
 
     def test_valid_header_still_parses(self):
         self.assertEqual(npy_header(raw_npy((2, 3), 24)), ((2, 3), np.dtype("<f4")))

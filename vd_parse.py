@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-import gzip
+import zlib
 import xml.etree.ElementTree as ET
 from typing import Callable, Optional
 
@@ -95,11 +95,14 @@ def _parse_vd(vdlive) -> dict:
 
 
 def parse_vdlive_xml(
-    data: bytes, keep: Optional[Callable[[str], bool]] = None
+    data: bytes, keep: Optional[Callable[[str], bool]] = None, max_bytes: int = 512 * 2**20
 ) -> list[dict]:
-    """解析一個 VDLive XML（可為 gzip 壓縮）成列清單。"""
+    """解析一個 VDLive XML（可為 gzip 壓縮）成列清單；解壓後超過 max_bytes 就不收（防壓縮炸彈）。"""
     if data[:2] == b"\x1f\x8b":
-        data = gzip.decompress(data)
+        d = zlib.decompressobj(31)
+        data = d.decompress(data, max_bytes)
+        if d.unconsumed_tail:
+            raise ValueError(f"解壓後超過 {max_bytes} 位元組，不收")
     root = ET.fromstring(data)
     if _local(root.tag) != "VDLiveList":
         raise ValueError(f"不是 VDLiveList 文件（根節點為 {_local(root.tag)}）")
