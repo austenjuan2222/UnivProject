@@ -15,6 +15,7 @@ import time
 from typing import Callable, Iterable
 
 from collections import Counter, deque
+import secrets
 import numpy as np
 from flwr.app import Array, ArrayRecord, ConfigRecord, Message, MetricRecord, RecordDict
 from flwr.serverapp import Grid
@@ -233,7 +234,7 @@ class ValidationFilter:
 
     def __init__(self, score: Callable[[dict], float], z: float = 3.0, min_updates: int = 3, margin: float = 0.0,
                  group: int = 1, seed: int = 0, memory: float = 0.0, strata: dict | None = None,
-                 contrast: float = 0.0):
+                 contrast: float = 0.0, secret: bool = False):
         self.score, self.z, self.min_updates, self.margin, self.group = score, z, min_updates, margin, group
         self.contrast, self.last_free = contrast, {}
         if contrast > 0 and group > 1:
@@ -241,7 +242,8 @@ class ValidationFilter:
         self.memory, self.history, self.strata = memory, {}, strata
         if strata and group > 1:
             raise ValueError("validation-strata 只能搭配 validation-group = 1")
-        self.rng = np.random.default_rng(seed + 31337)
+        # secret：分組用作業系統的亂數，攻擊者無法從設定檔的 seed 算出自己會和誰同組（代價是不能重現）
+        self.rng = np.random.default_rng(secrets.randbits(128) if secret else seed + 31337)
         self.last_scores: dict = {}
         self.banned: dict = {}  # 分組＋記憶：VD → 排除到第幾輪
         self._strikes: dict = {}

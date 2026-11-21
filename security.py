@@ -410,11 +410,12 @@ def adaptive_shrink(global_arrays: dict, bad_arrays: dict, score, tol: float,
 
 
 def hide_congestion(y: np.ndarray, mean: float, std: float, below_kmh: float = 60.0,
-                    shift_kmh: float = 30.0) -> np.ndarray:
+                    shift_kmh: float = 30.0, free_shift_kmh: float = 0.0) -> np.ndarray:
     """針對性攻擊的標籤竄改：實際車速低於 below_kmh（塞車）的樣本，標籤改高 shift_kmh，
-    讓模型學到「塞車時也預測順暢」。y 是標準化後的車速。"""
+    讓模型學到「塞車時也預測順暢」。y 是標準化後的車速。
+    free_shift_kmh > 0：自適應版，順暢樣本的標籤也改低這麼多，讓順暢時段誤差變差，騙 validation-contrast 的寬容。"""
     kmh = y * std + mean
-    return np.where(kmh < below_kmh, y + shift_kmh / std, y).astype(np.float32)
+    return np.where(kmh < below_kmh, y + shift_kmh / std, y - free_shift_kmh / std).astype(np.float32)
 
 
 def tamper(arrays: dict, magnitude: float, rng: np.random.Generator) -> dict:

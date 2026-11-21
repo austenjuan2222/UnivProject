@@ -15,6 +15,13 @@ class HideJamTest(unittest.TestCase):
         np.testing.assert_allclose(out * std + mean, [70.0, 89.0, 60.0, 100.0], atol=1e-4)
         self.assertEqual(out.dtype, np.float32)
 
+    def test_adaptive_variant_also_lowers_free_flow_labels(self):
+        # 懂「同時看順暢時段」規則的攻擊者：順暢時段的標籤也改低一點，讓順暢誤差變差來換寬容
+        mean, std = 80.0, 20.0
+        y = (np.array([40.0, 100.0], dtype=np.float32) - mean) / std
+        out = hide_congestion(y, mean, std, shift_kmh=30.0, free_shift_kmh=5.0)
+        np.testing.assert_allclose(out * std + mean, [70.0, 95.0], atol=1e-4)
+
     def test_hidejam_update_is_boosted_by_scale(self):
         g, local = {"w": np.zeros(3, np.float32)}, {"w": np.ones(3, np.float32)}
         out = poison_update(g, local, "hidejam", 3.0, np.random.default_rng(0))

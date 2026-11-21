@@ -239,6 +239,19 @@ class ValidationFilterTest(unittest.TestCase):
         self.assertNotIn("vd19", f._strikes)
         self.assertLessEqual(max(len(h) for h in f.history.values()), 32)  # 歷史只留最近幾輪，不會無限長
 
+    def test_secret_grouping_cannot_be_predicted_from_the_config_seed(self):
+        # 分組亂數若由設定檔的 seed 決定，攻擊者能算出自己和誰同組；secret=True 改用作業系統的亂數
+        ups = {p: {"s": np.array([5.0 + 0.01 * p])} for p in range(16)}
+        ids = {p: p for p in ups}
+
+        def groups(f):
+            f.screen(ups, ids)
+            return tuple(sorted(f.last_scores.items()))
+        same = [groups(ValidationFilter(lambda a: float(a["s"][0]), group=4, memory=1.5, seed=7)) for _ in range(2)]
+        self.assertEqual(same[0], same[1])
+        diff = {groups(ValidationFilter(lambda a: float(a["s"][0]), group=4, memory=1.5, seed=7, secret=True)) for _ in range(5)}
+        self.assertGreater(len(diff), 1)
+
     def test_strata_compare_each_vd_only_with_its_own_kind_of_road(self):
         # 0～3 號是幾乎不塞車的路段，參考資料的塞車時段本來就預測得比較差（約 6.0）；4～17 號常塞車（約 5.0）
         free = {p: 6.0 + 0.01 * (p % 3) for p in range(4)}

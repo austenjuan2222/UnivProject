@@ -214,7 +214,7 @@ def main(grid: Grid, context: Context) -> None:
             group=int(cfg.get("validation-group", 1)), seed=int(cfg["seed"]),
             memory=float(cfg.get("validation-memory", 0.0)),
             strata=_strata(str(cfg["data-dir"]), vdids, strata_cut) if strata_cut > 0 else None,
-            contrast=contrast)
+            contrast=contrast, secret=bool(cfg.get("validation-secret-groups", False)))
         if validation_filter.strata:
             print("路段分層：", {k: sorted(p for p, v in validation_filter.strata.items() if v == k)
                               for k in ("jam", "free")})

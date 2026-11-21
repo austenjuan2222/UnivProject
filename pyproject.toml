@@ -77,6 +77,7 @@ attack-ids = ""            # 例如 "16,17,18"：改成指定這幾個 VD 被入
 attack-type = "flip"       # flip（反向並放大自己的更新）／noise（大幅隨機雜訊）／collude（串通、小幅同向偏移）／hidejam（塞車時段標籤改高、隱藏壅塞）
 attack-scale = 10.0        # 惡意更新的放大倍數
 attack-shift-kmh = 30.0    # hidejam：塞車樣本的標籤改高幾 km/h
+attack-free-shift-kmh = 0.0  # hidejam 自適應版：順暢樣本的標籤也改低幾 km/h（騙 validation-contrast）
 attack-adaptive-tol = 0.0  # >0：攻擊者知道伺服器驗證方式，把惡意更新縮到分數不超過全域模型 ×(1+tol)
 attack-ref-offset = 0      # 自適應攻擊者以為伺服器用的參考 VD：依塞車樣本數排序第 offset 起的 validation-vds 個
 validation-offset = 0      # 伺服器實際用的參考 VD 從第幾名開始（>0：保密，不用塞車最多的那幾個）
@@ -93,6 +94,7 @@ validation-group = 1       # > 1：只檢查每組這麼多份更新的平均（
 validation-match = ""        # 參考 VD 編號要包含這段字（例如 "-N-" 只用北向）；空字串＝不限
 validation-memory = 0.0    # > 0：VD 歷輪平均可疑程度（robust z）超過這個值也拒絕（看過至少 3 輪）；0 = 不用
 validation-strata = 0.0    # > 0：依歷史塞車比例（≥ 這個值算常塞車）把 VD 分兩類各自設門檻；需要 verify-updates；0 = 不分
+validation-secret-groups = false  # true：分組用作業系統亂數（實際部署要開；實驗要重現時關）
 validation-contrast = 0.0  # > 0：也看順暢時段誤差；塞車差、順暢反而好的加重懷疑，兩邊都差的最多寬容這麼多（建議 1，搭配 validation-z=4）；0 = 不用
 secure-agg = false         # true = 安全聚合（成對遮罩）：伺服器只看得到所有 VD 的加總（只能配 fedavg、全部參與）
 secagg-bits = 32           # 安全聚合的整數環 Z_{2^bits}：32 或 16（LPWAN，上傳再減半，範圍較小）
