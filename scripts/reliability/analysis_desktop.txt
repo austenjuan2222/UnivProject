@@ -1,0 +1,46 @@
+﻿
+== processed_28d fold -1 seeds [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] ==
+test samples 12525, naive MAE 3.008
+sg-1       n=10 ε=    inf MAE 2.706 (SD 0.032, 95%CI 2.683–2.729) | Δ vs sg-1 +0.000 [+0.000,+0.000] p=nan
+sg0        n=10 ε=    inf MAE 2.672 (SD 0.009, 95%CI 2.666–2.679) | Δ vs sg-1 -0.034 [-0.058,-0.009] p=0.0121
+sg0.5      n=10 ε=  21.75 MAE 2.675 (SD 0.010, 95%CI 2.668–2.682) | Δ vs sg-1 -0.031 [-0.055,-0.008] p=0.0145
+sg1.1      n=10 ε=   2.54 MAE 2.685 (SD 0.010, 95%CI 2.678–2.692) | Δ vs sg-1 -0.021 [-0.044,+0.002] p=0.0713
+sg3        n=10 ε=   0.65 MAE 2.749 (SD 0.021, 95%CI 2.734–2.764) | Δ vs sg-1 +0.043 [+0.015,+0.071] p=0.00651
+sg8        n=10 ε=   0.22 MAE 3.190 (SD 0.068, 95%CI 3.141–3.238) | Δ vs sg-1 +0.484 [+0.426,+0.542] p=1.57e-08
+sg20       n=10 ε=   0.12 MAE 12.784 (SD 3.355, 95%CI 10.384–15.184) | Δ vs sg-1 +10.078 [+7.678,+12.477] p=5.47e-06
+
+== processed_28d fold -1 seeds [1, 2, 3, 4, 5] ==
+test samples 12525, naive MAE 3.008
+ft0sg-1    n= 5 ε=    inf MAE 2.871 (SD 0.055, 95%CI 2.804–2.939) | Δ vs ft0sg-1 +0.000 [+0.000,+0.000] p=nan
+ft0sg1.1   n= 5 ε=   2.37 MAE 2.807 (SD 0.016, 95%CI 2.787–2.826) | Δ vs ft0sg-1 -0.064 [-0.119,-0.010] p=0.0307
+
+== processed_28d_32 fold -1 seeds [1, 2, 3, 4, 5] ==
+test samples 50432, naive MAE 2.429
+sg-1       n= 5 ε=    inf MAE 2.151 (SD 0.025, 95%CI 2.119–2.183) | Δ vs sg-1 +0.000 [+0.000,+0.000] p=nan
+sg1.1      n= 5 ε=   2.54 MAE 2.119 (SD 0.006, 95%CI 2.112–2.126) | Δ vs sg-1 -0.032 [-0.065,+0.001] p=0.0547
+sg3        n= 5 ε=   0.65 MAE 2.140 (SD 0.005, 95%CI 2.133–2.146) | Δ vs sg-1 -0.011 [-0.042,+0.019] p=0.355
+
+== block CV (8 VD): per-fold mean over seeds ==
+fold 0: naive 2.826 nodp 2.443 σ1.1 2.466 (Δ+0.023) σ3 2.523 (Δ+0.080)
+fold 1: naive 2.683 nodp 2.293 σ1.1 2.282 (Δ-0.010) σ3 2.341 (Δ+0.049)
+fold 2: naive 2.831 nodp 2.477 σ1.1 2.472 (Δ-0.006) σ3 2.530 (Δ+0.052)
+fold 3: naive 2.797 nodp 2.450 σ1.1 2.448 (Δ-0.002) σ3 2.503 (Δ+0.053)
+fold 4: naive 3.016 nodp 2.705 σ1.1 2.700 (Δ-0.005) σ3 2.753 (Δ+0.048)
+
+== test-period (day-block) uncertainty ==
+processed_28d sg1.1 vs sg-1: 5 day-blocks, per-day Δ [-0.011 -0.029 -0.018 -0.006 -0.024], mean -0.0177, day-bootstrap 95% CI [-0.0249,-0.0105]; lag1 autocorr 0.06 → effective n≈11087 of 12525
+processed_28d sg3 vs sg-1: 5 day-blocks, per-day Δ [0.063 0.055 0.051 0.054 0.022], mean +0.0490, day-bootstrap 95% CI [+0.0348,+0.0588]; lag1 autocorr 0.07 → effective n≈10793 of 12525
+processed_28d sg8 vs sg-1: 5 day-blocks, per-day Δ [0.555 0.528 0.567 0.537 0.333], mean +0.5039, day-bootstrap 95% CI [+0.4163,+0.5560]; lag1 autocorr 0.18 → effective n≈8775 of 12525
+processed_28d sg20 vs sg-1: 5 day-blocks, per-day Δ [10.701 12.395 10.849 13.01   5.978], mean +10.5864, day-bootstrap 95% CI [+8.2058,+12.3315]; lag1 autocorr 0.83 → effective n≈1190 of 12525
+processed_28d sg0 vs sg-1: 5 day-blocks, per-day Δ [-0.021 -0.05  -0.033 -0.024 -0.028], mean -0.0312, day-bootstrap 95% CI [-0.0407,-0.0238]; lag1 autocorr 0.06 → effective n≈11007 of 12525
+processed_28d sg-1 vs sg-1: 5 day-blocks, per-day Δ [0. 0. 0. 0. 0.], mean +0.0000, day-bootstrap 95% CI [+0.0000,+0.0000]; lag1 autocorr nan → effective n≈nan of 12525
+
+per-VD MAE (nodp, seed-avg): [1.93 2.57 2.08 3.48 3.32 3.33 2.92 2.01]
+
+== noise cost alone (vs clip-only σ0) ==
+sg0.5 Δ +0.0026 [+0.0001,+0.0050] p=0.0421 wilcoxon p=0.0488
+sg1.1 Δ +0.0128 [+0.0079,+0.0176] p=0.000211 wilcoxon p=0.00391
+sg3 Δ +0.0768 [+0.0644,+0.0893] p=2.12e-07 wilcoxon p=0.00195
+σ1.1 vs nodp wilcoxon p 0.009765625
+
+[桌機] 最後的檢定力分析需要 statsmodels，專案 venv 沒有，沒有安裝所以這段沒跑；其餘各段都已完整輸出。

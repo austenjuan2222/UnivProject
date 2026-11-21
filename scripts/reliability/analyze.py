@@ -1,8 +1,8 @@
-import glob, json, re, numpy as np
+﻿import glob, json, re, numpy as np
 from scipy import stats
 R = {}
 for f in glob.glob("res/*.npz"):
-    m = re.match(r"res/(processed_28d(?:_\d+)?)_(.+)_f(-?\d+)_s(\d+)\.npz", f)
+    m = re.match(r"res/(processed_28d(?:_\d+)?)_(.+)_f(-?\d+)_s(\d+)\.npz", f.replace("\\", "/"))
     data, tag, fold, seed = m.group(1), m.group(2), int(m.group(3)), int(m.group(4))
     z = np.load(f); eps = json.loads(open(f[:-4] + ".jsonl").readline())["eps"]
     R[(data, tag, fold, seed)] = dict(err=z["err"], naive=z["naive"], sizes=z["sizes"], eps=eps)
