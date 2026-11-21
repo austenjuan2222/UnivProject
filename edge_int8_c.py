@@ -19,6 +19,10 @@ def _arr(ctype: str, name: str, a) -> str:
 
 def to_c(q: dict, residual: bool = True) -> str:
     Ls = q["layers"]
+    for L in Ls:  # C 裡位移 <= 0 或 > 62 是未定義行為，超出型別範圍的值會被默默截斷
+        if not (np.all((L["s"] >= 1) & (L["s"] <= 62)) and np.all((L["m"] > 0) & (L["m"] < 2 ** 31))
+                and np.all(np.abs(L["b"].astype(np.int64)) < 2 ** 31)):
+            raise ValueError("量化參數超出 C 能安全表示的範圍（校正資料或權重可能全是 0）")
     dims = [Ls[0]["w"].shape[1]] + [L["w"].shape[0] for L in Ls]
     src = ["#include <stdint.h>\n", f"#define N_IN {dims[0]}\n", f"#define OUT_FRAC {OUT_FRAC}\n",
            f"/* 輸出乘 {q['s_x'] / OUT_FRAC!r} 是標準化尺度的預測 */\n"]

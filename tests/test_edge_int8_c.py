@@ -43,6 +43,17 @@ class EdgeInt8CTest(unittest.TestCase):
                 self.assertEqual(int(m.group(1)), L[key].size)
                 np.testing.assert_array_equal(got, L[key].ravel())
 
+    def test_rejects_shifts_c_cannot_do(self):
+        # 位移 <= 0 或 > 62 在 C 裡是未定義行為，倍數超出 int32 會被截斷：輸出前就要擋
+        L = self.q["layers"][0]
+        for key, bad in (("s", 0), ("s", 63), ("m", 2 ** 31)):
+            old = L[key].copy()
+            L[key] = L[key].astype(np.int64)
+            L[key][0] = bad
+            with self.assertRaises(ValueError):
+                to_c(self.q)
+            L[key] = old
+
     def test_compiled_c_matches_python_bit_for_bit(self):
         cc = _compiler()
         if cc is None:

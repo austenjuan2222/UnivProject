@@ -283,8 +283,12 @@ class ValidationFilterTest(unittest.TestCase):
 
         g = GuardedStrategy(Inner(), None, None, validation_filter=ValidationFilter(
             lambda a: float(a["s"][0]), group=4, memory=1.5, secret=True))
-        g.aggregate_train(1, [reply(p, 5.0 + 0.01 * p) for p in range(16)])
+        stats = {}
+        g = GuardedStrategy(Inner(), None, None, on_round=lambda r, s: stats.update(s), validation_filter=ValidationFilter(
+            lambda a: float(a["s"][0]), group=4, memory=1.5, secret=True))
+        g.aggregate_train(1, [reply(p, 5.0 + 0.01 * p) for p in range(15)] + [reply(15, 50.0)])
         self.assertEqual(g.validation_scores, [])
+        self.assertEqual(stats["val_rejected"], "#4")  # 整組被拒：只記台數，列出編號就是那一組的名單
 
     def test_strata_compare_each_vd_only_with_its_own_kind_of_road(self):
         # 0～3 號是幾乎不塞車的路段，參考資料的塞車時段本來就預測得比較差（約 6.0）；4～17 號常塞車（約 5.0）

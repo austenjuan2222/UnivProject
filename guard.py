@@ -648,8 +648,9 @@ class GuardedStrategy(Strategy):
             # 以每份訊息為單位評分（不用 VD 自報的編號當鍵），同一編號送兩份也會各自被檢查
             invalid = self.validation_filter.screen({i: arrays_of(m.content["arrays"]) for i, m in enumerate(kept)},
                                                     {i: int(m.content["metrics"]["partition-id"]) for i, m in enumerate(kept)})
-            stats["val_rejected"] = ";".join(sorted(str(int(kept[i].content["metrics"]["partition-id"]))
-                                                    for i in invalid))
+            stats["val_rejected"] = (f"#{len(invalid)}" if self.validation_filter.secret  # 整組被拒，列編號就洩漏分組
+                                     else ";".join(sorted(str(int(kept[i].content["metrics"]["partition-id"]))
+                                                          for i in invalid)))
             if not self.validation_filter.secret:  # 分組分數連同編號寫出去就能還原分組
                 self.validation_scores.append((server_round, [(int(kept[i].content["metrics"]["partition-id"]), v)
                                                           for i, v in self.validation_filter.last_scores.items()]))
