@@ -1,0 +1,140 @@
+--tag sg-1 --sigma -1 --seed 1
+--tag sg0 --sigma 0 --seed 1
+--tag sg0.5 --sigma 0.5 --seed 1
+--tag sg1.1 --sigma 1.1 --seed 1
+--tag sg3 --sigma 3 --seed 1
+--tag sg8 --sigma 8 --seed 1
+--tag sg20 --sigma 20 --seed 1
+--tag sg-1 --sigma -1 --seed 2
+--tag sg0 --sigma 0 --seed 2
+--tag sg0.5 --sigma 0.5 --seed 2
+--tag sg1.1 --sigma 1.1 --seed 2
+--tag sg3 --sigma 3 --seed 2
+--tag sg8 --sigma 8 --seed 2
+--tag sg20 --sigma 20 --seed 2
+--tag sg-1 --sigma -1 --seed 3
+--tag sg0 --sigma 0 --seed 3
+--tag sg0.5 --sigma 0.5 --seed 3
+--tag sg1.1 --sigma 1.1 --seed 3
+--tag sg3 --sigma 3 --seed 3
+--tag sg8 --sigma 8 --seed 3
+--tag sg20 --sigma 20 --seed 3
+--tag sg-1 --sigma -1 --seed 4
+--tag sg0 --sigma 0 --seed 4
+--tag sg0.5 --sigma 0.5 --seed 4
+--tag sg1.1 --sigma 1.1 --seed 4
+--tag sg3 --sigma 3 --seed 4
+--tag sg8 --sigma 8 --seed 4
+--tag sg20 --sigma 20 --seed 4
+--tag sg-1 --sigma -1 --seed 5
+--tag sg0 --sigma 0 --seed 5
+--tag sg0.5 --sigma 0.5 --seed 5
+--tag sg1.1 --sigma 1.1 --seed 5
+--tag sg3 --sigma 3 --seed 5
+--tag sg8 --sigma 8 --seed 5
+--tag sg20 --sigma 20 --seed 5
+--tag sg-1 --sigma -1 --seed 6
+--tag sg0 --sigma 0 --seed 6
+--tag sg0.5 --sigma 0.5 --seed 6
+--tag sg1.1 --sigma 1.1 --seed 6
+--tag sg3 --sigma 3 --seed 6
+--tag sg8 --sigma 8 --seed 6
+--tag sg20 --sigma 20 --seed 6
+--tag sg-1 --sigma -1 --seed 7
+--tag sg0 --sigma 0 --seed 7
+--tag sg0.5 --sigma 0.5 --seed 7
+--tag sg1.1 --sigma 1.1 --seed 7
+--tag sg3 --sigma 3 --seed 7
+--tag sg8 --sigma 8 --seed 7
+--tag sg20 --sigma 20 --seed 7
+--tag sg-1 --sigma -1 --seed 8
+--tag sg0 --sigma 0 --seed 8
+--tag sg0.5 --sigma 0.5 --seed 8
+--tag sg1.1 --sigma 1.1 --seed 8
+--tag sg3 --sigma 3 --seed 8
+--tag sg8 --sigma 8 --seed 8
+--tag sg20 --sigma 20 --seed 8
+--tag sg-1 --sigma -1 --seed 9
+--tag sg0 --sigma 0 --seed 9
+--tag sg0.5 --sigma 0.5 --seed 9
+--tag sg1.1 --sigma 1.1 --seed 9
+--tag sg3 --sigma 3 --seed 9
+--tag sg8 --sigma 8 --seed 9
+--tag sg20 --sigma 20 --seed 9
+--tag sg-1 --sigma -1 --seed 10
+--tag sg0 --sigma 0 --seed 10
+--tag sg0.5 --sigma 0.5 --seed 10
+--tag sg1.1 --sigma 1.1 --seed 10
+--tag sg3 --sigma 3 --seed 10
+--tag sg8 --sigma 8 --seed 10
+--tag sg20 --sigma 20 --seed 10
+--tag sg-1 --sigma -1 --seed 1 --fold 0
+--tag sg1.1 --sigma 1.1 --seed 1 --fold 0
+--tag sg3 --sigma 3 --seed 1 --fold 0
+--tag sg-1 --sigma -1 --seed 2 --fold 0
+--tag sg1.1 --sigma 1.1 --seed 2 --fold 0
+--tag sg3 --sigma 3 --seed 2 --fold 0
+--tag sg-1 --sigma -1 --seed 3 --fold 0
+--tag sg1.1 --sigma 1.1 --seed 3 --fold 0
+--tag sg3 --sigma 3 --seed 3 --fold 0
+--tag sg-1 --sigma -1 --seed 1 --fold 1
+--tag sg1.1 --sigma 1.1 --seed 1 --fold 1
+--tag sg3 --sigma 3 --seed 1 --fold 1
+--tag sg-1 --sigma -1 --seed 2 --fold 1
+--tag sg1.1 --sigma 1.1 --seed 2 --fold 1
+--tag sg3 --sigma 3 --seed 2 --fold 1
+--tag sg-1 --sigma -1 --seed 3 --fold 1
+--tag sg1.1 --sigma 1.1 --seed 3 --fold 1
+--tag sg3 --sigma 3 --seed 3 --fold 1
+--tag sg-1 --sigma -1 --seed 1 --fold 2
+--tag sg1.1 --sigma 1.1 --seed 1 --fold 2
+--tag sg3 --sigma 3 --seed 1 --fold 2
+--tag sg-1 --sigma -1 --seed 2 --fold 2
+--tag sg1.1 --sigma 1.1 --seed 2 --fold 2
+--tag sg3 --sigma 3 --seed 2 --fold 2
+--tag sg-1 --sigma -1 --seed 3 --fold 2
+--tag sg1.1 --sigma 1.1 --seed 3 --fold 2
+--tag sg3 --sigma 3 --seed 3 --fold 2
+--tag sg-1 --sigma -1 --seed 1 --fold 3
+--tag sg1.1 --sigma 1.1 --seed 1 --fold 3
+--tag sg3 --sigma 3 --seed 1 --fold 3
+--tag sg-1 --sigma -1 --seed 2 --fold 3
+--tag sg1.1 --sigma 1.1 --seed 2 --fold 3
+--tag sg3 --sigma 3 --seed 2 --fold 3
+--tag sg-1 --sigma -1 --seed 3 --fold 3
+--tag sg1.1 --sigma 1.1 --seed 3 --fold 3
+--tag sg3 --sigma 3 --seed 3 --fold 3
+--tag sg-1 --sigma -1 --seed 1 --fold 4
+--tag sg1.1 --sigma 1.1 --seed 1 --fold 4
+--tag sg3 --sigma 3 --seed 1 --fold 4
+--tag sg-1 --sigma -1 --seed 2 --fold 4
+--tag sg1.1 --sigma 1.1 --seed 2 --fold 4
+--tag sg3 --sigma 3 --seed 2 --fold 4
+--tag sg-1 --sigma -1 --seed 3 --fold 4
+--tag sg1.1 --sigma 1.1 --seed 3 --fold 4
+--tag sg3 --sigma 3 --seed 3 --fold 4
+--data processed_28d_32 --tag sg-1 --sigma -1 --seed 1
+--data processed_28d_32 --tag sg1.1 --sigma 1.1 --seed 1
+--data processed_28d_32 --tag sg3 --sigma 3 --seed 1
+--data processed_28d_32 --tag sg-1 --sigma -1 --seed 2
+--data processed_28d_32 --tag sg1.1 --sigma 1.1 --seed 2
+--data processed_28d_32 --tag sg3 --sigma 3 --seed 2
+--data processed_28d_32 --tag sg-1 --sigma -1 --seed 3
+--data processed_28d_32 --tag sg1.1 --sigma 1.1 --seed 3
+--data processed_28d_32 --tag sg3 --sigma 3 --seed 3
+--data processed_28d_32 --tag sg-1 --sigma -1 --seed 4
+--data processed_28d_32 --tag sg1.1 --sigma 1.1 --seed 4
+--data processed_28d_32 --tag sg3 --sigma 3 --seed 4
+--data processed_28d_32 --tag sg-1 --sigma -1 --seed 5
+--data processed_28d_32 --tag sg1.1 --sigma 1.1 --seed 5
+--data processed_28d_32 --tag sg3 --sigma 3 --seed 5
+--tag ft0sg-1 --sigma -1 --seed 1 --ft 0
+--tag ft0sg1.1 --sigma 1.1 --seed 1 --ft 0
+--tag ft0sg-1 --sigma -1 --seed 2 --ft 0
+--tag ft0sg1.1 --sigma 1.1 --seed 2 --ft 0
+--tag ft0sg-1 --sigma -1 --seed 3 --ft 0
+--tag ft0sg1.1 --sigma 1.1 --seed 3 --ft 0
+--tag ft0sg-1 --sigma -1 --seed 4 --ft 0
+--tag ft0sg1.1 --sigma 1.1 --seed 4 --ft 0
+--tag ft0sg-1 --sigma -1 --seed 5 --ft 0
+--tag ft0sg1.1 --sigma 1.1 --seed 5 --ft 0
