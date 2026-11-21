@@ -252,6 +252,40 @@ class ValidationFilterTest(unittest.TestCase):
         diff = {groups(ValidationFilter(lambda a: float(a["s"][0]), group=4, memory=1.5, seed=7, secret=True)) for _ in range(5)}
         self.assertGreater(len(diff), 1)
 
+    def test_secret_grouping_needs_groups(self):
+        # 不分組時沒有分組可以藏，開了 secret 只會讓人以為有保護
+        with self.assertRaises(ValueError):
+            ValidationFilter(lambda a: float(a["s"][0]), group=1, secret=True)
+
+    def test_small_pool_fallback_refreshes_scores(self):
+        # 份數不夠分組時退回個別檢查，last_scores 要換成這一輪的分數，不能留著上一輪的
+        f = ValidationFilter(lambda a: float(a["s"][0]), group=4, memory=1.5)
+        f.screen({p: {"s": np.array([5.0 + 0.01 * p])} for p in range(16)}, {p: p for p in range(16)})
+        small = {p: {"s": np.array([7.0 + p])} for p in range(5)}
+        f.screen(small, {p: p for p in small})
+        self.assertEqual(f.last_scores, {p: 7.0 + p for p in range(5)})
+
+    def test_secret_groups_not_logged_with_ids(self):
+        # 分組時每台 VD 記的是組分數，連同編號寫進紀錄檔就能還原誰和誰同組，secret 就白做了
+        from flwr.app import Array, ArrayRecord, Message, MetricRecord, RecordDict
+
+        from guard import GuardedStrategy
+
+        class Inner:
+            def aggregate_train(self, rnd, replies):
+                return None, None
+
+        def reply(pid, v):
+            sent = Message(content=RecordDict(), dst_node_id=100 + pid, message_type="train")
+            c = RecordDict({"arrays": ArrayRecord({"s": Array(np.array([v], np.float32))}),
+                            "metrics": MetricRecord({"partition-id": pid, "num-examples": 10})})
+            return Message(content=c, reply_to=sent)
+
+        g = GuardedStrategy(Inner(), None, None, validation_filter=ValidationFilter(
+            lambda a: float(a["s"][0]), group=4, memory=1.5, secret=True))
+        g.aggregate_train(1, [reply(p, 5.0 + 0.01 * p) for p in range(16)])
+        self.assertEqual(g.validation_scores, [])
+
     def test_strata_compare_each_vd_only_with_its_own_kind_of_road(self):
         # 0～3 號是幾乎不塞車的路段，參考資料的塞車時段本來就預測得比較差（約 6.0）；4～17 號常塞車（約 5.0）
         free = {p: 6.0 + 0.01 * (p % 3) for p in range(4)}

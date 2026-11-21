@@ -243,6 +243,9 @@ class ValidationFilter:
         if strata and group > 1:
             raise ValueError("validation-strata 只能搭配 validation-group = 1")
         # secret：分組用作業系統的亂數，攻擊者無法從設定檔的 seed 算出自己會和誰同組（代價是不能重現）
+        if secret and group <= 1:
+            raise ValueError("validation-secret-groups 需要 validation-group > 1（不分組就沒有分組可以藏）")
+        self.secret = secret
         self.rng = np.random.default_rng(secrets.randbits(128) if secret else seed + 31337)
         self.last_scores: dict = {}
         self.banned: dict = {}  # 分組＋記憶：VD → 排除到第幾輪
@@ -329,7 +332,8 @@ class ValidationFilter:
                         self.history.setdefault(ids[m], deque(maxlen=HISTORY)).append(zp)
             return out_pre | {m for g in self._outliers(gs) for m in groups[g]}
         if self.group > 1:  # 太少份不夠分組，退回個別檢查（不記跨輪歷史）；已排除、重複、格式不對的照樣拒絕
-            return out_pre | self._outliers({p: self._score(a) for p, a in updates.items()})
+            self.last_scores = {p: self._score(a) for p, a in updates.items()}
+            return out_pre | self._outliers(self.last_scores)
         self.last_scores = {p: self._score(a) for p, a in updates.items()}
         if self.contrast > 0:
             self.last_free = {p: s[1] for p, s in self.last_scores.items()}
@@ -646,7 +650,8 @@ class GuardedStrategy(Strategy):
                                                     {i: int(m.content["metrics"]["partition-id"]) for i, m in enumerate(kept)})
             stats["val_rejected"] = ";".join(sorted(str(int(kept[i].content["metrics"]["partition-id"]))
                                                     for i in invalid))
-            self.validation_scores.append((server_round, [(int(kept[i].content["metrics"]["partition-id"]), v)
+            if not self.validation_filter.secret:  # 分組分數連同編號寫出去就能還原分組
+                self.validation_scores.append((server_round, [(int(kept[i].content["metrics"]["partition-id"]), v)
                                                           for i, v in self.validation_filter.last_scores.items()]))
             kept = [m for i, m in enumerate(kept) if i not in invalid]
         if self.norm_cap and self._global:
