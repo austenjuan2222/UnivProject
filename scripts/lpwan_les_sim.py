@@ -25,6 +25,11 @@ def completion_s(times_ms: dict, k: int, n_nodes: int) -> float | None:
     return max(sorted(t)[k - 1] for t in times_ms.values()) / 1000
 
 
+def dl_payload(node_id, got: dict, k: int, cap: int) -> int:
+    """這次下行要送多大：還沒收滿 k 包就送一包模型（cap + 13 bytes 標頭），收滿了只回模擬器原本的 12 bytes 確認。"""
+    return cap + LORAWAN_OVERHEAD if len(got.get(node_id, [])) < k else 12
+
+
 def simulate(les: str, deps: str, nbytes: int, sf: int, n_nodes: int = 32, hours: float = 72, seed: int = 0,
              radius_m: int = 1000, rx2_sf: int = 12) -> dict:
     sys.path[:0] = [deps, les]
@@ -48,19 +53,29 @@ def simulate(les: str, deps: str, nbytes: int, sf: int, n_nodes: int = 32, hours
     LoRaParameters.RX_2_DEFAULT_SF = rx2_sf
     cap = MAX_PAYLOAD[sf]
     k = math.ceil(nbytes / cap)
-    orig = Gateway.check_duty_cycle
-    Gateway.check_duty_cycle = lambda self, _size, s, f, now: orig(self, cap + LORAWAN_OVERHEAD, s, f, now)
     got: dict = {}
+    cur = [None]  # 閘道器正在回覆哪一台（check_duty_cycle 本身不知道）
+    orig = Gateway.check_duty_cycle
+    Gateway.check_duty_cycle = lambda self, _size, s, f, now: orig(self, dl_payload(cur[0], got, k, cap), s, f, now)
     orig_rx = Gateway.packet_received
 
     def packet_received(self, node, packet, now):
+        cur[0] = node.id
+        done = len(got.get(node.id, [])) >= k
         dl = orig_rx(self, node, packet, now)
+        if done:
+            return dl  # 已經收滿的只是確認，不算模型下行
         m = dl.meta
         if not m.weak_packet and not m.dc_limit_reached and m.scheduled_receive_slot is not None:
             got.setdefault(node.id, []).append(now)
         return dl
 
     Gateway.packet_received = packet_received
+    # 模擬器每送一包就呼叫一次 gc.collect、並把每次功率變化存進清單：模擬 30 分鐘要跑 6 分鐘、長時間會吃掉好幾 GB。
+    # 這兩個只影響速度和畫圖用的紀錄，不影響誰收到哪一包
+    import gc
+    orig_gc, orig_tp = gc.collect, Node.track_power
+    gc.collect, Node.track_power = (lambda *a: 0), (lambda self, p: None)
     try:
         env = simpy.Environment()
         mid = 0
@@ -80,6 +95,7 @@ def simulate(les: str, deps: str, nbytes: int, sf: int, n_nodes: int = 32, hours
         env.run(until=hours * 3600 * 1000)
     finally:
         Gateway.check_duty_cycle, Gateway.packet_received = orig, orig_rx
+        gc.collect, Node.track_power = orig_gc, orig_tp
     return {"packets_per_vd": k, "done_s": completion_s(got, k, n_nodes),
             "min_dl": min((len(v) for v in got.values()), default=0), "nodes_heard": len(got),
             "dl_not_schedulable": gw.dl_not_schedulable, "estimate_s": downlink_round_s(nbytes, sf, n_nodes)}
