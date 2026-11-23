@@ -25,6 +25,7 @@ dev = ["pytest"]
 py-modules = [
     "task", "data", "privacy", "results_log", "vd_parse", "vd_preprocess",
     "client_app", "server_app", "security", "guard", "robust_agg",
+    "compress", "secagg", "edge_numpy", "edge_int8", "edge_int8_c",
 ]
 
 [tool.flwr.app]
