@@ -200,7 +200,8 @@ def train_fn(msg: Message, context: Context) -> Message:
     loader = make_loader(d["X_train"], y_train, cfg["batch_size"], shuffle=True,
                          seed=cfg["seed"] + 1000 * pid + rnd)
     # 每個 client 都要有同一組 metric 鍵，Flower 才能彙整（diverged 只在發散時設成 1）
-    metrics = {"num-examples": len(d["y_train"]), "round": rnd, "partition-id": pid, "diverged": 0}
+    # unit-weight：開 client-level DP 時伺服器改用等權平均（敏感度分析假設每台權重相同）
+    metrics = {"num-examples": len(d["y_train"]), "unit-weight": 1, "round": rnd, "partition-id": pid, "diverged": 0}
     if cfg["attack_adaptive_tol"] > 0:
         metrics["attack-alpha"] = -1.0  # Flower 要求每個回覆的指標鍵相同；-1 表示不是攻擊者
 
@@ -522,6 +523,7 @@ def evaluate_fn(msg: Message, context: Context) -> Message:
     r = evaluate(model, d["X_test"], d["y_test"], d["mean"], d["std"])
     metrics = {
         "num-examples": len(d["y_test"]),
+        "unit-weight": 1,
         "round": rnd,
         "partition-id": pid,
         "eval-loss": r["loss"],

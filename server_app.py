@@ -110,7 +110,8 @@ def main(grid: Grid, context: Context) -> None:
 
     # client-level DP（選用）：保護「整個 VD 有沒有參與」，由伺服器裁剪各 client 的更新量再加噪。
     # 威脅模型不同：伺服器需可信（它看得到未裁剪的更新），保護的是對外發布的全域模型。
-    # 雜訊量以「各 client 等權平均」計算；FedAvg 依樣本數加權，各 VD 樣本數相同時兩者一致。
+    # 雜訊量以「各 client 等權平均」計算，所以開了 client-level DP 就改用等權平均（unit-weight），
+    # 不再依樣本數加權；否則樣本多的 VD 權重較大，ε 的前提不成立。
     cl_sigma = float(cfg.get("client-dp-noise", 0.0))
     cl_clip = float(cfg.get("client-dp-clip", 0.1))
     # 每輪抽多少比例的 client 參與訓練（評估仍用全部 client）；< 1 時 client-level ε 有取樣放大
@@ -147,6 +148,7 @@ def main(grid: Grid, context: Context) -> None:
         min_train_nodes=n_train,
         min_evaluate_nodes=num_clients,
         min_available_nodes=num_clients,
+        weighted_by_key="unit-weight" if cl_sigma > 0 else "num-examples",
         train_metrics_aggr_fn=lambda replies, _key: MetricRecord(
             logger.on_train([dict(r["metrics"]) for r in replies])),
         evaluate_metrics_aggr_fn=lambda replies, _key: MetricRecord(
