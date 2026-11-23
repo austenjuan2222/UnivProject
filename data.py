@@ -108,7 +108,10 @@ def load_client_arrays(data_dir, partition_id: int, num_partitions: int,
                        lookback: int = 12, train_frac: float = 0.8, horizon: int = 1,
                        calendar: str = "", lag_day: bool = False) -> dict:
     info = client_info(data_dir, partition_id, num_partitions)
-    df = pd.read_csv(Path(data_dir) / info["file"])
+    df = pd.read_csv(Path(data_dir) / info["file"], parse_dates=["time"])
+    # 補回完整的 5 分鐘時間軸：被刪掉的日期變成 NaN，視窗與昨天同時刻才不會跨過斷層（列號 ≠ 時間）
+    df = df.set_index("time").reindex(pd.date_range(df["time"].min(), df["time"].max(), freq="5min"))
+    df = df.rename_axis("time").reset_index()
     cal = calendar_features(df["time"], calendar) if calendar else None
     d = split_series(df["speed"].to_numpy(dtype=float), lookback, train_frac, horizon, cal, lag_day)
     if len(d["y_train"]) == 0 or len(d["y_test"]) == 0:

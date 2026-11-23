@@ -146,6 +146,24 @@ class ClientInfoTest(unittest.TestCase):
             self.assertEqual(arr["X_train"].shape, (68, 12))
             self.assertEqual(arr["X_test"].shape, (8, 12))
 
+    def test_removed_rows_leave_a_gap_windows_do_not_cross(self):
+        # 刪掉一段日期後列號連續、時間不連續：視窗不能把斷層兩邊當成連續一小時
+        with tempfile.TemporaryDirectory() as d:
+            t = pd.date_range("2024-03-04", periods=200, freq="5min")
+            keep = np.r_[0:60, 140:200]  # 中間 80 筆（約 6.7 小時）被刪掉
+            pd.DataFrame({"time": t[keep], "speed": np.arange(200.0)[keep], "volume": 10, "occupancy": 5.0}
+                         ).to_csv(Path(d, "VD0.csv"), index=False)
+            Path(d, "manifest.json").write_text(json.dumps({"clients": [
+                {"partition": 0, "vdid": "VD-0", "file": "VD0.csv", "valid_ratio": 1.0}]}), encoding="utf-8")
+            arr = load_client_arrays(d, 0, 1, lookback=12, train_frac=0.7)
+            x = np.concatenate([arr["X_train"], arr["X_test"]]) * arr["std"] + arr["mean"]
+            y = np.concatenate([arr["y_train"], arr["y_test"]]) * arr["std"] + arr["mean"]
+            # 原始車速等於時間序號，所以每個視窗內相鄰兩筆差 1、目標比最後一筆大 1
+            np.testing.assert_allclose(np.diff(x, axis=1), 1.0, atol=1e-3)
+            np.testing.assert_allclose(y - x[:, -1], 1.0, atol=1e-3)
+            self.assertEqual(arr["split_index"], 140)  # 切點照完整時間軸算
+
+
 
 if __name__ == "__main__":
     unittest.main()
