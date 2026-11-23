@@ -109,7 +109,10 @@ def _well_formed_metrics(c: RecordDict) -> bool:
     """編號與 num-examples（FedAvg 的加權）都要是正整數。"""
     try:
         pid, n = float(c["metrics"]["partition-id"]), float(c["metrics"]["num-examples"])
+        unit = float(c["metrics"].get("unit-weight", 1))  # client-level DP 的等權平均：只能是 1
     except (KeyError, TypeError, ValueError):
+        return False
+    if unit != 1:
         return False
     # 絕對上限：只有兩三份更新時沒有中位數可比，自報天文數字的筆數也不能蓋過別人或讓加權總和溢位
     return pid.is_integer() and pid >= 0 and n.is_integer() and 0 < n <= 2**31

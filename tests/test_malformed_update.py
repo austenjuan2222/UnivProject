@@ -110,6 +110,16 @@ class MalformedUpdateTest(unittest.TestCase):
             self.g.aggregate_train(1, [self.reply(0, [1, 1]), self.reply(1, [1, 1], n=bad), self.reply(2, [1, 1])])
             self.assertEqual(self.seen[-1], [0, 2], bad)
 
+    def test_unit_weight_other_than_one_is_rejected(self):
+        # client-level DP 用 unit-weight 等權平均：自報 1000 等於把自己裁剪過的更新放大 1000 倍，ε 的前提就破了
+        # 被入侵的 VD 有合法金鑰，HMAC 照樣對，所以要看數值本身
+        sent = Message(content=RecordDict(), dst_node_id=101, message_type="train")
+        c = RecordDict({"arrays": ArrayRecord({"s": Array(np.ones(2, np.float32))}),
+                        "metrics": MetricRecord({"partition-id": 1, "num-examples": 10, "unit-weight": 1000})})
+        attach_update_tag(c, self.keys[1], 1, 1)
+        self.g.aggregate_train(1, [self.reply(0, [1, 1]), Message(content=c, reply_to=sent), self.reply(2, [1, 1])])
+        self.assertEqual(self.seen[-1], [0, 2])
+
     def test_inflated_num_examples_rejected_even_in_small_round(self):
         # 只有 2 份更新時沒有中位數可比，仍要有絕對上限
         self.g.aggregate_train(1, [self.reply(0, [1, 1]), self.reply(1, [1, 1], n=10**12)])
