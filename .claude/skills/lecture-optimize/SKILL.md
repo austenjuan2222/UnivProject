@@ -11,10 +11,10 @@ Austen 的原話：
 
 ## 怎麼做
 
-1. **找缺口**：把簡報的主題（五個問題、CIA、TLS、MAC／簽章、RFID 偽造標籤、Edge 資源、LPWAN、攻擊類型）對照 README 的「依課程講義補強」一節，挑一個還沒做或證據不足的項目。
+1. **找缺口**：把簡報的主題（五個問題、CIA、TLS、MAC／簽章、RFID 偽造標籤、Edge 資源、LPWAN、攻擊類型）對照 `docs/EXPERIMENTS.md` 的「依課程講義補強」一節，挑一個還沒做或證據不足的項目。
 2. **先查地圖**：專案根目錄若有 `graphify-out/graph.json`，用 `graphify query "<問題>"` 找相關程式，不要整個 repo 掃。程式改了之後用 `GRAPHIFY_NO_AUTO_REFRESH=1 graphify update .` 更新地圖（這個環境變數避免它自動改寫使用者層級的 graphify skill）。
 3. **做一個可驗證的小單位**：改程式先寫測試；實驗一律跑 3 個 seed，並用同一版程式補無攻擊／無防禦對照組，報「同 seed 配對差值」，再用 `scripts/seed_stats.py` 算配對 t 檢定的 p 值和 95% 信賴區間（p < 0.05 才說顯著；不顯著也不能說兩者一樣）。3 個 seed 的推論力很弱，主要結論要多 seed 或多時段再驗證。
-4. **寫回結果**：表格與結論寫進 README 對應章節；進度報告在 `UnivProject-run/reports/`。數字要能追到 `results/` 底下的 summary.csv。
+4. **寫回結果**：完整表格寫進 `docs/EXPERIMENTS.md`（接著編號），結論若改變主線再更新 README 第 5 節「主要結果」（保持精簡）；進度報告在 `UnivProject-run/reports/`。數字要能追到 `results/` 底下的 summary.csv。
    Austen 11-10 要求：每次更新報告時，同時更新照稿念的逐字稿 `報告逐字稿_給老師_YYYY-MM-DD.md`（對應給老師的報告，每段標「▶ 目前位置」和建議秒數），三份一起用 SendUserFile 放進專案資料夾。
 5. **commit 到工作分支並推上去**，不直接推 main。
 6. **回到第 1 步**：推完不算完成，直接挑下一個缺口，不要結束回合、不要停下來問「要不要繼續」。只用一兩行回報這輪做了什麼就接著做。等背景實驗時，先做不依賴該結果的下一個項目；真的沒有可做的，才結束回合等實驗通知，收到後繼續。
