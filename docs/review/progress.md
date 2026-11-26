@@ -1,6 +1,6 @@
 # 進度摘要（Claude 維護，給 Codex 審查用）
 
-更新：2026-11-26（第 5 回合後），分支 `claude/codex-review-loop`
+更新：2026-11-26（第 6 回合後），分支 `claude/codex-review-loop`
 
 ## 已完成（細節在 README）
 - 真實資料：國道 1 號 VD，8／32／256 個 VD，14～28 天；5 分鐘聚合。
@@ -14,11 +14,12 @@
 - Edge 與 LPWAN：4 位元量化上傳、int8 推論、LoRaWAN 空中時間、下行群播＋FEC。
 - 可靠度：10 seed、時間區塊交叉驗證、按天 bootstrap（`scripts/reliability/`，2026-11-21）。
 
-## 上一回合改了什麼（回應 round-05 的 high：安全聚合查詢回覆的非有限編號）
-- `guard.py` 公告、一致性、復原（含 share-owners、eshare-owners）五處解析的例外處理補上 `OverflowError`：`int(inf)` 不再中斷整輪，該份回覆照原本規則忽略（公告／一致性）或放棄復原（復原）。NaN 本來就是 ValueError。
-- 測試：`test_ephemeral.py::test_nonfinite_advertise_pid_is_ignored`（inf／-inf／NaN，其他 VD 照常）、`test_nonfinite_consistency_pid_is_ignored`、`test_guard_recover.py` 加 pid=inf、dropped=[-inf]、pid=NaN 三個子測試；修前 5 個失敗，修後全套 389 passed。
+## 上一回合改了什麼（回應 round-06）
+- medium：README int8 推論一段改成「依本專案規則不顯著；三個 seed 都略為變差，只能說有小幅增加的趨勢」，撤回「應該當成真的小代價」。
+- 追蹤項：新增 `tests/test_ephemeral.py::test_nonfinite_recovery_ids_fail_closed`（share-owners／eshare-owners 放 inf，`_recover` 回 None 不拋例外）；拿掉 `guard.py` 那兩處 `OverflowError` 時兩個子測試失敗，放回後通過。全套 390 passed。
 
 ## 先前回合
+- round-05：安全聚合公告／一致性／復原五處解析補 `OverflowError`（inf 編號）。
 - round-04：`_well_formed_metrics` 要求 MetricRecord 與數字型別；全部防禦兩列重跑並補配對差值。
 - round-03 後：主表 24 組×3 seed 重跑，配對差值表，撤回兩項不顯著結論（`scripts/paired_main32.py`）。
 - round-03：安全聚合指標加總溢位（0～2^53、整數加總）。

@@ -88,6 +88,31 @@ class EphemeralTest(unittest.TestCase):
         want = sum(n_ex[i] * upd[i]["w"] for i in alive) / sum(n_ex.values())
         np.testing.assert_allclose(np.asarray(got["w"].numpy()), want, atol=1e-3)
 
+    def test_nonfinite_recovery_ids_fail_closed(self):
+        # 復原回覆的 share-owners／eshare-owners 放 inf：int() 丟 OverflowError，要變成放棄復原，不能讓整輪當掉
+        for field in ("share-owners", "eshare-owners"):
+            with self.subTest(field=field):
+                self.setUp()
+                msgs = self._train_msgs()
+                kept = []
+                for i in range(5):  # VD 5 斷線
+                    claim_mask_round(self.ctxs[i], RND, adv=range(N))
+                    b = self_seed(self.privs[i], i, RND, 0)
+                    self.g._shares[i] = encrypt_shares(b, i, range(N), self.privs[i], self.pubs, RND, 0)
+                    self.g._self_hash[i] = seed_tag(b)
+                    kept.append(Message(content=RecordDict({"metrics": MetricRecord({"partition-id": i})}),
+                                        reply_to=msgs[i]))
+                inner = self.g._grid
+
+                class Bad:
+                    def send_and_receive(self, messages, timeout=None):
+                        out = list(inner.send_and_receive(messages, timeout))
+                        if out and "secagg" in out[0].content and field in out[0].content["secagg"]:
+                            out[0].content["secagg"][field] = [float("inf")]
+                        return out
+                self.g._grid = Bad()
+                self.assertIsNone(self.g._recover(RND, kept))
+
     def test_forged_ephemeral_key_is_refused(self):
         rec = self._train_msgs()[0].content["secagg-eph"]
         epubs = [str(x) for x in rec["epubs"]]
