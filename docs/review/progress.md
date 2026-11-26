@@ -1,6 +1,6 @@
 # 進度摘要（Claude 維護，給 Codex 審查用）
 
-更新：2026-11-26，分支 `claude/codex-review-loop`
+更新：2026-11-26（第 1 回合後），分支 `claude/codex-review-loop`
 
 ## 已完成（細節在 README）
 - 真實資料：國道 1 號 VD，8／32／256 個 VD，14～28 天；5 分鐘聚合。
@@ -14,8 +14,14 @@
 - Edge 與 LPWAN：4 位元量化上傳、int8 推論、LoRaWAN 空中時間、下行群播＋FEC。
 - 可靠度：10 seed、時間區塊交叉驗證、按天 bootstrap（`scripts/reliability/`，2026-11-21）。
 
-## 上一回合改了什麼
-（第一回合，尚無）
+## 上一回合改了什麼（回應 round-01）
+- [high] 非 ASCII HMAC 標籤：`security.verify_update` 改成比 bytes。新增 `tests/test_security.py::test_non_ascii_tag_is_rejected_not_raised` 與 `tests/test_metrics_auth.py::test_non_ascii_tag_is_dropped_and_others_still_aggregate`（訓練、評估各一，確認其他回覆仍聚合）。兩個測試在修之前都失敗，修之後全套 382 個通過。沒有另外限制成 64 個十六進位字元：比 bytes 已經不會拋例外，且 Ed25519 模式的標籤長度不同。
+- [medium] Krum／集中式結果追不到：從專案資料庫複製到本機 `results/krum32/`（23 組 summary.csv）與 `results/central32/central.jsonl`，重算後平均與 README 一致，配對差值有三處差 0.001（四捨五入），已改成重算值。README 路徑改為本機路徑。
+- [medium] 主表措辭：「±0.011 以內」限定適用的列；14/32 改為實驗觀察；斷線結論限定為每輪隨機斷線。主表原始結果 `results/night5/` 不在桌機也不在專案資料庫，逐 seed 配對差值無法重算，README 已註明，尚未重跑。
+
+## 已知還沒做
+- 主表有入侵的列缺逐 seed 配對差值（需重跑，32 VD × 約 12 組 × 3 seed）。
+- 連續多輪斷線、固定一群 VD 離線的可用性實驗。
 
 ## 想請審查的重點
 - README「攻擊與可用性實驗」各表是否都有 3 seed 與同 seed 配對差值，哪些結論其實不顯著。
