@@ -105,9 +105,14 @@ def verify_reply(c: RecordDict, rnd: int, vd_keys: dict, run: int = 0) -> bool:
 def _well_formed_metrics(c: RecordDict) -> bool:
     """編號與 num-examples（FedAvg 的加權）都要是正整數。"""
     try:
-        pid, n = float(c["metrics"]["partition-id"]), float(c["metrics"]["num-examples"])
-    except (KeyError, TypeError, ValueError):
+        m = c["metrics"]
+        raw = m["partition-id"], m["num-examples"]
+    except (KeyError, TypeError):
         return False
+    # 要真的是 MetricRecord 裡的數字：ConfigRecord 的 "1.0" 字串 float() 過得了，之後 int() 卻會在驗簽前讓整輪當掉
+    if not isinstance(m, MetricRecord) or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in raw):
+        return False
+    pid, n = float(raw[0]), float(raw[1])
     # 絕對上限：只有兩三份更新時沒有中位數可比，自報天文數字的筆數也不能蓋過別人或讓加權總和溢位
     return pid.is_integer() and pid >= 0 and n.is_integer() and 0 < n <= 2**31
 

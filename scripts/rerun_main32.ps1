@@ -33,6 +33,8 @@ $runs = [ordered]@{
     'a14_median'   = "attack-clients=14 aggregator='median'"
     'noise_fedavg' = "attack-clients=3 attack-type='noise' attack-scale=1.0"
     'noise_median' = "attack-clients=3 attack-type='noise' attack-scale=1.0 aggregator='median'"
+    'alldef_a0'     = "update-auth='ed25519' upload-bits=4 aggregator='median' $clip"
+    'alldef_attack' = "update-auth='ed25519' upload-bits=4 aggregator='median' $clip attack-clients=3 tamper-rate=0.1 dropout-rate=0.1"
 }
 Set-Location $repo
 foreach ($k in $runs.Keys) {

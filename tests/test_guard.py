@@ -28,6 +28,18 @@ class ScreenRepliesTest(unittest.TestCase):
         self.assertEqual(stats["n_rejected"], 0)
         self.assertNotIn("auth", cs[0])  # 內層策略只看到一個 ArrayRecord 與一個 MetricRecord
 
+    def test_configrecord_or_string_metrics_are_rejected_before_auth(self):
+        from flwr.app import ConfigRecord
+        for verify in (True, False):
+            with self.subTest(verify=verify):
+                bad = _content(1, tag=False)
+                bad["metrics"] = ConfigRecord({"partition-id": "1.0", "num-examples": 1})
+                cs = [_content(0), bad, _content(2)]
+                keep, stats = screen_replies(cs, 3, KEYS, verify=verify, tamper_rate=0.0,
+                                             rng=np.random.default_rng(0))
+                self.assertEqual(keep, [True, False, True])
+                self.assertEqual(stats["n_rejected"], 1)
+
     def test_forged_and_missing_tags_are_rejected(self):
         cs = [_content(0), _content(1, key=os.urandom(32)), _content(2, tag=False)]
         keep, stats = screen_replies(cs, 3, KEYS, verify=True, tamper_rate=0.0,

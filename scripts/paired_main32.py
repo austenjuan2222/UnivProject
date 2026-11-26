@@ -14,6 +14,7 @@ CONTROL = {
     "a3_median": "a0_median", "a6_median": "a0_median", "a10_median": "a0_median", "a14_median": "a0_median",
     "noise_median": "a0_median", "a3_trimmed": "a0_trimmed", "a6_trimmed": "a0_trimmed", "a10_trimmed": "a0_trimmed",
     "clip_a3": "clip_a0", "clip_a10": "clip_a0", "clip_a14": "clip_a0", "clipmed_a10": "a10_median",
+    "alldef_a0": "nocheck", "alldef_attack": "alldef_a0",
 }
 
 
