@@ -112,6 +112,17 @@ def _well_formed_metrics(c: RecordDict) -> bool:
     return pid.is_integer() and pid >= 0 and n.is_integer() and 0 < n <= 2**31
 
 
+_SECAGG_INT_METRICS = ("secagg-clipped", "secagg-self-mask", "secagg-num-vd", "secagg-bits", "secagg-frac-bits",
+                       "secagg-self-tag")
+
+
+def _secagg_metrics_ok(c: RecordDict) -> bool:
+    """安全聚合指標有 HMAC，但持合法金鑰的 VD 可簽 NaN、列表、31.5：之後 int(float()) 會拋例外讓整輪當掉，先擋。"""
+    m = c["metrics"]
+    return all(k not in m or (isinstance(m[k], (int, float)) and math.isfinite(m[k]) and float(m[k]).is_integer())
+               for k in _SECAGG_INT_METRICS)
+
+
 def _well_formed(c: RecordDict, kinds_ok: frozenset = frozenset("f")) -> bool:
     """可用性：指標合格、參數都是浮點數（安全聚合時是 mod 2^32 的 uint32）。不合格的連 HMAC 都不算（字串陣列會讓驗證本身當掉）。"""
     try:
@@ -570,6 +581,10 @@ class GuardedStrategy(Strategy):
                     stats["n_clipped"] += 1
             stats["clipped"] = ";".join(sorted(str(int(m.content["metrics"]["partition-id"]))
                                                for m in kept if norms[id(m)] > limit))
+        if self.secure_agg_clients:
+            ok = [m for m in kept if _secagg_metrics_ok(m.content)]
+            stats["n_rejected"] += len(kept) - len(ok)  # 和 HMAC 不符一樣算被拒絕（復原規則會依此決定能不能交出種子）
+            kept = ok
         if self.secure_agg_clients and self.secagg_shamir:
             # 沒附完整份數的 VD 在復原時無法替它還原自我遮罩，當成被拒絕（雙重遮罩下等於斷線）
             def ids(m):

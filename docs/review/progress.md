@@ -1,6 +1,6 @@
 # 進度摘要（Claude 維護，給 Codex 審查用）
 
-更新：2026-11-26（第 1 回合後），分支 `claude/codex-review-loop`
+更新：2026-11-26（第 2 回合後），分支 `claude/codex-review-loop`
 
 ## 已完成（細節在 README）
 - 真實資料：國道 1 號 VD，8／32／256 個 VD，14～28 天；5 分鐘聚合。
@@ -14,13 +14,16 @@
 - Edge 與 LPWAN：4 位元量化上傳、int8 推論、LoRaWAN 空中時間、下行群播＋FEC。
 - 可靠度：10 seed、時間區塊交叉驗證、按天 bootstrap（`scripts/reliability/`，2026-11-21）。
 
-## 上一回合改了什麼（回應 round-01）
-- [high] 非 ASCII HMAC 標籤：`security.verify_update` 改成比 bytes。新增 `tests/test_security.py::test_non_ascii_tag_is_rejected_not_raised` 與 `tests/test_metrics_auth.py::test_non_ascii_tag_is_dropped_and_others_still_aggregate`（訓練、評估各一，確認其他回覆仍聚合）。兩個測試在修之前都失敗，修之後全套 382 個通過。沒有另外限制成 64 個十六進位字元：比 bytes 已經不會拋例外，且 Ed25519 模式的標籤長度不同。
-- [medium] Krum／集中式結果追不到：從專案資料庫複製到本機 `results/krum32/`（23 組 summary.csv）與 `results/central32/central.jsonl`，重算後平均與 README 一致，配對差值有三處差 0.001（四捨五入），已改成重算值。README 路徑改為本機路徑。
-- [medium] 主表措辭：「±0.011 以內」限定適用的列；14/32 改為實驗觀察；斷線結論限定為每輪隨機斷線。主表原始結果 `results/night5/` 不在桌機也不在專案資料庫，逐 seed 配對差值無法重算，README 已註明，尚未重跑。
+## 上一回合改了什麼（回應 round-02）
+- [high] 安全聚合指標型別：`guard._secagg_metrics_ok` 在安全聚合時先檢查 `secagg-clipped／self-mask／num-vd／bits／frac-bits／self-tag` 是有限的整數值純量，不合格當成被拒絕（雙重遮罩下等於斷線，整輪照常）。新增 `tests/test_guard_recover.py::SelfMaskRoundTest::test_bad_secagg_metrics_are_rejected_without_crashing`（NaN、inf、列表、31.5，共 6 個子測試，修之前全部失敗）。全套 382 passed。註：round-01 後我寫的「382」實為 381，這次才是 382。
+- [medium] 主表：移除「遠大於 seed 間差距」的無據判斷，改寫為「目前沒有證據」；「裁剪＋中位數最好」限定為本表比較範圍，並註明 Multi-Krum 2.223 更好。已開始用目前程式重跑主表 14 組 × seed 1 2 3（`scripts/rerun_main32.ps1`，輸出 `results/night26/main32/`），跑完補逐 seed 配對差值。
+- [medium] 集中式：`sweep.jsonl` 也複製到本機；新增 `results/central32/sweep_summary.csv`、`central_summary.csv`（含學習率、微調設定、ε、三個 seed 的 MAE）。重算確認驗證集挑出 0.02／0.1／0.2；配對差值四處差 0.001，已改。驗證集只掃了 σ=1.1，集中式無 DP 沿用 0.02，README 已註明。
+
+## 先前回合
+- round-01：非 ASCII HMAC 標籤（bytes 比對＋2 個測試）；Krum／集中式結果複製到本機並重算；主表措辭限定。
 
 ## 已知還沒做
-- 主表有入侵的列缺逐 seed 配對差值（需重跑，32 VD × 約 12 組 × 3 seed）。
+- 主表重跑中（約 4 小時），完成後補配對差值；6／14 台入侵、雜訊攻擊、重送等列這次沒排進重跑。
 - 連續多輪斷線、固定一群 VD 離線的可用性實驗。
 
 ## 想請審查的重點
