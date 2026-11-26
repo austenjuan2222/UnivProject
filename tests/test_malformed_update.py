@@ -54,6 +54,47 @@ class EvalReplyArraysTest(unittest.TestCase):
         self.assertFalse(verify_reply(c, 1, {0: b"k" * 32}))
 
 
+def eval_reply(keys, pid, drop=(), **extra):
+    m = {"partition-id": pid, "num-examples": 10, "eval-loss": 0.1, "mae-kmh": 2.0, "mse-kmh": 9.0}
+    m.update(extra)
+    for k in drop:
+        del m[k]
+    c = RecordDict({"metrics": MetricRecord(m)})
+    attach_update_tag(c, keys[pid], 1, pid)
+    return Message(content=c, reply_to=Message(content=RecordDict(), dst_node_id=100 + pid, message_type="evaluate"))
+
+
+class InconsistentMetricKeysTest(unittest.TestCase):
+    """round-08 high：合法簽章但指標欄位和別人不同，Flower 的 FedAvg 會丟 InconsistentMessageReplies 讓整輪當掉。"""
+    def setUp(self):
+        from flwr.serverapp.strategy import FedAvg
+        self.keys = {p: bytes([p + 1]) * 32 for p in range(3)}
+        class Grid:
+            def get_node_ids(self):
+                return [100, 101, 102]
+        self.g = GuardedStrategy(FedAvg(), None, dict(self.keys))
+        self.g.configure_train(1, ArrayRecord({"s": Array(np.zeros(2, np.float32))}), ConfigRecord(), Grid())
+
+    def train_reply(self, pid, **extra):
+        c = RecordDict({"arrays": ArrayRecord({"s": Array(np.ones(2, np.float32))}),
+                        "metrics": MetricRecord({"partition-id": pid, "num-examples": 10, "train-loss": 0.4, **extra})})
+        attach_update_tag(c, self.keys[pid], 1, pid)
+        return Message(content=c, reply_to=Message(content=RecordDict(), dst_node_id=100 + pid, message_type="train"))
+
+    def test_signed_extra_metric_does_not_abort_train(self):
+        arrays, metrics = self.g.aggregate_train(1, [self.train_reply(0), self.train_reply(1, extra=0), self.train_reply(2)])
+        np.testing.assert_allclose(arrays["s"].numpy(), [1, 1])
+        self.assertNotIn("extra", metrics)
+
+    def test_signed_missing_metric_does_not_abort_evaluate(self):
+        out = self.g.aggregate_evaluate(1, [eval_reply(self.keys, 0), eval_reply(self.keys, 1, drop=("mse-kmh",)),
+                                            eval_reply(self.keys, 2)])
+        self.assertIn("mse-kmh", out)
+
+    def test_tie_between_key_sets_skips_round(self):
+        self.assertIsNone(self.g.aggregate_evaluate(1, [eval_reply(self.keys, 0), eval_reply(self.keys, 1, extra=0)]))
+
+
 class MalformedUpdateTest(unittest.TestCase):
     def setUp(self):
         self.keys = {p: bytes([p + 1]) * 32 for p in range(3)}
@@ -119,6 +160,28 @@ class MalformedUpdateTest(unittest.TestCase):
         attach_update_tag(c, self.keys[1], 1, 1)
         self.g.aggregate_train(1, [self.reply(0, [1, 1]), Message(content=c, reply_to=sent), self.reply(2, [1, 1])])
         self.assertEqual(self.seen[-1], [0, 2])
+
+    def test_signed_list_train_loss_is_rejected_without_aborting_round(self):
+        # canonical_metrics 允許列表，合法金鑰簽得了 train-loss=[0.5]；紀錄時 float([0.5]) 會讓伺服器整輪當掉
+        from results_log import aggregate_train
+        def loss(v, pid):
+            def f(c):
+                c["metrics"]["train-loss"] = v
+                attach_update_tag(c, self.keys[pid], 1, pid)
+            return f
+        captured = []
+        self.g.inner.aggregate_train = lambda rnd, replies: captured.append(replies) or (None, None)
+        self.g.aggregate_train(1, [self.reply(p, [1, 1], after_tag=loss([0.5] if p == 1 else 0.4, p)) for p in range(3)])
+        kept = captured[-1]
+        self.assertEqual(sorted(int(m.content["metrics"]["partition-id"]) for m in kept), [0, 2])
+        aggregate_train([dict(m.content["metrics"]) for m in kept])  # 不能丟例外
+
+    def test_signed_list_eval_metric_is_rejected_without_aborting_round(self):
+        got = []
+        self.g.inner.aggregate_evaluate = lambda rnd, replies: got.append(len(replies))
+        self.g.aggregate_evaluate(1, [eval_reply(self.keys, 0), eval_reply(self.keys, 1, **{"mae-kmh": [2.0]}),
+                                      eval_reply(self.keys, 2, **{"mse-kmh": [9.0, 1.0]})])
+        self.assertEqual(got, [1])
 
     def test_inflated_num_examples_rejected_even_in_small_round(self):
         # 只有 2 份更新時沒有中位數可比，仍要有絕對上限

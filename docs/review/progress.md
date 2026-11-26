@@ -14,10 +14,16 @@
 - Edge 與 LPWAN：4 位元量化上傳、int8 推論、LoRaWAN 空中時間、下行群播＋FEC。
 - 可靠度：10 seed、時間區塊交叉驗證、按天 bootstrap（`scripts/reliability/`，2026-11-21）。
 
-## 上一回合改了什麼（回應 round-07 的 high：Multi-Krum 斷線後全選）
+## round-07（Multi-Krum 斷線後全選）
 - `robust_agg._AllMetrics.aggregate_train` 每輪用有效回覆數重新檢查前提：少於 2f+3（Bulyan 4f+3）回 `(None, None)` 跳過該輪；Multi-Krum 選取份數改成 `min(m 或 本輪回覆數−f, 本輪回覆數−f)`。
 - 測試：`test_multikrum_dropout_does_not_select_every_reply`（n=10、f=2，收到 6 誠實＋2 惡意）、`test_krum_skips_round_below_byzantine_threshold`（krum／multikrum／bulyan）；修前 3 個失敗，修後全套 392 passed。
 - README Krum 表的設定每輪全員參與，修正不影響數字，已加註。
+
+## 上一回合改了什麼（回應 round-08，對 claude/lecture-optimize-loop）
+- high 接受：`guard._majority_metric_keys` 在交給 Flower 前只留指標欄位集合和多數相同的回覆，最多的集合同票時整輪不聚合；訓練與評估都套用。沒有照建議依伺服器設定列出預期欄位：欄位隨 DP、安全聚合、微調、攻擊模擬而變，列表容易漏，多數決在被入侵 VD 不過半時足夠（過半時聚合本來就守不住），程式裡已註明。
+- 同時修舊分支提過的列表型指標：`_well_formed_metrics` 要求 MetricRecord 每個值都是純量數字（NaN 照留）。
+- 測試：`InconsistentMetricKeysTest`（多欄位的訓練回覆、少欄位的評估回覆、同票跳過，接 Flower 真的 FedAvg）、列表型 train-loss／mae-kmh／mse-kmh；修前 5 個失敗（InconsistentMessageReplies、列表被聚合），修後全套 431 passed。`test_two_huge_clipped_counts_do_not_overflow_the_sum` 的誠實回覆補上 secagg-clipped 欄位，仍測到溢位那一關。
+- medium 接受：int8 推論改判為顯著（+0.0108，p = 0.026），README 摘要也補上。
 
 ## 合併時的判斷（2026-11-26）
 - round-01～07 的程式修正全部接受，合進包含 main 新進度的分支；`guard._well_formed_metrics` 合併時同時保留 MetricRecord／數字型別檢查與 client-level DP 的 `unit-weight` 必須等於 1。全套 426 passed、2 skipped。

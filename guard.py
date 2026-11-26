@@ -115,11 +115,27 @@ def _well_formed_metrics(c: RecordDict) -> bool:
     # 要真的是 MetricRecord 裡的數字：ConfigRecord 的 "1.0" 字串 float() 過得了，之後 int() 卻會在驗簽前讓整輪當掉
     if not isinstance(m, MetricRecord) or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in raw):
         return False
+    # 其餘指標（train-loss、mae-kmh…）也要是純量：HMAC 簽得了列表，紀錄時 float([0.5]) 會讓整輪當掉；NaN 照留（模型發散要記錄）
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in m.values()):
+        return False
     pid, n = float(raw[0]), float(raw[1])
     if raw[2] != 1:  # client-level DP 的等權平均：只能是 1
         return False
     # 絕對上限：只有兩三份更新時沒有中位數可比，自報天文數字的筆數也不能蓋過別人或讓加權總和溢位
     return pid.is_integer() and pid >= 0 and n.is_integer() and 0 < n <= 2**31
+
+
+def _majority_metric_keys(msgs: list) -> list:
+    """Flower 聚合指標時各回覆欄位不同就丟 InconsistentMessageReplies：合法金鑰多簽一個欄位就能讓整輪當掉。
+    只留欄位集合和多數相同的回覆；最多的集合有兩個以上同票時整輪不聚合（不讓先到或任一方決定）。
+    shortcut: 用多數決而不是依伺服器設定列出預期欄位，被入侵的 VD 過半時會由它們決定，但那時聚合本來就守不住。"""
+    if not msgs:
+        return msgs
+    sets = [frozenset(m.content["metrics"].keys()) for m in msgs]
+    counts = Counter(sets).most_common()
+    if len(counts) > 1 and counts[0][1] == counts[1][1]:
+        return []
+    return [m for m, s in zip(msgs, sets) if s == counts[0][0]]
 
 
 _SECAGG_INT_METRICS = ("secagg-clipped", "secagg-self-mask", "secagg-num-vd", "secagg-bits", "secagg-frac-bits",
@@ -644,6 +660,9 @@ class GuardedStrategy(Strategy):
             deltas = {id(m): update_delta(arrays_of(m.content["arrays"]), self._global) for m in kept}
             stats["n_rejected"] += sum(d is None for d in deltas.values())
             kept = [m for m in kept if deltas[id(m)] is not None]
+        before = len(kept)
+        kept = _majority_metric_keys(kept)
+        stats["n_rejected"] += before - len(kept)
         if len(kept) >= 3:
             # 自報的資料筆數超過這輪中位數 10 倍：FedAvg 下等於一台 VD 蓋過其他所有人
             n = {id(m): float(m.content["metrics"]["num-examples"]) for m in kept}
@@ -926,6 +945,7 @@ class GuardedStrategy(Strategy):
                     seen.add(node)
                     good.append(m)
             ok = good
+        ok = _majority_metric_keys(ok)
         if self.on_round:
             self.on_round(server_round, {"n_eval_rejected": len(replies) - len(ok)})
         return self.inner.aggregate_evaluate(server_round, ok)

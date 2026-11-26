@@ -167,7 +167,8 @@ class SelfMaskRoundTest(unittest.TestCase):
     def test_two_huge_clipped_counts_do_not_overflow_the_sum(self):
         # Codex 第 3 回合：兩份各 1e308 逐值有限，加總變 inf，int() 拋 OverflowError
         big = {"secagg-clipped": 1e308}
-        arrays, stats, _ = self._run([self._reply(0, [1.0]), self._reply(1, [3.0], extra=big),
+        # 誠實的那份也要有 secagg-clipped：欄位不同的回覆會被多數決擋掉（round-08），就測不到溢位那一關
+        arrays, stats, _ = self._run([self._reply(0, [1.0], extra={"secagg-clipped": 0}), self._reply(1, [3.0], extra=big),
                                       self._reply(2, [2.0], extra=big)])
         self.assertIsNotNone(arrays)
         self.assertEqual(stats["n_rejected"], 2)
