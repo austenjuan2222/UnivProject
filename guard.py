@@ -448,7 +448,7 @@ class GuardedStrategy(Strategy):
                     continue  # 長度固定：超大的格子會讓伺服器存下並轉發給所有人（資源耗盡）
                 pid, epub = int(c["pid"]), _hex(c["epub"])
                 m0, e0 = [_hex(x) for x in c["epub-macs"]], [_hex(x) for x in c["eshares"]]
-            except (KeyError, TypeError, ValueError, AttributeError):
+            except (KeyError, TypeError, ValueError, AttributeError, OverflowError):  # int(inf) 丟 OverflowError
                 continue
             if self.verify_updates and pid not in self.vd_keys:
                 continue  # 金鑰到期或撤銷：上傳反正會被拒，列進名單只會每輪被當成斷線、白做復原
@@ -671,7 +671,7 @@ class GuardedStrategy(Strategy):
                 if not all(isinstance(x, bytes) and len(x) in (0, MAC_LEN) for x in raw):
                     continue  # 只收二進位、固定長度
                 m0 = [_hex(x) for x in raw]
-            except (KeyError, TypeError, ValueError, AttributeError):
+            except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
                 continue  # 沒回或回錯：少一份證明，門檻由 VD 自己檢查
             if alive.get(pid0) == r.metadata.src_node_id and len(m0) == self.secure_agg_clients:
                 macs[pid0] = m0
@@ -721,7 +721,7 @@ class GuardedStrategy(Strategy):
             try:
                 c = r.content["secagg"]
                 pid, js, seeds = int(c["pid"]), [int(j) for j in c["dropped"]], [str(x) for x in c["seeds"]]
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, OverflowError):
                 return None
             # 回覆要來自它自稱的 VD、涵蓋整份斷線名單；加密的種子要解得開，明文的要是 32 bytes 的十六進位
             # 秘密分享模式不交成對種子（改交斷線 VD 的臨時私鑰份）
@@ -743,7 +743,7 @@ class GuardedStrategy(Strategy):
                     if len(sealed_list) != len(got_owners):
                         return None
                     sealed = dict(zip(got_owners, sealed_list))
-                except (KeyError, TypeError, ValueError):
+                except (KeyError, TypeError, ValueError, OverflowError):
                     return None
                 if sorted(got_owners) != [i for i in owners if pid in self._shares[i]]:
                     return None  # 先核對名單再解密，不替多送的份做白工
@@ -754,7 +754,7 @@ class GuardedStrategy(Strategy):
                     shares[i][pid] = y
                 try:
                     eo, el = [int(i) for i in c["eshare-owners"]], [str(x) for x in c["eshares"]]
-                except (KeyError, TypeError, ValueError):
+                except (KeyError, TypeError, ValueError, OverflowError):
                     return None
                 eopened = (open_shares(dict(zip(eo, el)), pid, *self._seal_pair(pid), rnd, self._run_id(), kind="eshare")
                            if len(eo) == len(el) and sorted(eo) == [d for d in dropped if pid in self._eshares[d]]

@@ -36,7 +36,10 @@ class RecoverTest(unittest.TestCase):
         for bad in [lambda p: {"pid": 1 - p, "dropped": [2], "seeds": [SEED]},  # 冒充另一台
                     lambda p: {"pid": p, "dropped": [], "seeds": []},  # 少交
                     lambda p: {"pid": p, "dropped": [2], "seeds": ["zz"]},  # 種子格式錯
-                    lambda p: {"pid": p}]:  # 缺欄位
+                    lambda p: {"pid": p},  # 缺欄位
+                    lambda p: {"pid": float("inf"), "dropped": [2], "seeds": [SEED]},  # 非有限編號：int() 會丟 OverflowError
+                    lambda p: {"pid": p, "dropped": [float("-inf")], "seeds": [SEED]},
+                    lambda p: {"pid": float("nan"), "dropped": [2], "seeds": [SEED]}]:
             with self.subTest():
                 self.assertIsNone(self._run(bad))
 

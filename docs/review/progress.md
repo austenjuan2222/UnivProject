@@ -1,6 +1,6 @@
 # 進度摘要（Claude 維護，給 Codex 審查用）
 
-更新：2026-11-26（第 4 回合後），分支 `claude/codex-review-loop`
+更新：2026-11-26（第 5 回合後），分支 `claude/codex-review-loop`
 
 ## 已完成（細節在 README）
 - 真實資料：國道 1 號 VD，8／32／256 個 VD，14～28 天；5 分鐘聚合。
@@ -14,12 +14,12 @@
 - Edge 與 LPWAN：4 位元量化上傳、int8 推論、LoRaWAN 空中時間、下行群播＋FEC。
 - 可靠度：10 seed、時間區塊交叉驗證、按天 bootstrap（`scripts/reliability/`，2026-11-21）。
 
-## 上一回合改了什麼（回應 round-04 的 high：指標 Record 型別）
-- `guard._well_formed_metrics` 先確認 `metrics` 是 `MetricRecord`、`partition-id`／`num-examples` 是數字（非 bool、非字串），才轉型；訓練（`screen_replies`）與評估（`aggregate_evaluate`）共用這個檢查。
-- 新增 `tests/test_guard.py::test_configrecord_or_string_metrics_are_rejected_before_auth`（verify 開／關兩種，混正常回覆，確認只拒絕壞的那份且不拋例外）；修前失敗、修後全套 387 passed。
-- 主表「全部防禦」兩列用目前程式重跑（`alldef_a0`、`alldef_attack`），README 配對表加兩列：沒攻擊時代價 +0.097／+0.069／+0.117（顯著），加攻擊後對全部防禦無攻擊 +0.034／+0.009／+0.019（不顯著）。
+## 上一回合改了什麼（回應 round-05 的 high：安全聚合查詢回覆的非有限編號）
+- `guard.py` 公告、一致性、復原（含 share-owners、eshare-owners）五處解析的例外處理補上 `OverflowError`：`int(inf)` 不再中斷整輪，該份回覆照原本規則忽略（公告／一致性）或放棄復原（復原）。NaN 本來就是 ValueError。
+- 測試：`test_ephemeral.py::test_nonfinite_advertise_pid_is_ignored`（inf／-inf／NaN，其他 VD 照常）、`test_nonfinite_consistency_pid_is_ignored`、`test_guard_recover.py` 加 pid=inf、dropped=[-inf]、pid=NaN 三個子測試；修前 5 個失敗，修後全套 389 passed。
 
 ## 先前回合
+- round-04：`_well_formed_metrics` 要求 MetricRecord 與數字型別；全部防禦兩列重跑並補配對差值。
 - round-03 後：主表 24 組×3 seed 重跑，配對差值表，撤回兩項不顯著結論（`scripts/paired_main32.py`）。
 - round-03：安全聚合指標加總溢位（0～2^53、整數加總）。
 - round-02：安全聚合指標型別檢查（NaN／列表）；移除無據顯著性判斷；集中式調參紀錄與 summary.csv。

@@ -200,6 +200,41 @@ class EphemeralTest(unittest.TestCase):
         self.assertNotIn("secagg-eph", msgs[0].content.keys())
         self.assertEqual(msgs[1].content["secagg-eph"]["epubs"][0], b"")
 
+    def test_nonfinite_advertise_pid_is_ignored(self):
+        inner = self.g._grid
+        for bad in (float("inf"), float("-inf"), float("nan")):
+            with self.subTest(pid=bad):
+                for c in self.ctxs.values():
+                    c.state[ADV_KEY] = MetricRecord({"round": RND - 1})
+
+                class Bad:
+                    def send_and_receive(self, messages, timeout=None):
+                        out = inner.send_and_receive(messages, timeout)
+                        c = dict(out[0].content["secagg"])
+                        c["pid"] = bad
+                        return [Message(content=RecordDict({"secagg": ConfigRecord(c)}), reply_to=messages[0])] + out[1:]
+                self.g._grid = Bad()
+                msgs = self._train_msgs()
+                self.g._grid = inner
+                self.assertNotIn("secagg-eph", msgs[0].content.keys())
+                self.assertIn("secagg-eph", msgs[1].content.keys())
+
+    def test_nonfinite_consistency_pid_is_ignored(self):
+        for i in range(N):
+            claim_mask_round(self.ctxs[i], RND, adv=range(N))
+        inner = self.g._grid
+
+        class Bad:
+            def send_and_receive(self, messages, timeout=None):
+                out = inner.send_and_receive(messages, timeout)
+                for r in out:
+                    if int(r.content["secagg"]["pid"]) == 0:
+                        r.content["secagg"]["pid"] = float("inf")
+                return out
+        self.g._grid = Bad()
+        macs = self.g._consist(RND, [], {i: 100 + i for i in range(N)})
+        self.assertEqual(sorted(macs), list(range(1, N)))
+
     def _bad_advertise(self, field, value):
         inner = self.g._grid
 
