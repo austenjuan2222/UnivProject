@@ -17,7 +17,7 @@
 ## 上一回合改了什麼（回應 round-04 的 high：指標 Record 型別）
 - `guard._well_formed_metrics` 先確認 `metrics` 是 `MetricRecord`、`partition-id`／`num-examples` 是數字（非 bool、非字串），才轉型；訓練（`screen_replies`）與評估（`aggregate_evaluate`）共用這個檢查。
 - 新增 `tests/test_guard.py::test_configrecord_or_string_metrics_are_rejected_before_auth`（verify 開／關兩種，混正常回覆，確認只拒絕壞的那份且不拋例外）；修前失敗、修後全套 387 passed。
-- 主表「全部防禦」兩列加進 `scripts/rerun_main32.ps1`（`alldef_a0`、`alldef_attack`）與 `paired_main32.py`，用目前程式重跑中。
+- 主表「全部防禦」兩列用目前程式重跑（`alldef_a0`、`alldef_attack`），README 配對表加兩列：沒攻擊時代價 +0.097／+0.069／+0.117（顯著），加攻擊後對全部防禦無攻擊 +0.034／+0.009／+0.019（不顯著）。
 
 ## 先前回合
 - round-03 後：主表 24 組×3 seed 重跑，配對差值表，撤回兩項不顯著結論（`scripts/paired_main32.py`）。
