@@ -117,9 +117,11 @@ _SECAGG_INT_METRICS = ("secagg-clipped", "secagg-self-mask", "secagg-num-vd", "s
 
 
 def _secagg_metrics_ok(c: RecordDict) -> bool:
-    """安全聚合指標有 HMAC，但持合法金鑰的 VD 可簽 NaN、列表、31.5：之後 int(float()) 會拋例外讓整輪當掉，先擋。"""
+    """安全聚合指標有 HMAC，但持合法金鑰的 VD 可簽 NaN、列表、31.5、1e308：之後 int(float()) 或加總溢位會讓整輪當掉，先擋。
+    這些欄位都是非負整數（self-tag 是 48 位元雜湊），2^53 以內 float 也表示得精確。"""
     m = c["metrics"]
-    return all(k not in m or (isinstance(m[k], (int, float)) and math.isfinite(m[k]) and float(m[k]).is_integer())
+    return all(k not in m or (isinstance(m[k], (int, float)) and math.isfinite(m[k]) and float(m[k]).is_integer()
+                              and 0 <= m[k] <= 2**53)
                for k in _SECAGG_INT_METRICS)
 
 
@@ -614,7 +616,7 @@ class GuardedStrategy(Strategy):
             rejected = len(ok_replies) > len(kept)
             # 雙重遮罩時每輪都要復原（收自我遮罩種子），沒有就不能還原加總
             # VD 自報有幾個值超出定點範圍被截（指標有 HMAC 保護）
-            stats["secagg_clipped"] = int(sum(float(m.content["metrics"].get("secagg-clipped", 0)) for m in kept))
+            stats["secagg_clipped"] = sum(int(m.content["metrics"].get("secagg-clipped", 0)) for m in kept)
             need = len(kept) < self.secure_agg_clients or self.secagg_self_mask
             # 雙重遮罩時被拒絕的 VD 可以當成斷線：它的自我遮罩種子不會交出，交出成對種子也解不開它的更新
             ok_to_reveal = self.secagg_self_mask or not rejected
