@@ -1,6 +1,6 @@
 # 進度摘要（Claude 維護，給 Codex 審查用）
 
-更新：2026-11-26（第 6 回合後），分支 `claude/codex-review-loop`
+更新：2026-11-26（第 7 回合後），分支 `claude/codex-review-loop`
 
 ## 已完成（細節在 README）
 - 真實資料：國道 1 號 VD，8／32／256 個 VD，14～28 天；5 分鐘聚合。
@@ -14,11 +14,13 @@
 - Edge 與 LPWAN：4 位元量化上傳、int8 推論、LoRaWAN 空中時間、下行群播＋FEC。
 - 可靠度：10 seed、時間區塊交叉驗證、按天 bootstrap（`scripts/reliability/`，2026-11-21）。
 
-## 上一回合改了什麼（回應 round-06）
-- medium：README int8 推論一段改成「依本專案規則不顯著；三個 seed 都略為變差，只能說有小幅增加的趨勢」，撤回「應該當成真的小代價」。
-- 追蹤項：新增 `tests/test_ephemeral.py::test_nonfinite_recovery_ids_fail_closed`（share-owners／eshare-owners 放 inf，`_recover` 回 None 不拋例外）；拿掉 `guard.py` 那兩處 `OverflowError` 時兩個子測試失敗，放回後通過。全套 390 passed。
+## 上一回合改了什麼（回應 round-07 的 high：Multi-Krum 斷線後全選）
+- `robust_agg._AllMetrics.aggregate_train` 每輪用有效回覆數重新檢查前提：少於 2f+3（Bulyan 4f+3）回 `(None, None)` 跳過該輪；Multi-Krum 選取份數改成 `min(m 或 本輪回覆數−f, 本輪回覆數−f)`。
+- 測試：`test_multikrum_dropout_does_not_select_every_reply`（n=10、f=2，收到 6 誠實＋2 惡意）、`test_krum_skips_round_below_byzantine_threshold`（krum／multikrum／bulyan）；修前 3 個失敗，修後全套 392 passed。
+- README Krum 表的設定每輪全員參與，修正不影響數字，已加註。
 
 ## 先前回合
+- round-06：int8 推論結論改成不顯著趨勢；補復原 owners 非有限值測試。
 - round-05：安全聚合公告／一致性／復原五處解析補 `OverflowError`（inf 編號）。
 - round-04：`_well_formed_metrics` 要求 MetricRecord 與數字型別；全部防禦兩列重跑並補配對差值。
 - round-03 後：主表 24 組×3 seed 重跑，配對差值表，撤回兩項不顯著結論（`scripts/paired_main32.py`）。

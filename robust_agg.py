@@ -22,6 +22,12 @@ class _AllMetrics:
         replies = list(replies)
         # 先記下所有有效回覆（Bulyan 聚合時會把參數取走，事後就讀不到了）
         contents = [m.content for m in replies if not m.has_error()]
+        # 斷線或被拒後回覆變少：每輪重新檢查 Krum 系列的前提（建策略時只看設定的 n）
+        if len(contents) < _need(self.__class__, self.num_malicious_nodes):
+            return None, None
+        if isinstance(self, MultiKrumAll):  # 預設挑 n−f 份要用本輪的 n，不然斷線後會連惡意的一起挑進來
+            k = len(contents) - self.num_malicious_nodes
+            self.num_nodes_to_select = min(self._m or k, k)
         fn, self.train_metrics_aggr_fn = self.train_metrics_aggr_fn, lambda _r, _k: None
         try:
             arrays, _ = super().aggregate_train(server_round, replies)
@@ -37,11 +43,15 @@ class KrumAll(_AllMetrics, Krum):
 
 
 class MultiKrumAll(_AllMetrics, MultiKrum):
-    pass
+    _m = 0  # 使用者指定的 m；0 表示每輪用「本輪回覆數 − f」
 
 
 class BulyanAll(_AllMetrics, Bulyan):
     pass
+
+
+def _need(cls, f: int) -> int:
+    return 4 * f + 3 if issubclass(cls, Bulyan) else 2 * f + 3
 
 
 AGGREGATORS = {"fedavg": FedAvg, "median": FedMedian, "trimmed": FedTrimmedAvg,
@@ -57,10 +67,13 @@ def make_strategy(name: str, f: int, n: int, kwargs: dict, multikrum_m: int = 0)
         return cls(**kwargs)
     if f < 0:
         raise ValueError(f"byzantine-f 不能是負數，收到 {f}")
-    need = 4 * f + 3 if name == "bulyan" else 2 * f + 3
+    need = _need(cls, f)
     if n < need:
         raise ValueError(f"{name} 假設 f={f} 台被入侵時，每輪至少要 {need} 台 VD 參與，現在只有 {n}")
     kw = dict(kwargs, num_malicious_nodes=f)
     if name == "multikrum":
         kw["num_nodes_to_select"] = multikrum_m or n - f
-    return cls(**kw)
+    s = cls(**kw)
+    if name == "multikrum":
+        s._m = multikrum_m
+    return s
