@@ -27,3 +27,7 @@ results/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Codex review loop
+docs/review/STOP
+docs/review/*.log
