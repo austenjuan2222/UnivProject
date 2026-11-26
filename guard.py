@@ -108,14 +108,31 @@ def verify_reply(c: RecordDict, rnd: int, vd_keys: dict, run: int = 0) -> bool:
 def _well_formed_metrics(c: RecordDict) -> bool:
     """編號與 num-examples（FedAvg 的加權）都要是正整數。"""
     try:
-        pid, n = float(c["metrics"]["partition-id"]), float(c["metrics"]["num-examples"])
-        unit = float(c["metrics"].get("unit-weight", 1))  # client-level DP 的等權平均：只能是 1
-    except (KeyError, TypeError, ValueError):
+        m = c["metrics"]
+        raw = m["partition-id"], m["num-examples"], m.get("unit-weight", 1)
+    except (KeyError, TypeError, AttributeError):
         return False
-    if unit != 1:
+    # 要真的是 MetricRecord 裡的數字：ConfigRecord 的 "1.0" 字串 float() 過得了，之後 int() 卻會在驗簽前讓整輪當掉
+    if not isinstance(m, MetricRecord) or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in raw):
+        return False
+    pid, n = float(raw[0]), float(raw[1])
+    if raw[2] != 1:  # client-level DP 的等權平均：只能是 1
         return False
     # 絕對上限：只有兩三份更新時沒有中位數可比，自報天文數字的筆數也不能蓋過別人或讓加權總和溢位
     return pid.is_integer() and pid >= 0 and n.is_integer() and 0 < n <= 2**31
+
+
+_SECAGG_INT_METRICS = ("secagg-clipped", "secagg-self-mask", "secagg-num-vd", "secagg-bits", "secagg-frac-bits",
+                       "secagg-self-tag")
+
+
+def _secagg_metrics_ok(c: RecordDict) -> bool:
+    """安全聚合指標有 HMAC，但持合法金鑰的 VD 可簽 NaN、列表、31.5、1e308：之後 int(float()) 或加總溢位會讓整輪當掉，先擋。
+    這些欄位都是非負整數（self-tag 是 48 位元雜湊），2^53 以內 float 也表示得精確。"""
+    m = c["metrics"]
+    return all(k not in m or (isinstance(m[k], (int, float)) and math.isfinite(m[k]) and float(m[k]).is_integer()
+                              and 0 <= m[k] <= 2**53)
+               for k in _SECAGG_INT_METRICS)
 
 
 def _well_formed(c: RecordDict, kinds_ok: frozenset = frozenset("f")) -> bool:
@@ -533,7 +550,7 @@ class GuardedStrategy(Strategy):
                     continue  # 長度固定：超大的格子會讓伺服器存下並轉發給所有人（資源耗盡）
                 pid, epub = int(c["pid"]), _hex(c["epub"])
                 m0, e0 = [_hex(x) for x in c["epub-macs"]], [_hex(x) for x in c["eshares"]]
-            except (KeyError, TypeError, ValueError, AttributeError):
+            except (KeyError, TypeError, ValueError, AttributeError, OverflowError):  # int(inf) 丟 OverflowError
                 continue
             if self.verify_updates and pid not in self.vd_keys:
                 continue  # 金鑰到期或撤銷：上傳反正會被拒，列進名單只會每輪被當成斷線、白做復原
@@ -675,6 +692,10 @@ class GuardedStrategy(Strategy):
                     stats["n_clipped"] += 1
             stats["clipped"] = ";".join(sorted(str(int(m.content["metrics"]["partition-id"]))
                                                for m in kept if norms[id(m)] > limit))
+        if self.secure_agg_clients:
+            ok = [m for m in kept if _secagg_metrics_ok(m.content)]
+            stats["n_rejected"] += len(kept) - len(ok)  # 和 HMAC 不符一樣算被拒絕（復原規則會依此決定能不能交出種子）
+            kept = ok
         if self.secure_agg_clients and self.secagg_shamir:
             # 沒附完整份數的 VD 在復原時無法替它還原自我遮罩，當成被拒絕（雙重遮罩下等於斷線）
             def ids(m):
@@ -704,7 +725,7 @@ class GuardedStrategy(Strategy):
             rejected = len(ok_replies) > len(kept)
             # 雙重遮罩時每輪都要復原（收自我遮罩種子），沒有就不能還原加總
             # VD 自報有幾個值超出定點範圍被截（指標有 HMAC 保護）
-            stats["secagg_clipped"] = int(sum(float(m.content["metrics"].get("secagg-clipped", 0)) for m in kept))
+            stats["secagg_clipped"] = sum(int(m.content["metrics"].get("secagg-clipped", 0)) for m in kept)
             need = len(kept) < self.secure_agg_clients or self.secagg_self_mask
             # 雙重遮罩時被拒絕的 VD 可以當成斷線：它的自我遮罩種子不會交出，交出成對種子也解不開它的更新
             ok_to_reveal = self.secagg_self_mask or not rejected
@@ -754,7 +775,7 @@ class GuardedStrategy(Strategy):
                 if not all(isinstance(x, bytes) and len(x) in (0, MAC_LEN) for x in raw):
                     continue  # 只收二進位、固定長度
                 m0 = [_hex(x) for x in raw]
-            except (KeyError, TypeError, ValueError, AttributeError):
+            except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
                 continue  # 沒回或回錯：少一份證明，門檻由 VD 自己檢查
             if alive.get(pid0) == r.metadata.src_node_id and len(m0) == self.secure_agg_clients:
                 macs[pid0] = m0
@@ -804,7 +825,7 @@ class GuardedStrategy(Strategy):
             try:
                 c = r.content["secagg"]
                 pid, js, seeds = int(c["pid"]), [int(j) for j in c["dropped"]], [str(x) for x in c["seeds"]]
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, OverflowError):
                 return None
             # 回覆要來自它自稱的 VD、涵蓋整份斷線名單；加密的種子要解得開，明文的要是 32 bytes 的十六進位
             # 秘密分享模式不交成對種子（改交斷線 VD 的臨時私鑰份）
@@ -826,7 +847,7 @@ class GuardedStrategy(Strategy):
                     if len(sealed_list) != len(got_owners):
                         return None
                     sealed = dict(zip(got_owners, sealed_list))
-                except (KeyError, TypeError, ValueError):
+                except (KeyError, TypeError, ValueError, OverflowError):
                     return None
                 if sorted(got_owners) != [i for i in owners if pid in self._shares[i]]:
                     return None  # 先核對名單再解密，不替多送的份做白工
@@ -837,7 +858,7 @@ class GuardedStrategy(Strategy):
                     shares[i][pid] = y
                 try:
                     eo, el = [int(i) for i in c["eshare-owners"]], [str(x) for x in c["eshares"]]
-                except (KeyError, TypeError, ValueError):
+                except (KeyError, TypeError, ValueError, OverflowError):
                     return None
                 eopened = (open_shares(dict(zip(eo, el)), pid, *self._seal_pair(pid), rnd, self._run_id(), kind="eshare")
                            if len(eo) == len(el) and sorted(eo) == [d for d in dropped if pid in self._eshares[d]]

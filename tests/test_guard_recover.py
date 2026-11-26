@@ -36,7 +36,10 @@ class RecoverTest(unittest.TestCase):
         for bad in [lambda p: {"pid": 1 - p, "dropped": [2], "seeds": [SEED]},  # 冒充另一台
                     lambda p: {"pid": p, "dropped": [], "seeds": []},  # 少交
                     lambda p: {"pid": p, "dropped": [2], "seeds": ["zz"]},  # 種子格式錯
-                    lambda p: {"pid": p}]:  # 缺欄位
+                    lambda p: {"pid": p},  # 缺欄位
+                    lambda p: {"pid": float("inf"), "dropped": [2], "seeds": [SEED]},  # 非有限編號：int() 會丟 OverflowError
+                    lambda p: {"pid": p, "dropped": [float("-inf")], "seeds": [SEED]},
+                    lambda p: {"pid": float("nan"), "dropped": [2], "seeds": [SEED]}]:
             with self.subTest():
                 self.assertIsNone(self._run(bad))
 
@@ -100,7 +103,7 @@ class SealedSeedsTest(unittest.TestCase):
 
 class SelfMaskRoundTest(unittest.TestCase):
     """雙重遮罩時，被拒絕的回覆當成斷線處理（它的自我遮罩種子不會交出，更新仍解不開），整輪不作廢。"""
-    def _reply(self, pid, arrays, flag=1, n=1, num_vd=3, dtype=None, bits=32, frac=12):
+    def _reply(self, pid, arrays, flag=1, n=1, num_vd=3, dtype=None, bits=32, frac=12, extra=None):
         import numpy as np
         from flwr.app import Array, ArrayRecord
         sent = Message(content=RecordDict(), dst_node_id=100 + pid, message_type="train")
@@ -109,7 +112,8 @@ class SelfMaskRoundTest(unittest.TestCase):
                                                                     "secagg-self-mask": flag,
                                                                     "secagg-num-vd": num_vd,
                                                                     "secagg-bits": bits,
-                                                                    "secagg-frac-bits": frac})}), reply_to=sent)
+                                                                    "secagg-frac-bits": frac, **(extra or {})})}),
+                       reply_to=sent)
 
     def _run(self, replies, self_mask=True):
         class Inner:
@@ -147,6 +151,26 @@ class SelfMaskRoundTest(unittest.TestCase):
             arrays, stats, _ = self._run([self._reply(0, [1.0]), self._reply(1, [3.0], **kw), self._reply(2, [2.0])])
             self.assertIsNone(arrays)
             self.assertEqual(stats["secagg_failed"], 1)
+
+    def test_bad_secagg_metrics_are_rejected_without_crashing(self):
+        # Codex 第 2 回合：持合法金鑰的 VD 把安全聚合指標設成 NaN、inf、列表或非整數，以前在 int(float()) 拋例外、整輪當掉
+        for k, v in [("secagg-clipped", float("nan")), ("secagg-clipped", [1, 2]), ("secagg-num-vd", float("inf")),
+                     ("secagg-bits", 31.5), ("secagg-self-tag", float("nan")), ("secagg-self-mask", [1.0]),
+                     ("secagg-clipped", -1), ("secagg-clipped", 1e308)]:  # 第 3 回合：負數、有限但加總會溢位
+            with self.subTest(k=k, v=v):
+                bad = self._reply(2, [2.0], extra={k: v})
+                arrays, stats, calls = self._run([self._reply(0, [1.0]), self._reply(1, [3.0]), bad])
+                self.assertEqual(calls, [2])  # 當成被拒、雙重遮罩下等於斷線
+                self.assertIsNotNone(arrays)
+                self.assertEqual(stats["secagg_failed"], 0)
+
+    def test_two_huge_clipped_counts_do_not_overflow_the_sum(self):
+        # Codex 第 3 回合：兩份各 1e308 逐值有限，加總變 inf，int() 拋 OverflowError
+        big = {"secagg-clipped": 1e308}
+        arrays, stats, _ = self._run([self._reply(0, [1.0]), self._reply(1, [3.0], extra=big),
+                                      self._reply(2, [2.0], extra=big)])
+        self.assertIsNotNone(arrays)
+        self.assertEqual(stats["n_rejected"], 2)
 
     def test_recovered_counts_only_real_dropout(self):
         _, stats, _ = self._run([self._reply(0, [1.0]), self._reply(1, [3.0]), self._reply(2, [2.0])])

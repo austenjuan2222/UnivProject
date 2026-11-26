@@ -124,6 +124,11 @@ class UpdateMacTest(unittest.TestCase):
     def test_garbage_tag_is_rejected_not_raised(self):
         self.assertFalse(verify_update(self.key, _arrays(), 5, 3, "zz-not-hex"))
 
+    def test_non_ascii_tag_is_rejected_not_raised(self):
+        # Codex 第 1 回合：compare_digest 遇到非 ASCII 字串會拋 TypeError，不用金鑰就能讓聚合當掉
+        self.assertFalse(verify_update(self.key, _arrays(), 5, 3, "錯"))
+        self.assertFalse(verify_update(self.key, _arrays(), 5, 3, "錯" * 64))
+
 
 class ModelSignatureTest(unittest.TestCase):
     def setUp(self):

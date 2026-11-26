@@ -52,6 +52,15 @@ class MetricsAuthTest(unittest.TestCase):
         self.g.aggregate_train(1, [self.train_reply(0), self.train_reply(1, lie), self.train_reply(2)])
         self.assertEqual(self.train[-1], [0, 2])
 
+    def test_non_ascii_tag_is_dropped_and_others_still_aggregate(self):
+        # Codex 第 1 回合：不用金鑰、把標籤改成非 ASCII 就能讓訓練與評估聚合拋例外
+        def bad(c):
+            c["auth"]["tag"] = "錯"
+        self.g.aggregate_train(1, [self.train_reply(0), self.train_reply(1, bad), self.train_reply(2)])
+        self.assertEqual(self.train[-1], [0, 2])
+        self.g.aggregate_evaluate(1, [self.eval_reply(0), self.eval_reply(1, after=bad), self.eval_reply(2)])
+        self.assertEqual(self.evals[-1], [0, 2])
+
     def test_eval_replies_are_authenticated(self):
         def lie(c):
             c["metrics"]["mae-kmh"] = 0.1

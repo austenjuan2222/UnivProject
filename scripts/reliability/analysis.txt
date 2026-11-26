@@ -1,0 +1,40 @@
+
+== processed_28d fold -1 seeds [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] ==
+test samples 12525, naive MAE 3.008
+sg-1       n=10 ε=    inf MAE 2.706 (SD 0.033, 95%CI 2.682–2.730) | Δ vs sg-1 +0.000 [+0.000,+0.000] p=nan
+sg0        n=10 ε=    inf MAE 2.672 (SD 0.009, 95%CI 2.666–2.679) | Δ vs sg-1 -0.034 [-0.059,-0.008] p=0.0145
+sg0.5      n=10 ε=  21.75 MAE 2.675 (SD 0.010, 95%CI 2.668–2.682) | Δ vs sg-1 -0.031 [-0.055,-0.007] p=0.0174
+sg1.1      n=10 ε=   2.54 MAE 2.685 (SD 0.010, 95%CI 2.678–2.692) | Δ vs sg-1 -0.021 [-0.045,+0.003] p=0.0794
+sg3        n=10 ε=   0.65 MAE 2.749 (SD 0.021, 95%CI 2.734–2.764) | Δ vs sg-1 +0.043 [+0.014,+0.072] p=0.00778
+sg8        n=10 ε=   0.22 MAE 3.190 (SD 0.068, 95%CI 3.141–3.238) | Δ vs sg-1 +0.484 [+0.425,+0.542] p=1.65e-08
+sg20       n=10 ε=   0.12 MAE 12.778 (SD 3.349, 95%CI 10.382–15.174) | Δ vs sg-1 +10.072 [+7.678,+12.466] p=5.4e-06
+
+== processed_28d fold -1 seeds [1, 2, 3, 4, 5] ==
+test samples 12525, naive MAE 3.008
+ft0sg-1    n= 5 ε=    inf MAE 2.881 (SD 0.063, 95%CI 2.803–2.959) | Δ vs ft0sg-1 +0.000 [+0.000,+0.000] p=nan
+ft0sg1.1   n= 5 ε=   2.37 MAE 2.806 (SD 0.015, 95%CI 2.787–2.826) | Δ vs ft0sg-1 -0.075 [-0.138,-0.011] p=0.0314
+
+== processed_28d_32 fold -1 seeds [1, 2, 3, 4, 5] ==
+test samples 50432, naive MAE 2.429
+sg-1       n= 5 ε=    inf MAE 2.148 (SD 0.023, 95%CI 2.120–2.176) | Δ vs sg-1 +0.000 [+0.000,+0.000] p=nan
+sg1.1      n= 5 ε=   2.54 MAE 2.119 (SD 0.006, 95%CI 2.112–2.126) | Δ vs sg-1 -0.029 [-0.058,+0.001] p=0.0547
+sg3        n= 5 ε=   0.65 MAE 2.140 (SD 0.005, 95%CI 2.133–2.146) | Δ vs sg-1 -0.008 [-0.035,+0.018] p=0.436
+
+== block CV (8 VD): per-fold mean over seeds ==
+fold 0: naive 2.826 nodp 2.444 σ1.1 2.466 (Δ+0.022) σ3 2.523 (Δ+0.079)
+fold 1: naive 2.683 nodp 2.292 σ1.1 2.283 (Δ-0.009) σ3 2.341 (Δ+0.049)
+fold 2: naive 2.831 nodp 2.477 σ1.1 2.472 (Δ-0.006) σ3 2.530 (Δ+0.052)
+fold 3: naive 2.797 nodp 2.450 σ1.1 2.448 (Δ-0.002) σ3 2.503 (Δ+0.053)
+fold 4: naive 3.016 nodp 2.706 σ1.1 2.700 (Δ-0.006) σ3 2.753 (Δ+0.047)
+
+== test-period (day-block) uncertainty ==
+processed_28d sg1.1 vs sg-1: 5 day-blocks, per-day Δ [-0.011 -0.028 -0.018 -0.006 -0.025], mean -0.0178, day-bootstrap 95% CI [-0.0249,-0.0107]; lag1 autocorr 0.06 → effective n≈11015 of 12525
+processed_28d sg3 vs sg-1: 5 day-blocks, per-day Δ [0.063 0.056 0.051 0.053 0.022], mean +0.0489, day-bootstrap 95% CI [+0.0345,+0.0586]; lag1 autocorr 0.08 → effective n≈10729 of 12525
+processed_28d sg8 vs sg-1: 5 day-blocks, per-day Δ [0.554 0.529 0.566 0.537 0.332], mean +0.5037, day-bootstrap 95% CI [+0.4161,+0.5554]; lag1 autocorr 0.18 → effective n≈8750 of 12525
+processed_28d sg20 vs sg-1: 5 day-blocks, per-day Δ [10.693 12.388 10.844 13.     5.976], mean +10.5802, day-bootstrap 95% CI [+8.2017,+12.3240]; lag1 autocorr 0.83 → effective n≈1190 of 12525
+processed_28d sg0 vs sg-1: 5 day-blocks, per-day Δ [-0.022 -0.049 -0.033 -0.024 -0.028], mean -0.0312, day-bootstrap 95% CI [-0.0402,-0.0241]; lag1 autocorr 0.07 → effective n≈10935 of 12525
+/usr/local/lib/python3.13/site-packages/numpy/lib/_function_base_impl.py:3036: RuntimeWarning: invalid value encountered in divide
+  c /= stddev[:, None]
+processed_28d sg-1 vs sg-1: 5 day-blocks, per-day Δ [0. 0. 0. 0. 0.], mean +0.0000, day-bootstrap 95% CI [+0.0000,+0.0000]; lag1 autocorr nan → effective n≈nan of 12525
+
+per-VD MAE (nodp, seed-avg): [1.93 2.57 2.07 3.48 3.33 3.33 2.93 2.01]

@@ -1,0 +1,15 @@
+﻿batch C:\Users\TESTER\Documents\UnivProject-run\results\20261121-164226
+
+== global MAE (km/h) ==
+nodp         n=5 2.892 SD 0.126 95%CI [2.735,3.049] | vs dp_sigma0 +0.098 [-0.054,+0.250] p=0.149
+dp_sigma0    n=5 2.794 SD 0.011 95%CI [2.781,2.807] | vs nodp -0.098 [-0.250,+0.054] p=0.149
+dp_sigma1.1  n=5 2.803 SD 0.017 95%CI [2.782,2.824] eps~2.54 | vs dp_sigma0 +0.009 [-0.014,+0.032] p=0.324 | vs nodp -0.089 [-0.242,+0.065] p=0.185
+dp_sigma3    n=5 2.894 SD 0.038 95%CI [2.847,2.941] eps~0.65 | vs dp_sigma0 +0.100 [+0.064,+0.136] p=0.00153 | vs nodp +0.003 [-0.131,+0.136] p=0.96
+
+== ft MAE (km/h) ==
+nodp         n=5 2.694 SD 0.028 95%CI [2.659,2.729] | vs dp_sigma0 +0.023 [+0.002,+0.045] p=0.041
+dp_sigma0    n=5 2.671 SD 0.013 95%CI [2.655,2.687] | vs nodp -0.023 [-0.045,-0.002] p=0.041
+dp_sigma1.1  n=5 2.685 SD 0.011 95%CI [2.671,2.698] eps~2.54 | vs dp_sigma0 +0.014 [+0.004,+0.023] p=0.0172 | vs nodp -0.010 [-0.039,+0.019] p=0.406
+dp_sigma3    n=5 2.750 SD 0.013 95%CI [2.733,2.766] eps~0.65 | vs dp_sigma0 +0.079 [+0.055,+0.103] p=0.000813 | vs nodp +0.055 [+0.013,+0.098] p=0.0219
+
+來源：UnivProject-run\results\20261121-164226\summary.csv（副本 flower_20261121-164226_summary.csv）；8 VD processed_28d、20 輪、finetune 3 epoch、seed 1–5

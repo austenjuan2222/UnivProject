@@ -44,6 +44,19 @@ class RobustAggTest(unittest.TestCase):
         self.assertLess(float(w.max()), 1.1)
         self.assertGreater(float(w.min()), 1.0)  # 平均多份，不是只挑一份
 
+    def test_multikrum_dropout_does_not_select_every_reply(self):
+        # 設定 n=10、f=2（預設挑 8 份）；兩台誠實 VD 斷線只剩 6 誠實＋2 惡意，不能 8 份全挑
+        arrays, _ = _strategy("multikrum", 2, 10).aggregate_train(1, _replies(6, 2))
+        self.assertLess(float(arrays["w"].numpy().max()), 1.1)
+
+    def test_krum_skips_round_below_byzantine_threshold(self):
+        # 斷線或被拒後有效回覆少於 2f+3（Bulyan 4f+3）：這輪跳過，不在不符假設的集合上聚合
+        for name, f, n, honest in (("krum", 2, 10, 4), ("multikrum", 2, 10, 4), ("bulyan", 2, 12, 8)):
+            with self.subTest(name=name):
+                arrays, metrics = _strategy(name, f, n).aggregate_train(1, _replies(honest, 2))
+                self.assertIsNone(arrays)
+                self.assertIsNone(metrics)
+
     def test_bulyan_ignores_outliers(self):
         arrays, _ = _strategy("bulyan", 2, 12).aggregate_train(1, _replies(10, 2))
         self.assertLess(float(arrays["w"].numpy().max()), 1.1)

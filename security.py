@@ -340,7 +340,8 @@ def verify_update(key, arrays: dict, rnd: int, pid: int, tag: str, meta=None, ru
             return True
         except (InvalidSignature, ValueError):
             return False
-    return hmac.compare_digest(sign_update(key, arrays, rnd, pid, meta, run), str(tag))
+    # 比 bytes：compare_digest 遇到非 ASCII 的 str 會拋 TypeError，惡意標籤不用金鑰就能讓聚合當掉
+    return hmac.compare_digest(sign_update(key, arrays, rnd, pid, meta, run).encode(), str(tag).encode())
 
 
 def sign_model(priv: Ed25519PrivateKey, arrays: dict, rnd: int, run: int = 0) -> str:
