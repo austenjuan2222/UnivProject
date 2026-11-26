@@ -23,6 +23,16 @@ $runs = [ordered]@{
     'clip_a0'      = $clip
     'clip_a10'     = "$clip attack-clients=10"
     'clipmed_a10'  = "$clip attack-clients=10 aggregator='median'"
+    'replay_nover' = "replay-rate=0.25 verify-updates=false"
+    'replay_hmac'  = "replay-rate=0.25"
+    'a6_median'    = "attack-clients=6 aggregator='median'"
+    'a6_trimmed'   = "attack-clients=6 aggregator='trimmed'"
+    'a10_trimmed'  = "attack-clients=10 aggregator='trimmed'"
+    'clip_a3'      = "$clip attack-clients=3"
+    'clip_a14'     = "$clip attack-clients=14"
+    'a14_median'   = "attack-clients=14 aggregator='median'"
+    'noise_fedavg' = "attack-clients=3 attack-type='noise' attack-scale=1.0"
+    'noise_median' = "attack-clients=3 attack-type='noise' attack-scale=1.0 aggregator='median'"
 }
 Set-Location $repo
 foreach ($k in $runs.Keys) {
