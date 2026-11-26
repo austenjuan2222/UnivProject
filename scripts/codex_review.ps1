@@ -14,8 +14,9 @@ if (-not (Get-Command codex -ErrorAction SilentlyContinue)) { Write-Output 'code
 
 $out = Join-Path $dir ('round-{0:D2}.md' -f ($done + 1))
 $log = "$out.log"
-# read-only sandbox: Codex can read but not write files or use the network; -o is written by the CLI itself
-Get-Content (Join-Path $dir 'codex_prompt.md') -Raw -Encoding UTF8 |
-    codex exec --sandbox read-only -C $repo -o $out - *> $log
+# read-only sandbox: Codex can read but not write files or use the network; -o is written by the CLI itself.
+# codex exec waits on stdin when it is not a TTY, and PS 5.1 never closes piped stdin, so run via cmd with < nul.
+$prompt = 'Read docs/review/codex_prompt.md and follow its instructions exactly. Reply in Traditional Chinese.'
+cmd /c "codex exec --sandbox read-only -C `"$repo`" -o `"$out`" `"$prompt`" < nul > `"$log`" 2>&1"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $out)) { Write-Output "codex exec failed; see $log"; exit 1 }
 Write-Output $out
