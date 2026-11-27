@@ -208,7 +208,12 @@ function render(fresh) {
   const until = heads(vds);
   summarize(vds, until);
   const shown = filter == "worse" ? vds.filter(worse) : vds;
-  if (!shown.length) { road.appendChild(el("li", "empty", "目前沒有預計會變慢的路段。")); return; }
+  if (!shown.length) {
+    // 沒有可預測的路段時是「無法判斷」，不是「不會變慢」
+    const msg = shownExpired ? "預測已過期，目前無法判斷哪些路段可能變慢。"
+      : !vds.some(v => v.preds.length == 3) ? "目前沒有路段的資料足夠做預測，無法判斷哪些路段可能變慢。" : "目前沒有預計會變慢的路段。";
+    road.appendChild(el("li", "empty", msg)); return;
+  }
   for (const v of shown) {
     const p = place(v.vdid), c = cls(v.last_kmh);
     const li = el("li", "stop " + c); li.title = v.vdid;

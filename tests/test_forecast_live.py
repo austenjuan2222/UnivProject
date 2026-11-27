@@ -55,7 +55,7 @@ class PredictAllTest(unittest.TestCase):
         rows = [{"vdid": "V", "time": f"{(dt.datetime(2024, 3, 29, 6, 0) + dt.timedelta(minutes=m)):%Y-%m-%dT%H:%M}:00+08:00",
                  "speed": 90.0, "volume": 1, "occupancy": 5, "status": 0} for m in range(0, 140)]
         orig = fl.fetch_minutes
-        fl.fetch_minutes = lambda end, keep, after=0, fetch=None: [r for r in rows if keep(r["vdid"])]
+        fl.fetch_minutes = lambda end, keep, minutes=0, after=0, fetch=None: [r for r in rows if keep(r["vdid"])]
         try:
             r = fl.predict_all(naive_model(), {**CFG}, {"V": (85.0, 10.0)}, ["V"], dt.datetime(2024, 3, 29, 7, 13))
         finally:
@@ -99,7 +99,7 @@ def _rows(start, minutes, speed=90.0, skip=()):
 def _predict(rows, end):
     import datetime as dt
     orig = fl.fetch_minutes
-    fl.fetch_minutes = lambda end, keep, after=0, fetch=None: [r for r in rows if keep(r["vdid"])]
+    fl.fetch_minutes = lambda end, keep, minutes=0, after=0, fetch=None: [r for r in rows if keep(r["vdid"])]
     try:
         return fl.predict_all(naive_model(), {**CFG}, {"V": (85.0, 10.0)}, ["V"], dt.datetime.strptime(end, "%Y-%m-%d %H:%M"))
     finally:
@@ -160,6 +160,72 @@ class Round12Test(unittest.TestCase):
             (Path(d) / "manifest.json").write_text(json.dumps({"clients": [{"vdid": "V", "file": "V.csv"}]}), encoding="utf-8")
             tr = load_client_arrays(d, 0, 1, 12, 0.8, 1, "", False)
             self.assertEqual(fl.vd_stats(Path(d), 0.8)["V"], (tr["mean"], tr["std"]))
+
+
+class Round13Test(unittest.TestCase):
+    def test_predict_all_fetch_window_scales_with_lookback(self):
+        import datetime as dt
+        m = TrafficModel(24, 8, True, 2)
+        for p in m.parameters():
+            torch.nn.init.zeros_(p)
+        rows, asked = _rows("2024-03-29 04:00", 200), []
+
+        def fake(end, keep, minutes=0, after=0, fetch=None):
+            asked.append(minutes)
+            t0 = pd.Timestamp(end) - pd.Timedelta(minutes=minutes)
+            return [r for r in rows if keep(r["vdid"]) and pd.Timestamp(r["time"][:16]) >= t0]
+        orig, fl.fetch_minutes = fl.fetch_minutes, fake
+        try:
+            r = fl.predict_all(m.eval(), {"lookback": 24, "calendar": "tod"}, {"V": (85.0, 10.0)}, ["V"], dt.datetime(2024, 3, 29, 7, 13))
+        finally:
+            fl.fetch_minutes = orig
+        self.assertGreaterEqual(asked[0], 24 * 5 + 10)
+        self.assertEqual(len(r["vds"][0]["preds"]), 3)
+
+
+def _web():
+    spec2 = importlib.util.spec_from_file_location("forecast_web", Path(__file__).parents[1] / "scripts" / "forecast_web.py")
+    fw = importlib.util.module_from_spec(spec2)
+    spec2.loader.exec_module(fw)
+    return fw
+
+
+class ConnectionLimitTest(unittest.TestCase):
+    def _serve(self, fw, **kw):
+        import threading
+        fc = fw.Forecaster.__new__(fw.Forecaster)
+        fc.lock, fc.latest = threading.Lock(), {"vds": []}
+        srv = fw.make_server("127.0.0.1", 0, fc, **kw)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        return srv.server_address[1]
+
+    def test_incomplete_headers_connection_times_out(self):
+        import socket
+        import time
+        port = self._serve(_web(), timeout=0.5)
+        c = socket.create_connection(("127.0.0.1", port))
+        c.sendall(b"GET / HTTP/1.1\r\nHost: x\r\n")  # 標頭沒送完
+        c.settimeout(5)
+        t0 = time.monotonic()
+        self.assertEqual(c.recv(100), b"")  # 伺服器在逾時後關閉，不會一直佔著執行緒
+        self.assertLess(time.monotonic() - t0, 3)
+        c.close()
+
+    def test_concurrent_connections_are_bounded(self):
+        import socket
+        import urllib.request
+        port = self._serve(_web(), timeout=2, max_conn=2)
+        idle = [socket.create_connection(("127.0.0.1", port)) for _ in range(2)]
+        extra = socket.create_connection(("127.0.0.1", port))
+        extra.settimeout(1)
+        self.assertEqual(extra.recv(100), b"")  # 超過上限的連線直接關掉，沒有開新執行緒
+        extra.close()
+        for c in idle:
+            c.close()
+        import time
+        time.sleep(0.3)
+        self.assertEqual(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/forecast", timeout=5).status, 200)
 
 
 class RateLimitTest(unittest.TestCase):

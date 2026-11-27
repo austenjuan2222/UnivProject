@@ -14,6 +14,11 @@
 - Edge 與 LPWAN：4 位元量化上傳、int8 推論、LoRaWAN 空中時間、下行群播＋FEC。
 - 可靠度：10 seed、時間區塊交叉驗證、按天 bootstrap（`scripts/reliability/`，2026-11-21）。
 
+## round-13（抓取長度、連線資源、篩選空狀態）
+- `predict_all` 抓取分鐘數改成 `lookback*5 + 10`（lookback=12 仍是 70）：`test_predict_all_fetch_window_scales_with_lookback`（修前要求 0 分鐘、lookback=24 拿不到預測）。
+- `forecast_web.BoundedServer`：同時最多 64 個連線，滿了直接關掉新連線不開執行緒；Handler 連線逾時 10 秒。`make_server()` 給 main 與測試共用。測試：`test_incomplete_headers_connection_times_out`、`test_concurrent_connections_are_bounded`（只在本機 socket，沒有對公開通道壓測）。
+- 網頁「可能變慢」篩選結果為空時，過期顯示「預測已過期，目前無法判斷…」、全部資料不足顯示「…無法判斷…」，只有真的有預測時才說「沒有預計會變慢」。瀏覽器驗證三種情況。
+
 ## round-12（即時預測：horizon、標準化切點、網頁過期）
 - `forecast_live.load_model` 遇到 `horizon != 1` 直接拒絕（遞迴預測只對單步模型成立）：`test_live_rejects_non_unit_horizon`。
 - 新增 `data.read_vd_csv`（補完整 5 分鐘時間軸），訓練端 `load_client_arrays` 與即時端 `vd_stats` 共用，切點與 mean／std 一致：`test_vd_stats_matches_training_with_missing_timestamps`（中間缺一天，修前 mean 90.49 vs 89.66）。

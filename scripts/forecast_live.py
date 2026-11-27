@@ -126,7 +126,9 @@ def predict_all(model, cfg: dict, stats: dict, vds: list[str], end: dt.datetime,
     """抓資料並預測 vds 每一台；end 加 25 分鐘已經過去時（回測）一併附上實際值。網頁與指令列共用。
     輸入只用 end 之前的資料（回測多抓的未來資料只拿來對答案，不參與補值），和即時執行時看到的一樣。"""
     after = 25 if end + dt.timedelta(minutes=25) <= taipei_now() else 0
-    rows = fetch_minutes(end, keep=set(vds).__contains__, after=after, fetch=fetch)
+    # lookback 筆 5 分鐘＋還沒滿的那一桶＋來源延遲緩衝（lookback=12 時就是 LOOKBACK_MIN）
+    minutes = int(cfg["lookback"]) * 5 + LOOKBACK_MIN - 60
+    rows = fetch_minutes(end, keep=set(vds).__contains__, minutes=minutes, after=after, fetch=fetch)
     t_end = pd.Timestamp(end)
     local = pd.to_datetime([r["time"] for r in rows], utc=True, format="ISO8601").tz_convert("Asia/Taipei").tz_localize(None)
     rows_in = [r for r, t in zip(rows, local) if t < t_end]

@@ -74,10 +74,12 @@ class RateLimit:
             return n < self.limit
 
 
-def make_handler(fc: Forecaster, limiter: RateLimit | None = None):
+def make_handler(fc: Forecaster, limiter: RateLimit | None = None, timeout: float = 10.0):
+    conn_timeout = timeout
     limiter = limiter or RateLimit()
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = conn_timeout  # 標頭送一半就停的連線，逾時後關掉，不會一直佔著執行緒
         def _send(self, code: int, body: bytes, ctype: str) -> None:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
@@ -112,6 +114,35 @@ def make_handler(fc: Forecaster, limiter: RateLimit | None = None):
     return Handler
 
 
+class BoundedServer(ThreadingHTTPServer):
+    """同時最多 max_conn 個連線；滿了就直接關掉新連線，不再開執行緒（限流在 do_GET 裡才算，擋不住慢速連線）。"""
+    daemon_threads = True
+
+    def __init__(self, addr, handler, max_conn: int = 64):
+        self.slots = threading.BoundedSemaphore(max_conn)
+        super().__init__(addr, handler)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+
+def make_server(host: str, port: int, fc: Forecaster, timeout: float = 10.0, max_conn: int = 64) -> BoundedServer:
+    return BoundedServer((host, port), make_handler(fc, timeout=timeout), max_conn)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--run-dir", required=True, type=Path)
@@ -123,7 +154,7 @@ def main(argv=None):
     fc = Forecaster(a.run_dir, a.data_dir, a.interval)
     threading.Thread(target=fc.loop, daemon=True).start()
     print(f"打開 http://{a.host}:{a.port}", flush=True)
-    ThreadingHTTPServer((a.host, a.port), make_handler(fc)).serve_forever()
+    make_server(a.host, a.port, fc).serve_forever()
 
 
 if __name__ == "__main__":
