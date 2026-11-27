@@ -21,50 +21,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import forecast_live as fl  # noqa: E402
 
-PAGE = """<!doctype html>
-<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>國道車速預測</title>
-<style>
-:root{--bg:#f7f7f5;--fg:#1d1d1b;--muted:#6b6b66;--card:#fff;--line:#e3e2dc;--ok:#1f7a4d;--slow:#a86400;--jam:#b3261e}
-@media (prefers-color-scheme:dark){:root{--bg:#161615;--fg:#ecebe6;--muted:#9c9b94;--card:#201f1d;--line:#34332f;--ok:#5cc58f;--slow:#e3a44a;--jam:#f08074}}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,"Noto Sans TC","Microsoft JhengHei",sans-serif}
-main{max-width:860px;margin:0 auto;padding:20px 16px 40px}
-h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 16px;font-size:13px}
-table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-th,td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
-th:first-child,td:first-child{text-align:left}th{font-size:12px;color:var(--muted);font-weight:600}
-tr:last-child td{border-bottom:0}.ok{color:var(--ok)}.slow{color:var(--slow)}.jam{color:var(--jam);font-weight:600}
-.na{color:var(--muted)}.t{display:block;font-size:11px;color:var(--muted)}.err{color:var(--jam)}
-.legend{font-size:12px;color:var(--muted);margin:12px 0 0}
-.wrap{overflow-x:auto}
-@media (max-width:520px){th,td{padding:7px 6px;font-size:14px}h1{font-size:19px}}
-</style></head><body><main>
-<h1>國道 1 號北向：未來 15 分鐘車速預測</h1>
-<p class="sub" id="status">載入中…</p>
-<div class="wrap"><table><thead><tr><th scope="col">位置</th><th scope="col">最近</th>
-<th scope="col">+5 分</th><th scope="col">+10 分</th><th scope="col">+15 分</th></tr></thead>
-<tbody id="rows"></tbody></table></div>
-<p class="legend">單位 km/h，每格是那個時刻開始的 5 分鐘平均車速。<span class="ok">80 以上順暢</span>、<span class="slow">40～80 車多</span>、<span class="jam">40 以下壅塞</span>。
-模型以聯邦學習＋差分隱私訓練（各 VD 的原始資料不離開本地）；塞車時預測的回升通常比實際快，僅供參考。</p>
-</main><script>
-const cls = v => v == null ? "na" : v >= 80 ? "ok" : v >= 40 ? "slow" : "jam";
-function place(id){const m=/^VD-N(\\d+)-([NS])-([\\d.]+)-/.exec(id);return m?`${m[2]=="N"?"北":"南"} ${(+m[3]).toFixed(1)}K`:id}
-function cell(v,t){const td=document.createElement("td");td.className=cls(v);td.textContent=v==null?"–":v.toFixed(1);
- if(t){const s=document.createElement("span");s.className="t";s.textContent=t;td.appendChild(s)}return td}
-async function load(){
- const st=document.getElementById("status");
- try{const r=await fetch("api/forecast",{cache:"no-store"});const d=await r.json();
-  if(d.error){st.textContent="更新失敗："+d.error;st.className="sub err";if(!d.vds)return}
-  else{st.className="sub";st.textContent=`預測時間點 ${d.end}（台灣時間），抓到 ${d.minutes} 分鐘資料；每 5 分鐘自動更新`}
-  const tb=document.getElementById("rows");tb.replaceChildren();
-  d.vds.sort((a,b)=>parseFloat(a.vdid.split("-")[3])-parseFloat(b.vdid.split("-")[3]));
-  for(const v of d.vds){const tr=document.createElement("tr");const th=document.createElement("td");th.textContent=place(v.vdid);th.title=v.vdid;tr.appendChild(th);
-   tr.appendChild(cell(v.last_kmh,v.last_time));
-   for(let i=0;i<3;i++){const p=v.preds[i];tr.appendChild(p?cell(p.kmh,p.time):cell(null,i==0?"資料不足":""))}
-   tb.appendChild(tr)}
- }catch(e){st.textContent="連不到伺服器";st.className="sub err"}}
-load();setInterval(load,60000);
-</script></body></html>"""
+# 網頁本身在 forecast_page.html（只用 textContent／createElement 放資料，不用 innerHTML）
+PAGE = (Path(__file__).resolve().parent / "forecast_page.html").read_text(encoding="utf-8")
 
 
 class Forecaster:
