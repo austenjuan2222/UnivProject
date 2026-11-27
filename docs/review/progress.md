@@ -19,6 +19,13 @@
 - 測試：`test_multikrum_dropout_does_not_select_every_reply`（n=10、f=2，收到 6 誠實＋2 惡意）、`test_krum_skips_round_below_byzantine_threshold`（krum／multikrum／bulyan）；修前 3 個失敗，修後全套 392 passed。
 - README Krum 表的設定每輪全員參與，修正不影響數字，已加註。
 
+## 2026-11-27（Austen 要求：檢查嚴謹度與樣本數，再往實際使用走）
+- 主表 26 組補到 10 個 seed（`rerun_main32.ps1 -Seeds 4,...,10`；`-Seeds` 改成字串再切，避免 PowerShell 把 "4,5,6" 轉成整數 456）；`paired_main32.py` 可合併多個結果資料夾。
+- 整張主表 34 個檢定做 Holm 校正，「顯著？」改看校正後 p，未校正才 < 0.05 的另外標「否（未校正 p < 0.05）」。判斷改變的列與結論改寫在 EXPERIMENTS「2026-11-27 補到 10 個 seed」。
+  重點：竄改有 HMAC 的代價不再顯著（+0.003 [−0.002, +0.009]）；竄改沒驗證、雜訊 FedAvg 變顯著；裁剪＋中位數的優勢校正後不顯著。
+- 新 VD 測試（8 折留 4 台不訓練）：+0.0095 [+0.0035, +0.0155]，p = 0.021；26／32 台仍贏 naive。
+- 即時預測：`scripts/forecast_live.py`（抓高公局即時檔、遞迴預測 5／10／15 分鐘、可回測）、`scripts/forecast_web.py`（標準函式庫 HTTP 伺服器、預設只聽本機、CSP、只用 textContent）。
+
 ## 上一回合改了什麼（回應 round-10，對 claude/lecture-optimize-loop）
 - high 接受：`results_log.aggregate_train` 測試筆數總和為 0 時本地 MAE 記 NaN，不再除以零（`test_zero_num_test_does_not_divide_by_zero`，修前 ZeroDivisionError）。直接測根本原因的函式，沒有另外接整條 FedAvg。
 - 安全檢查的補充：同票時參考的上一輪集合只在某集合過半時才更新，攻擊者靠「最多但沒過半」不能改掉它（`test_plurality_without_majority_does_not_set_last`）。沒有改成「聚合完成後才更新」：後面的過濾都在同一個函式裡，全被擋時這輪本來就不聚合。

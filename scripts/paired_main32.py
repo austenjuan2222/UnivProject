@@ -1,4 +1,4 @@
-"""主表重跑的同 seed 配對差值：每組對它的同版對照（沒有安全檢查／無攻擊同聚合器），配對 t 檢定 p < 0.05 才算顯著。
+"""主表重跑的同 seed 配對差值：每組對它的同版對照（沒有安全檢查／無攻擊同聚合器），配對 t 檢定、整張表 Holm 校正後 p < 0.05 才算顯著。
 用法：python scripts/paired_main32.py [結果資料夾 ...]（多個資料夾時同組別的 seed 合併，例如 seed 1～3 和補跑的 4～10）
 """
 import csv
@@ -52,14 +52,17 @@ def holm(ps: list[float]) -> list[float]:
     return out
 
 
-def verdict(s) -> str:
-    return "–" if math.isnan(s["p_t"]) else ("是" if s["p_t"] < 0.05 else "否")
+def verdict(p: float, p_holm: float) -> str:
+    """以 Holm 校正後的 p 判定；只有未校正 p < 0.05 的另外標出來，不算顯著。"""
+    if math.isnan(p):
+        return "–"
+    return "是" if p_holm < 0.05 else ("否（未校正 p < 0.05）" if p < 0.05 else "否")
 
 
 def _cells(d, s, p_holm) -> str:
     diffs = "／".join(f"{x:+.3f}" for x in d) if len(d) <= 3 else f"n = {len(d)}"
     return (f"{diffs} | {s['mean_diff']:+.3f} [{s['ci_low']:+.3f}, {s['ci_high']:+.3f}] | "
-            f"{s['p_t']:.3f} | {p_holm:.3f} | {verdict(s)}")
+            f"{s['p_t']:.3f} | {p_holm:.3f} | {verdict(s['p_t'], p_holm)}")
 
 
 def _g(r):

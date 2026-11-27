@@ -33,9 +33,10 @@ class PairedTest(unittest.TestCase):
         self.assertTrue(math.isnan(adj[2]))
 
     def test_verdict_text(self):
-        self.assertEqual(pm.verdict({"p_t": 0.02}), "是")
-        self.assertEqual(pm.verdict({"p_t": 0.2}), "否")
-        self.assertEqual(pm.verdict({"p_t": float("nan")}), "–")
+        self.assertEqual(pm.verdict(0.001, 0.02), "是")
+        self.assertEqual(pm.verdict(0.02, 0.3), "否（未校正 p < 0.05）")  # 多重比較校正後不算
+        self.assertEqual(pm.verdict(0.2, 1.0), "否")
+        self.assertEqual(pm.verdict(float("nan"), float("nan")), "–")
 
 
 if __name__ == "__main__":
