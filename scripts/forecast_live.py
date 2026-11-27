@@ -86,17 +86,17 @@ def forecast(model, cfg: dict, series: pd.Series, mean: float, std: float, steps
     return out
 
 
-def fetch_minutes(end: dt.datetime, keep, minutes: int = LOOKBACK_MIN, fetch=None) -> list[dict]:
-    """抓 end 之前 minutes 分鐘的每分鐘檔；不存在（還沒上傳）的分鐘略過。"""
+def fetch_minutes(end: dt.datetime, keep, minutes: int = LOOKBACK_MIN, fetch=None, after: int = 0,
+                  workers: int = 4) -> list[dict]:
+    """抓 end 前 minutes 分鐘到 end 後 after 分鐘的每分鐘檔；不存在（還沒上傳）的分鐘略過。workers 不要設太高。"""
+    from concurrent.futures import ThreadPoolExecutor
     from download_vd import DEFAULT_BASE, _fetch_parse, http_fetch
     fetch = fetch or http_fetch
-    rows = []
-    for k in range(minutes, 0, -1):
-        t = end - dt.timedelta(minutes=k)
-        url = f"{DEFAULT_BASE}/{t:%Y%m%d}/VDLive_{t:%H%M}.xml.gz"
-        r, _err = _fetch_parse(url, fetch, keep, retries=2, backoff=1.0)
-        rows += r
-    return rows
+    times = [end + dt.timedelta(minutes=k) for k in range(-minutes, after)]
+    urls = [f"{DEFAULT_BASE}/{t:%Y%m%d}/VDLive_{t:%H%M}.xml.gz" for t in times]
+    with ThreadPoolExecutor(workers) as ex:
+        return [r for rows, _err in ex.map(lambda u: _fetch_parse(u, fetch, keep, retries=2, backoff=1.0), urls)
+                for r in rows]
 
 
 def main(argv=None):
@@ -118,15 +118,24 @@ def main(argv=None):
     else:
         end = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).replace(tzinfo=None, second=0, microsecond=0)
     wanted = set(vds)
-    rows = fetch_minutes(end, keep=wanted.__contains__)
-    series = five_minute_series(rows, pd.Timestamp(end))
+    now = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).replace(tzinfo=None)
+    after = 25 if end + dt.timedelta(minutes=25) <= now else 0  # 回測：預測的時段已過，順便抓實際值
+    rows = fetch_minutes(end, keep=wanted.__contains__, after=after)
+    t_end = pd.Timestamp(end)
+    full = five_minute_series(rows, t_end + pd.Timedelta(minutes=after))
     print(f"預測時間點 {end:%Y-%m-%d %H:%M}（台灣時間）；抓到 {len({r['time'] for r in rows})} 分鐘的資料")
-    print("| VD | 最近 5 分鐘車速 | +5 分 | +10 分 | +15 分 |\n|---|---|---|---|---|")
+    print("每格是「該時刻開始的 5 分鐘」平均車速 km/h" + ("；括號內是實際值" if after else ""))
+    print("| VD | 最近一段 | 預測 1 | 預測 2 | 預測 3 |\n|---|---|---|---|---|")
     for v in vds:
-        s = series.get(v, pd.Series(dtype=float))
+        s_all = full.get(v, pd.Series(dtype=float))
+        s = s_all[s_all.index < t_end.floor("5min")]
         f = forecast(model, cfg, s, *stats[v])
         last = f"{s.iloc[-1]:.1f}（{s.index[-1]:%H:%M}）" if len(s) and not np.isnan(s.iloc[-1]) else "–"
-        cells = " | ".join(f"{kmh:.1f}" for _, kmh in f) if f else "資料不足 | – | –"
+
+        def cell(t, kmh):
+            act = s_all.get(t, np.nan) if after else np.nan
+            return f"{t:%H:%M} {kmh:.1f}" + ("" if np.isnan(act) else f"（{act:.1f}）")
+        cells = " | ".join(cell(t, kmh) for t, kmh in f) if f else "資料不足 | – | –"
         print(f"| {v} | {last} | {cells} |")
 
 
