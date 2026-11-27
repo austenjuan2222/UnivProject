@@ -19,7 +19,12 @@
 - 測試：`test_multikrum_dropout_does_not_select_every_reply`（n=10、f=2，收到 6 誠實＋2 惡意）、`test_krum_skips_round_below_byzantine_threshold`（krum／multikrum／bulyan）；修前 3 個失敗，修後全套 392 passed。
 - README Krum 表的設定每輪全員參與，修正不影響數字，已加註。
 
-## 上一回合改了什麼（回應 round-08，對 claude/lecture-optimize-loop）
+## 上一回合改了什麼（回應 round-09，對 claude/lecture-optimize-loop）
+- high 接受：`_well_formed_metrics` 要求 round／dp-steps／diverged／ft-diverged／num-test／num-jam 是有限的非負整數值（≤ 2^31），合法簽章的 NaN、inf、0.5、−1 都被拒絕，不再讓紀錄程式的 `int()` 中斷整輪；`results_log` 的完整性檢查也防同類值。測試 `test_signed_nan_dp_steps_does_not_abort_train`、`test_signed_infinite_diverged_does_not_abort_train`（接真的 RunLogger 與 FedAvg），修前 ValueError／OverflowError。
+- 安全檢查的補充：欄位集合同票時不再整輪跳過，改選上一輪被接受的欄位集合；沒有上一輪可依才跳過（`test_tie_breaks_toward_key_set_of_last_accepted_round`）。全套 434 passed、2 skipped。
+- medium 接受：`scripts/paired_main32.py` 改用 `seed_stats.paired_summary`（配對 t，p < 0.05），輸出平均差、95% CI 與 p（`tests/test_paired_main32.py`）。docs/EXPERIMENTS.md 主表兩張表用原始 summary.csv 重產；10 台裁剪＋中位數對只裁剪 p = 0.046（舊寫的 0.049 由 3 位小數估）；「疊加最好」撤回（對只中位數 p = 0.20）；斷線改寫成 +0.011 [−0.016, +0.037]、p = 0.23，不再說「幾乎一樣」。
+
+## round-08
 - high 接受：`guard._majority_metric_keys` 在交給 Flower 前只留指標欄位集合和多數相同的回覆，最多的集合同票時整輪不聚合；訓練與評估都套用。沒有照建議依伺服器設定列出預期欄位：欄位隨 DP、安全聚合、微調、攻擊模擬而變，列表容易漏，多數決在被入侵 VD 不過半時足夠（過半時聚合本來就守不住），程式裡已註明。
 - 同時修舊分支提過的列表型指標：`_well_formed_metrics` 要求 MetricRecord 每個值都是純量數字（NaN 照留）。
 - 測試：`InconsistentMetricKeysTest`（多欄位的訓練回覆、少欄位的評估回覆、同票跳過，接 Flower 真的 FedAvg）、列表型 train-loss／mae-kmh／mse-kmh；修前 5 個失敗（InconsistentMessageReplies、列表被聚合），修後全套 431 passed。`test_two_huge_clipped_counts_do_not_overflow_the_sum` 的誠實回覆補上 secagg-clipped 欄位，仍測到溢位那一關。

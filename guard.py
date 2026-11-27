@@ -121,21 +121,32 @@ def _well_formed_metrics(c: RecordDict) -> bool:
     pid, n = float(raw[0]), float(raw[1])
     if raw[2] != 1:  # client-level DP 的等權平均：只能是 1
         return False
+    # 紀錄程式會 int() 或拿來加權的欄位：NaN／inf 會讓 int() 丟例外、讓整輪當掉，非整數或負數也不合理
+    if not all(k not in m or (math.isfinite(m[k]) and float(m[k]).is_integer() and 0 <= m[k] <= 2**31)
+               for k in _INT_METRICS):
+        return False
     # 絕對上限：只有兩三份更新時沒有中位數可比，自報天文數字的筆數也不能蓋過別人或讓加權總和溢位
     return pid.is_integer() and pid >= 0 and n.is_integer() and 0 < n <= 2**31
 
 
-def _majority_metric_keys(msgs: list) -> list:
+_INT_METRICS = ("round", "dp-steps", "diverged", "ft-diverged", "num-test", "num-jam")
+
+
+def _majority_metric_keys(msgs: list, last: frozenset | None = None) -> tuple[list, frozenset | None]:
     """Flower 聚合指標時各回覆欄位不同就丟 InconsistentMessageReplies：合法金鑰多簽一個欄位就能讓整輪當掉。
-    只留欄位集合和多數相同的回覆；最多的集合有兩個以上同票時整輪不聚合（不讓先到或任一方決定）。
-    shortcut: 用多數決而不是依伺服器設定列出預期欄位，被入侵的 VD 過半時會由它們決定，但那時聚合本來就守不住。"""
+    只留欄位集合和多數相同的回覆。最多的集合同票時選上一輪聚合過的集合 last（只剩兩份、一份是攻擊者時不讓它拖垮整輪）；
+    同票的集合裡沒有 last（例如第一輪）才整輪不聚合，不讓先到或任一方決定。回傳 (留下的回覆, 採用的集合)。
+    shortcut: 用多數決＋上一輪而不是依伺服器設定列出預期欄位（欄位隨 DP、安全聚合、微調、攻擊模擬而變），
+    被入侵的 VD 過半時會由它們決定，但那時聚合本來就守不住。"""
     if not msgs:
-        return msgs
+        return msgs, last
     sets = [frozenset(m.content["metrics"].keys()) for m in msgs]
     counts = Counter(sets).most_common()
-    if len(counts) > 1 and counts[0][1] == counts[1][1]:
-        return []
-    return [m for m, s in zip(msgs, sets) if s == counts[0][0]]
+    top = [k for k, c in counts if c == counts[0][1]]
+    pick = top[0] if len(top) == 1 else (last if last in top else None)
+    if pick is None:
+        return [], last
+    return [m for m, s in zip(msgs, sets) if s == pick], pick
 
 
 _SECAGG_INT_METRICS = ("secagg-clipped", "secagg-self-mask", "secagg-num-vd", "secagg-bits", "secagg-frac-bits",
@@ -511,6 +522,7 @@ class GuardedStrategy(Strategy):
         self._last: dict = {}  # 每個 VD 上一輪的訊息（模擬重送用）
         # VD 編號 ↔ 送出它的節點：第一次通過 HMAC 時綁定（TOFU），之後別的節點拿同一編號（偷來的金鑰）或同節點換編號都拒絕
         self._node_of_pid: dict = {}
+        self._metric_keys: dict = {}  # 上一輪聚合過的指標欄位集合（train／evaluate），同票時用
         self._pid_of_node: dict = {}
         self._global: dict = {}
         self._grid: Grid | None = None
@@ -661,7 +673,7 @@ class GuardedStrategy(Strategy):
             stats["n_rejected"] += sum(d is None for d in deltas.values())
             kept = [m for m in kept if deltas[id(m)] is not None]
         before = len(kept)
-        kept = _majority_metric_keys(kept)
+        kept, self._metric_keys["train"] = _majority_metric_keys(kept, self._metric_keys.get("train"))
         stats["n_rejected"] += before - len(kept)
         if len(kept) >= 3:
             # 自報的資料筆數超過這輪中位數 10 倍：FedAvg 下等於一台 VD 蓋過其他所有人
@@ -945,7 +957,7 @@ class GuardedStrategy(Strategy):
                     seen.add(node)
                     good.append(m)
             ok = good
-        ok = _majority_metric_keys(ok)
+        ok, self._metric_keys["evaluate"] = _majority_metric_keys(ok, self._metric_keys.get("evaluate"))
         if self.on_round:
             self.on_round(server_round, {"n_eval_rejected": len(replies) - len(ok)})
         return self.inner.aggregate_evaluate(server_round, ok)

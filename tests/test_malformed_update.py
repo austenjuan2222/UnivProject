@@ -92,7 +92,38 @@ class InconsistentMetricKeysTest(unittest.TestCase):
         self.assertIn("mse-kmh", out)
 
     def test_tie_between_key_sets_skips_round(self):
+        # 還沒有聚合過、不知道該有哪些欄位時，同票整輪不聚合
         self.assertIsNone(self.g.aggregate_evaluate(1, [eval_reply(self.keys, 0), eval_reply(self.keys, 1, extra=0)]))
+
+    def test_tie_breaks_toward_key_set_of_last_accepted_round(self):
+        # 安全檢查：只剩 2 份回覆、其中 1 份是攻擊者時，不能讓它拖垮整輪；選上一輪聚合過的欄位集合
+        self.g.aggregate_evaluate(1, [eval_reply(self.keys, p) for p in range(3)])
+        out = self.g.aggregate_evaluate(1, [eval_reply(self.keys, 0), eval_reply(self.keys, 1, extra=0)])
+        self.assertIsNotNone(out)
+        self.assertNotIn("extra", out)
+
+    def _logged_train(self, bad):
+        # 接上真的紀錄回呼（server_app 的接法），_flush 換掉不寫檔
+        import tempfile
+        from flwr.serverapp.strategy import FedAvg
+        from results_log import RunLogger
+        log = RunLogger(tempfile.mkdtemp(), {})
+        log._flush = lambda: None
+        self.g.inner = FedAvg(train_metrics_aggr_fn=lambda r, _k: MetricRecord(log.on_train([dict(x["metrics"]) for x in r])))
+        base = {"round": 1, "dp-steps": 50, "diverged": 0}
+        replies = [self.train_reply(p, **{**base, **(bad if p == 1 else {})}) for p in range(3)]
+        arrays, metrics = self.g.aggregate_train(1, replies)
+        np.testing.assert_allclose(arrays["s"].numpy(), [1, 1])
+        return log
+
+    def test_signed_nan_dp_steps_does_not_abort_train(self):
+        log = self._logged_train({"dp-steps": float("nan")})
+        self.assertEqual(sorted(p for _, p in log.clients), [0, 2])
+
+    def test_signed_infinite_diverged_does_not_abort_train(self):
+        for bad in (float("inf"), 0.5, -1):
+            log = self._logged_train({"diverged": bad})
+            self.assertEqual(sorted(p for _, p in log.clients), [0, 2], bad)
 
 
 class MalformedUpdateTest(unittest.TestCase):

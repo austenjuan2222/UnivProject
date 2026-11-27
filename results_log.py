@@ -130,6 +130,14 @@ class RunLogger:
         """可用性：少欄位或 MSE 為負的回覆不記錄（不然紀錄程式會讓整個伺服器當掉），並發出警告。"""
         def ok(r):
             need = keys + (("jam-mae-kmh", "jam-bias-kmh") if "num-jam" in r else ())
+            # 防禦性：伺服器閘道已擋，直接呼叫紀錄時仍不能讓 int(NaN) 或 float([..]) 讓整個伺服器當掉
+            ints = ("round", "partition-id", "num-examples", "dp-steps", "diverged", "ft-diverged")
+            try:
+                if any(k in r and not float(r[k]).is_integer() for k in ints) or any(
+                        not isinstance(v, (int, float)) for v in r.values()):
+                    return False
+            except (TypeError, ValueError, OverflowError):
+                return False
             return all(k in r for k in need) and not float(r.get("mse-kmh", 0)) < 0
         good = [r for r in replies if ok(r)]
         if len(good) < len(replies):
