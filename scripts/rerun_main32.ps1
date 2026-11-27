@@ -1,7 +1,8 @@
 # Rerun the README "attack and availability" main table (32 VD, 28 days, DP sigma=1.1, seeds 1 2 3)
 # with the current code, so every row gets per-seed paired differences against the same-version control.
-# Usage (from repo root): powershell -ExecutionPolicy Bypass -File scripts/rerun_main32.ps1
-# Output: results/night26/main32/<label>/<timestamp>/summary.csv ; skips labels that already have a summary.csv.
+# Usage (from repo root): powershell -ExecutionPolicy Bypass -File scripts/rerun_main32.ps1 [-Seeds 4,5,6] [-OutRoot results\night27\main32_s4_10]
+# Output: <OutRoot>/<label>/<timestamp>/summary.csv ; skips labels that already have a summary.csv.
+param([int[]]$Seeds = @(1, 2, 3), [string]$OutRoot = 'results\night26\main32')
 $ErrorActionPreference = 'Continue'
 $env:PYTHONUTF8 = '1'
 $repo = Split-Path $PSScriptRoot -Parent
@@ -38,11 +39,11 @@ $runs = [ordered]@{
 }
 Set-Location $repo
 foreach ($k in $runs.Keys) {
-    $out = Join-Path $repo "results\night26\main32\$k"
+    $out = Join-Path $repo (Join-Path $OutRoot $k)
     if (Get-ChildItem $out -Recurse -Filter summary.csv -ErrorAction SilentlyContinue) { Write-Output "skip $k"; continue }
     if (Test-Path (Join-Path $repo 'docs\review\STOP')) { Write-Output 'STOP file present; stopping.'; break }
     Write-Output "$(Get-Date -Format s) start $k"
-    $a = @('scripts\run_experiments.py', '--data-dir', $data, '--results-dir', $out, '--sigmas', '1.1', '--skip-nodp', '--seeds', '1', '2', '3')
+    $a = @('scripts\run_experiments.py', '--data-dir', $data, '--results-dir', $out, '--sigmas', '1.1', '--skip-nodp', '--seeds') + ($Seeds | ForEach-Object { "$_" })
     if ($runs[$k]) { $a += @('--extra', $runs[$k]) }  # PS 5.1 drops an empty-string argument, so omit --extra entirely
     & $py @a
     Write-Output "$(Get-Date -Format s) done $k exit=$LASTEXITCODE"

@@ -1,4 +1,5 @@
 import importlib.util
+import math
 import unittest
 from pathlib import Path
 
@@ -20,6 +21,16 @@ class PairedTest(unittest.TestCase):
     def test_mixed_sign_is_not_significant(self):
         _, s = pm.paired({"s1": 2.5, "s2": 1.9, "s3": 2.5}, {"s1": 2.2, "s2": 2.2, "s3": 2.2})
         self.assertGreater(s["p_t"], 0.05)
+
+    def test_holm_adjusts_for_number_of_tests(self):
+        # 主表做 30 幾個檢定：Holm 校正後最小的 p 乘上檢定數，之後保持單調、最多 1，NaN 不算進檢定數
+        nan = float("nan")
+        adj = pm.holm([0.01, 0.04, nan, 0.03, 0.5])
+        self.assertAlmostEqual(adj[0], 0.04)
+        self.assertAlmostEqual(adj[3], 0.09)
+        self.assertAlmostEqual(adj[1], 0.09)  # 0.04×2=0.08 < 前一個 0.09，取單調
+        self.assertAlmostEqual(adj[4], 0.5)
+        self.assertTrue(math.isnan(adj[2]))
 
     def test_verdict_text(self):
         self.assertEqual(pm.verdict({"p_t": 0.02}), "是")
