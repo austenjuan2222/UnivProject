@@ -83,5 +83,68 @@ class PredictAllTest(unittest.TestCase):
             srv.shutdown()
 
 
+def _rows(start, minutes, speed=90.0, skip=()):
+    import datetime as dt
+    t0 = dt.datetime.strptime(start, "%Y-%m-%d %H:%M")
+    out = []
+    for m in range(minutes):
+        t = t0 + dt.timedelta(minutes=m)
+        if f"{t:%H:%M}" in skip:
+            continue
+        sp = speed(t) if callable(speed) else speed
+        out.append({"vdid": "V", "time": f"{t:%Y-%m-%dT%H:%M}:00+08:00", "speed": sp, "volume": 1, "occupancy": 5, "status": 0})
+    return out
+
+
+def _predict(rows, end):
+    import datetime as dt
+    orig = fl.fetch_minutes
+    fl.fetch_minutes = lambda end, keep, after=0, fetch=None: [r for r in rows if keep(r["vdid"])]
+    try:
+        return fl.predict_all(naive_model(), {**CFG}, {"V": (85.0, 10.0)}, ["V"], dt.datetime.strptime(end, "%Y-%m-%d %H:%M"))
+    finally:
+        fl.fetch_minutes = orig
+
+
+class Round11Test(unittest.TestCase):
+    def test_backtest_future_rows_do_not_change_forecast_inputs(self):
+        # 07:05 那一桶整個缺；即時版本在 07:13 時沒有 07:10 之後的資料，不能用未來的值把它補起來
+        gap = {f"07:0{m}" for m in range(5, 10)}
+        a = _predict(_rows("2024-03-29 06:00", 140, 90.0, gap), "2024-03-29 07:13")
+        b = _predict(_rows("2024-03-29 06:00", 140, lambda t: 50.0 if t.hour == 7 and t.minute >= 13 else 90.0, gap),
+                     "2024-03-29 07:13")
+        self.assertEqual(a["vds"][0]["preds"], [])  # 輸入最後一桶缺值：不預測
+        self.assertEqual([q["kmh"] for q in a["vds"][0]["preds"]], [q["kmh"] for q in b["vds"][0]["preds"]])
+
+    def test_stale_tail_is_not_reported_as_fresh_forecast(self):
+        r = _predict(_rows("2024-03-29 06:00", 46), "2024-03-29 07:13")  # 資料停在 06:45
+        self.assertTrue(r["stale"])
+        self.assertEqual(r["data_until"], "06:45")
+        self.assertEqual(r["vds"][0]["preds"], [])
+
+    def test_source_lag_is_not_stale_and_partial_bucket_is_dropped(self):
+        r = _predict(_rows("2024-03-29 06:00", 68), "2024-03-29 07:13")  # 來源晚約 6 分鐘：最後一分鐘 07:07
+        self.assertFalse(r["stale"])
+        v = r["vds"][0]
+        self.assertEqual(v["last_time"], "07:00")  # 07:05 那一桶只有 3 分鐘，還沒收齊
+        self.assertEqual(r["data_until"], "07:05")
+
+    def test_forecast_labels_match_target_timestamps(self):
+        r = _predict(_rows("2024-03-29 23:00", 74), "2024-03-30 00:13")  # 跨午夜
+        self.assertEqual([(q["at"], q["ahead_min"]) for q in r["vds"][0]["preds"]],
+                         [("2024-03-30 00:10", -3), ("2024-03-30 00:15", 2), ("2024-03-30 00:20", 7)])
+
+
+class RateLimitTest(unittest.TestCase):
+    def test_rate_limit_per_client_and_window(self):
+        spec2 = importlib.util.spec_from_file_location("forecast_web", Path(__file__).parents[1] / "scripts" / "forecast_web.py")
+        fw = importlib.util.module_from_spec(spec2)
+        spec2.loader.exec_module(fw)
+        rl = fw.RateLimit(limit=3, window=60)
+        self.assertEqual([rl.allow("a", now=0) for _ in range(4)], [True, True, True, False])
+        self.assertTrue(rl.allow("b", now=1))  # 別的來源不受影響
+        self.assertTrue(rl.allow("a", now=61))  # 下一個時間窗重新計算
+
+
 if __name__ == "__main__":
     unittest.main()

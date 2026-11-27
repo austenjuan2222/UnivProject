@@ -59,11 +59,12 @@ header h1{font-size:clamp(22px,4.6vw,30px);line-height:1.2;letter-spacing:-.01em
 .fc{text-align:center;border-radius:8px;padding:5px 2px;background:var(--soft,transparent)}
 .fc b{font-size:15px;font-weight:600;display:inline-flex;align-items:center;gap:2px;color:var(--c,var(--muted))}
 .fc svg{width:12px;height:12px}
-.ok{--c:var(--ok)}.slow{--c:var(--slow);--soft:var(--slow-soft)}.jam{--c:var(--jam);--soft:var(--jam-soft)}
+.ok{--c:var(--ok);--soft:transparent}.slow{--c:var(--slow);--soft:var(--slow-soft)}.jam{--c:var(--jam);--soft:var(--jam-soft)}
 .now.ok b{color:var(--ok)}.now.slow b{color:var(--slow)}.now.jam b{color:var(--jam)}
 .na b{color:var(--muted);font-weight:400}
 .cols{display:grid;grid-template-columns:28px minmax(84px,1fr) 76px repeat(3,minmax(58px,74px));gap:0 8px;padding:0 14px 6px 6px;font-size:12px;color:var(--muted)}
-.cols span:nth-child(3){text-align:right}.cols span:nth-child(n+4){text-align:center}
+.cols span:nth-child(3){text-align:right}.cols span:nth-child(n+4){text-align:center;line-height:1.25}
+.cols small{display:block;font-size:10px;opacity:.85}
 .gap{grid-column:2/-1;color:var(--muted);font-size:12px;padding:2px 0}
 .empty{padding:28px 16px;text-align:center;color:var(--muted)}
 .note{color:var(--muted);font-size:13px;line-height:1.6;margin:20px 2px 0;max-width:68ch}
@@ -87,7 +88,7 @@ header h1{font-size:clamp(22px,4.6vw,30px);line-height:1.2;letter-spacing:-.01em
 <body>
 <main>
 <header>
-  <h1>國道 1 號北向<span class="h2">未來 15 分鐘車速預報</span></h1>
+  <h1>國道 1 號北向<span class="h2">接下來幾分鐘的車速預報</span></h1>
   <p class="meta"><span class="live" id="live"><i></i><span id="age">載入中…</span></span><span id="next"></span></p>
 </header>
 <p class="summary" id="summary">正在抓最新的路況資料，大約 1 分鐘。</p>
@@ -103,10 +104,10 @@ header h1{font-size:clamp(22px,4.6vw,30px);line-height:1.2;letter-spacing:-.01em
     <li><span style="background:var(--jam)"></span>壅塞 &lt;40</li>
   </ul>
 </div>
-<div class="cols" aria-hidden="true"><span></span><span>里程</span><span>現在</span><span>+5 分</span><span>+10 分</span><span>+15 分</span></div>
+<div class="cols" aria-hidden="true"><span></span><span>里程</span><span>最新實測</span><span id="h0">預測</span><span id="h1"></span><span id="h2"></span></div>
 <ol class="road" id="road" aria-label="各偵測器的車速與預測"></ol>
 <div class="note">
-  <p>單位 km/h。每格是那個時刻開始的 5 分鐘平均車速；高公局開放資料本身晚約 5 分鐘，所以「現在」其實是幾分鐘前。</p>
+  <p>單位 km/h。每格是那個時刻開始的 5 分鐘平均車速。高公局開放資料要晚幾分鐘才上傳，所以「最新實測」是幾分鐘前的路況；預測欄最上面標的是實際時刻，第一欄通常就是現在這 5 分鐘。</p>
   <p>預測模型以聯邦學習＋差分隱私訓練，各偵測器的原始資料不離開本地。塞車時預測的回升通常比實際快，僅供參考，請以現場路況與官方資訊為準。</p>
 </div>
 </main>
@@ -137,31 +138,56 @@ function worse(v) {
   const order = {ok: 0, slow: 1, jam: 2};
   return v.last_kmh - last.kmh >= 5 || order[cls(last.kmh)] > order[cls(v.last_kmh)];
 }
-function fcCell(p, h, base) {
-  const d = el("div", "fc " + (p ? cls(p.kmh) : "na")); d.dataset.h = h;
+const tw = s => new Date(s.replace(" ", "T") + ":00+08:00").getTime(); // "YYYY-MM-DD HH:MM" 台灣時間
+const hhmm = ms => new Date(ms).toLocaleTimeString("zh-TW", {hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Taipei"});
+function rel(at) { // 目標 5 分鐘時段相對於「真正的現在」
+  const start = tw(at), now = Date.now();
+  if (now >= start && now < start + 300000) return "現在這段";
+  const m = Math.round((start - now) / 60000);
+  return m > 0 ? `${m} 分後` : `${-m} 分前`;
+}
+function fcCell(p, base) {
+  const d = el("div", "fc " + (p ? cls(p.kmh) : "na"));
   const b = el("b");
   if (p) {
     b.append(p.kmh.toFixed(0));
     if (base != null && Math.abs(p.kmh - base) >= 3) b.appendChild(arrow(p.kmh > base ? 1 : -1));
-    d.title = `${p.time} 起 5 分鐘：預測 ${p.kmh.toFixed(1)} km/h（${WORD[cls(p.kmh)]}）`;
+    d.title = `${p.time} 起 5 分鐘（${rel(p.at)}）：預測 ${p.kmh.toFixed(1)} km/h（${WORD[cls(p.kmh)]}）`;
   } else b.textContent = "–";
   d.appendChild(b); d.appendChild(el("small", "", p ? p.time : ""));
   return d;
 }
-function summarize(vds) {
+function heads(vds) {
+  const ref = vds.find(v => v.preds.length == 3);
+  ["h0", "h1", "h2"].forEach((id, i) => {
+    const h = $(id); h.replaceChildren();
+    if (ref) h.append(ref.preds[i].time, el("small", "", rel(ref.preds[i].at)));
+    else h.textContent = i ? "" : "預測";
+  });
+  return ref ? hhmm(tw(ref.preds[2].at) + 300000) : null;
+}
+function summarize(vds, until) {
   const s = $("summary"); s.replaceChildren();
+  const b = t => el("b", "", t);
   const have = vds.filter(v => v.last_kmh != null);
-  if (!have.length) { s.textContent = "目前抓不到任何偵測器的資料，可能是開放資料還沒更新，稍後會自動重試。"; return; }
+  if (data.stale) {
+    s.append("開放資料停在 ", b(data.data_until), `，已經 ${data.data_age_min} 分鐘沒有新資料，所以先不預測。下面是最後一次的實測。`);
+  } else if (!have.length) { s.textContent = "目前抓不到任何偵測器的資料，可能是開放資料還沒更新，稍後會自動重試。"; }
+  if (!have.length || data.stale) { $("f-worse").textContent = "可能變慢 0"; $("f-all").textContent = `全部路段 ${vds.length}`; return; }
   const n = {ok: 0, slow: 0, jam: 0}; have.forEach(v => n[cls(v.last_kmh)]++);
-  const w = vds.filter(worse);
-  const b = t => { const x = el("b", "", t); return x; };
-  if (n.slow + n.jam == 0) s.append("目前 ", b(`${have.length} 處都順暢`), "。");
-  else s.append("目前 ", b(`${n.ok} 處順暢`), n.slow ? `、${n.slow} 處車多` : "", n.jam ? `、${n.jam} 處壅塞` : "", "。");
-  if (!w.length) s.append("未來 15 分鐘預計沒有路段明顯變慢。");
+  if (n.slow + n.jam == 0) s.append("最新實測 ", b(`${have.length} 處都順暢`), "。");
+  else s.append("最新實測 ", b(`${n.ok} 處順暢`), n.slow ? `、${n.slow} 處車多` : "", n.jam ? `、${n.jam} 處壅塞` : "", "。");
+  const can = vds.filter(v => v.preds.length == 3), miss = vds.length - can.length, w = can.filter(worse);
+  if (!can.length) s.append("目前沒有路段的資料足夠做預測。");
   else {
-    w.sort((a, c) => (c.last_kmh - c.preds[2].kmh) - (a.last_kmh - a.preds[2].kmh));
-    const top = w.slice(0, 2).map(v => `${place(v.vdid).name}（${v.last_kmh.toFixed(0)}→${v.preds[2].kmh.toFixed(0)}）`).join("、");
-    s.append("未來 15 分鐘 ", b(`${w.length} 處可能變慢`), `：${top}${w.length > 2 ? " 等" : ""}。`);
+    s.append(`到 ${until} 前，可預測的 ${can.length} 處中`);
+    if (!w.length) s.append("沒有路段明顯變慢");
+    else {
+      w.sort((a, c) => (c.last_kmh - c.preds[2].kmh) - (a.last_kmh - a.preds[2].kmh));
+      const top = w.slice(0, 2).map(v => `${place(v.vdid).name}（${v.last_kmh.toFixed(0)}→${v.preds[2].kmh.toFixed(0)}）`).join("、");
+      s.append(b(`${w.length} 處可能變慢`), `：${top}${w.length > 2 ? " 等" : ""}`);
+    }
+    s.append(miss ? `；另 ${miss} 處資料不足，無法判斷。` : "。");
   }
   $("f-worse").textContent = `可能變慢 ${w.length}`;
   $("f-all").textContent = `全部路段 ${vds.length}`;
@@ -170,7 +196,8 @@ function render(fresh) {
   const road = $("road"); road.replaceChildren(); road.classList.toggle("fresh", !!fresh);
   if (!data || !data.vds) { road.appendChild(el("li", "empty", "第一次預測還在進行，大約 1 分鐘。")); return; }
   const vds = [...data.vds].sort((a, b) => place(a.vdid).km - place(b.vdid).km);
-  summarize(vds);
+  const until = heads(vds);
+  summarize(vds, until);
   const shown = filter == "worse" ? vds.filter(worse) : vds;
   if (!shown.length) { road.appendChild(el("li", "empty", "目前沒有預計會變慢的路段。")); return; }
   for (const v of shown) {
@@ -182,23 +209,26 @@ function render(fresh) {
     now.append(el("b", "", v.last_kmh == null ? "–" : v.last_kmh.toFixed(0)), el("small", "", v.last_time ? `${v.last_time} 起` : "沒有資料"));
     li.appendChild(now);
     const fcs = el("div", "fcs");
-    if (!v.preds.length) { li.appendChild(el("div", "gap", "最近 1 小時資料有缺，這一處先不預測")); }
-    else { ["+5 分", "+10 分", "+15 分"].forEach((h, i) => fcs.appendChild(fcCell(v.preds[i], h, v.last_kmh))); li.appendChild(fcs); }
-    li.setAttribute("aria-label", `${p.name}，現在 ${v.last_kmh == null ? "沒有資料" : v.last_kmh.toFixed(0) + " 公里"}` +
-      (v.preds.length ? `，15 分鐘後預測 ${v.preds[v.preds.length - 1].kmh.toFixed(0)} 公里` : ""));
+    if (!v.preds.length) li.appendChild(el("div", "gap", data.stale ? "資料太舊，先不預測" : "最近 1 小時資料有缺，這一處先不預測"));
+    else { [0, 1, 2].forEach(i => fcs.appendChild(fcCell(v.preds[i], v.last_kmh))); li.appendChild(fcs); }
+    const lastP = v.preds[v.preds.length - 1];
+    li.setAttribute("aria-label", `${p.name}，最新實測 ${v.last_kmh == null ? "沒有資料" : `${v.last_time} 起 ${v.last_kmh.toFixed(0)} 公里`}` +
+      (lastP ? `，預測 ${lastP.time} 起 ${lastP.kmh.toFixed(0)} 公里` : "，沒有預測"));
     road.appendChild(li);
   }
 }
-function endTime(d) { return new Date(d.end.replace(" ", "T") + ":00+08:00").getTime(); }
 function tick() {
   const live = $("live"), age = $("age");
   if (!data || !data.end) return;
-  const mins = Math.max(0, Math.round((Date.now() - endTime(data)) / 60000));
-  age.textContent = `${data.end.slice(11)} 預測，${mins < 1 ? "剛剛" : mins + " 分鐘前"}`;
-  const stale = mins > 2 * STEP + 2;
+  const endMs = tw(data.end);
+  let obs = tw(data.end.slice(0, 11) + data.data_until); if (obs > endMs) obs -= 86400000; // 跨午夜
+  const mins = Math.max(0, Math.round((Date.now() - obs) / 60000));
+  age.textContent = `實測到 ${data.data_until}（${mins} 分鐘前）`;
+  const stale = data.stale || mins > 20;
   live.className = "live" + (failures ? " down" : stale ? " stale" : "");
-  const nxt = STEP - (mins % STEP);
-  $("next").textContent = failures ? "連不到伺服器，自動重試中" : stale ? "資料比平常舊，可能是開放資料延遲" : `約 ${nxt} 分鐘後更新`;
+  const sinceRun = Math.max(0, Math.round((Date.now() - endMs) / 60000));
+  $("next").textContent = failures ? "連不到伺服器，自動重試中" : stale ? "資料比平常舊，可能是開放資料延遲" : `約 ${Math.max(1, STEP - sinceRun)} 分鐘後更新`;
+  if (data.vds) heads([...data.vds]); // 「現在這段／幾分後」隨時間更新
 }
 async function load() {
   try {

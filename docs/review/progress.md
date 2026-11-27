@@ -19,6 +19,15 @@
 - 測試：`test_multikrum_dropout_does_not_select_every_reply`（n=10、f=2，收到 6 誠實＋2 惡意）、`test_krum_skips_round_below_byzantine_threshold`（krum／multikrum／bulyan）；修前 3 個失敗，修後全套 392 passed。
 - README Krum 表的設定每輪全員參與，修正不影響數字，已加註。
 
+## 上一回合改了什麼（回應 round-11）
+- medium 全部接受（即時預測）：
+  - 回測不再用未來資料補輸入：輸入只取預測時間點前的列再補值，實際值另外算（`test_backtest_future_rows_do_not_change_forecast_inputs`，修前 07:05 缺桶被 07:10 補齊而給出預測）。
+  - 尾端過期：所有 VD 對齊到同一條時間軸，結束點是 `min(預測時間點, 來源最後一分鐘)` 的整 5 分鐘；資料比預測時間點舊超過 20 分鐘就不預測並回報 `stale`、`data_until`、`data_age_min`（`test_stale_tail_is_not_reported_as_fresh_forecast`）。來源晚上傳時沒收齊的最後一桶不用（`test_source_lag_is_not_stale_and_partial_bucket_is_dropped`）。
+  - 標示：每個預測回傳完整目標時刻 `at` 與相對預測時間點的 `ahead_min`（`test_forecast_labels_match_target_timestamps`，含跨午夜）；網頁欄位改標實際時刻與相對「真正現在」的「現在這段／幾分後／幾分前」，手機也顯示。
+  - 摘要分開算可預測、資料不足與可能變慢：「可預測的 X 處中……；另 Y 處資料不足」；完全沒有預測時不給趨勢結論；資料過期時說資料停在幾點。這是前端邏輯，用瀏覽器灌假資料檢查三種情況，沒有寫 Python 測試。
+- low 接受：信賴區間上界改寫成「平均配對差的 95% 信賴區間上界」，不再說成確定的代價上限。
+- 另外：網頁每個來源每分鐘最多 120 個請求（經 Cloudflare 通道時看 `CF-Connecting-IP`，直接連線不信任這個標頭；`test_rate_limit_per_client_and_window`），加 `frame-ancestors 'none'`、`Referrer-Policy`。
+
 ## 2026-11-27（Austen 要求：檢查嚴謹度與樣本數，再往實際使用走）
 - 主表 26 組補到 10 個 seed（`rerun_main32.ps1 -Seeds 4,...,10`；`-Seeds` 改成字串再切，避免 PowerShell 把 "4,5,6" 轉成整數 456）；`paired_main32.py` 可合併多個結果資料夾。
 - 整張主表 34 個檢定做 Holm 校正，「顯著？」改看校正後 p，未校正才 < 0.05 的另外標「否（未校正 p < 0.05）」。判斷改變的列與結論改寫在 EXPERIMENTS「2026-11-27 補到 10 個 seed」。

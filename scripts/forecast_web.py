@@ -56,7 +56,27 @@ class Forecaster:
             return json.dumps(self.latest, ensure_ascii=False).encode("utf-8")
 
 
-def make_handler(fc: Forecaster):
+class RateLimit:
+    """每個來源每 window 秒最多 limit 個請求；公開網址被狂刷時回 429，不拖慢其他人。"""
+
+    def __init__(self, limit: int = 120, window: float = 60.0):
+        self.limit, self.window, self.lock, self.hits = limit, window, threading.Lock(), {}
+
+    def allow(self, key: str, now: float | None = None) -> bool:
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            if len(self.hits) > 10000:  # 來源太多時丟掉過期的，記憶體不會無限長
+                self.hits = {k: v for k, v in self.hits.items() if now - v[0] < self.window}
+            start, n = self.hits.get(key, (now, 0))
+            if now - start >= self.window:
+                start, n = now, 0
+            self.hits[key] = (start, n + 1)
+            return n < self.limit
+
+
+def make_handler(fc: Forecaster, limiter: RateLimit | None = None):
+    limiter = limiter or RateLimit()
+
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, body: bytes, ctype: str) -> None:
             self.send_response(code)
@@ -64,11 +84,21 @@ def make_handler(fc: Forecaster):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'")
+            self.send_header("Content-Security-Policy",
+                             "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'")
+            self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
             self.wfile.write(body)
 
+        def _client(self) -> str:
+            # 經過 Cloudflare 通道時連線都來自本機，真正的來源在 CF-Connecting-IP；直接連進來的不信任這個標頭
+            ip = self.client_address[0]
+            return self.headers.get("CF-Connecting-IP", ip) if ip in ("127.0.0.1", "::1") else ip
+
         def do_GET(self):  # noqa: N802 - http.server 的命名
+            if not limiter.allow(self._client()):
+                self._send(429, "請求太頻繁，請稍後再試".encode("utf-8"), "text/plain; charset=utf-8")
+                return
             path = self.path.split("?", 1)[0]
             if path == "/":
                 self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")

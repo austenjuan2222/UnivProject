@@ -54,15 +54,31 @@ def vd_stats(data_dir: Path, train_frac: float) -> dict[str, tuple[float, float]
     return out
 
 
+STALE_MIN = 20  # 資料比預測時間點舊超過這麼多分鐘就不預測（來源平常晚 4～7 分鐘）
+
+
+def data_cutoff(rows: list[dict], end: pd.Timestamp) -> pd.Timestamp:
+    """完整 5 分鐘桶的結束點：不超過 end，也不超過來源最後一分鐘（來源晚上傳時，最後一桶還沒收齊）。"""
+    if not rows:
+        return end.floor("5min")
+    last = pd.to_datetime(max(r["time"] for r in rows), utc=True, format="ISO8601").tz_convert("Asia/Taipei").tz_localize(None)
+    return min(end.floor("5min"), (last + pd.Timedelta(minutes=1)).floor("5min"))
+
+
 def five_minute_series(rows: list[dict], end: pd.Timestamp, max_gap: int = 3) -> dict[str, pd.Series]:
-    """每分鐘列 → 每台 VD 到 end（不含）為止的完整 5 分鐘車速；end 所在、還沒滿的那一桶不用。"""
+    """每分鐘列 → 每台 VD 到 data_cutoff 為止的完整 5 分鐘車速；沒收齊的最後一桶不用。
+    所有 VD 對齊到同一條時間軸，某台尾端沒資料就是 NaN（之後拒絕預測），不會拿舊資料當最新。"""
     if not rows:
         return {}
+    cut = data_cutoff(rows, end)
     df = pd.DataFrame(rows)
     out = {}
     for vdid, g in df.groupby("vdid"):
         s = aggregate_5min(g)["speed"]
-        s = s[s.index < end.floor("5min")]
+        s = s[s.index < cut]
+        if s.empty:
+            continue
+        s = s.reindex(pd.date_range(s.index.min(), cut - pd.Timedelta(minutes=5), freq="5min"))
         out[vdid] = fill_short_gaps(s, max_gap)
     return out
 
@@ -104,22 +120,31 @@ def taipei_now() -> dt.datetime:
 
 
 def predict_all(model, cfg: dict, stats: dict, vds: list[str], end: dt.datetime, fetch=None) -> dict:
-    """抓資料並預測 vds 每一台；end 加 25 分鐘已經過去時（回測）一併附上實際值。網頁與指令列共用。"""
+    """抓資料並預測 vds 每一台；end 加 25 分鐘已經過去時（回測）一併附上實際值。網頁與指令列共用。
+    輸入只用 end 之前的資料（回測多抓的未來資料只拿來對答案，不參與補值），和即時執行時看到的一樣。"""
     after = 25 if end + dt.timedelta(minutes=25) <= taipei_now() else 0
     rows = fetch_minutes(end, keep=set(vds).__contains__, after=after, fetch=fetch)
     t_end = pd.Timestamp(end)
-    full = five_minute_series(rows, t_end + pd.Timedelta(minutes=after))
+    local = pd.to_datetime([r["time"] for r in rows], utc=True, format="ISO8601").tz_convert("Asia/Taipei").tz_localize(None)
+    rows_in = [r for r, t in zip(rows, local) if t < t_end]
+    series = five_minute_series(rows_in, t_end)
+    cut = data_cutoff(rows_in, t_end)
+    stale = not rows_in or t_end - cut > pd.Timedelta(minutes=STALE_MIN)
+    actual = five_minute_series(rows, t_end + pd.Timedelta(minutes=after)) if after else {}
     out = []
     for v in vds:
-        s_all = full.get(v, pd.Series(dtype=float))
-        s = s_all[s_all.index < t_end.floor("5min")]
+        s = series.get(v, pd.Series(dtype=float))
         ok = len(s) and not np.isnan(s.iloc[-1])
-        preds = [{"time": f"{t:%H:%M}", "kmh": round(kmh, 1),
-                  "actual": None if not after or np.isnan(s_all.get(t, np.nan)) else round(float(s_all[t]), 1)}
-                 for t, kmh in forecast(model, cfg, s, *stats[v])]
+        a = actual.get(v, pd.Series(dtype=float))
+        preds = [] if stale else [
+            {"time": f"{t:%H:%M}", "at": f"{t:%Y-%m-%d %H:%M}", "ahead_min": int((t - t_end) / pd.Timedelta(minutes=1)),
+             "kmh": round(kmh, 1), "actual": None if np.isnan(a.get(t, np.nan)) else round(float(a[t]), 1)}
+            for t, kmh in forecast(model, cfg, s, *stats[v])]
         out.append({"vdid": v, "last_time": f"{s.index[-1]:%H:%M}" if ok else None,
                     "last_kmh": round(float(s.iloc[-1]), 1) if ok else None, "preds": preds})
-    return {"end": f"{end:%Y-%m-%d %H:%M}", "minutes": len({r["time"] for r in rows}), "backtest": bool(after), "vds": out}
+    return {"end": f"{end:%Y-%m-%d %H:%M}", "minutes": len({r["time"] for r in rows_in}), "backtest": bool(after),
+            "data_until": f"{cut:%H:%M}", "data_age_min": int((t_end - cut) / pd.Timedelta(minutes=1)),
+            "stale": bool(stale), "vds": out}
 
 
 def main(argv=None):
@@ -138,7 +163,9 @@ def main(argv=None):
         raise SystemExit(f"data-dir 裡沒有這些 VD，無法取得標準化參數：{unknown}")
     end = dt.datetime.strptime(a.at, "%Y-%m-%d %H:%M") if a.at else taipei_now()
     r = predict_all(model, cfg, stats, vds, end)
-    print(f"預測時間點 {r['end']}（台灣時間）；抓到 {r['minutes']} 分鐘的資料")
+    print(f"預測時間點 {r['end']}（台灣時間）；抓到 {r['minutes']} 分鐘的資料，完整資料到 {r['data_until']}")
+    if r["stale"]:
+        print(f"資料比預測時間點舊 {r['data_age_min']} 分鐘（超過 {STALE_MIN} 分鐘），不預測")
     print("每格是「該時刻開始的 5 分鐘」平均車速 km/h" + ("；括號內是實際值" if r["backtest"] else ""))
     print("| VD | 最近一段 | 預測 1 | 預測 2 | 預測 3 |\n|---|---|---|---|---|")
     for v in r["vds"]:
