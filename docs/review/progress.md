@@ -19,7 +19,12 @@
 - 測試：`test_multikrum_dropout_does_not_select_every_reply`（n=10、f=2，收到 6 誠實＋2 惡意）、`test_krum_skips_round_below_byzantine_threshold`（krum／multikrum／bulyan）；修前 3 個失敗，修後全套 392 passed。
 - README Krum 表的設定每輪全員參與，修正不影響數字，已加註。
 
-## 上一回合改了什麼（回應 round-09，對 claude/lecture-optimize-loop）
+## 上一回合改了什麼（回應 round-10，對 claude/lecture-optimize-loop）
+- high 接受：`results_log.aggregate_train` 測試筆數總和為 0 時本地 MAE 記 NaN，不再除以零（`test_zero_num_test_does_not_divide_by_zero`，修前 ZeroDivisionError）。直接測根本原因的函式，沒有另外接整條 FedAvg。
+- 安全檢查的補充：同票時參考的上一輪集合只在某集合過半時才更新，攻擊者靠「最多但沒過半」不能改掉它（`test_plurality_without_majority_does_not_set_last`）。沒有改成「聚合完成後才更新」：後面的過濾都在同一個函式裡，全被擋時這輪本來就不聚合。
+- medium 接受：HMAC、無攻擊中位數／截尾平均的「不影響準確度」「幾乎沒有代價」改報平均差、95% CI 與「本次未達顯著」。全套 436 passed、2 skipped。
+
+## round-09
 - high 接受：`_well_formed_metrics` 要求 round／dp-steps／diverged／ft-diverged／num-test／num-jam 是有限的非負整數值（≤ 2^31），合法簽章的 NaN、inf、0.5、−1 都被拒絕，不再讓紀錄程式的 `int()` 中斷整輪；`results_log` 的完整性檢查也防同類值。測試 `test_signed_nan_dp_steps_does_not_abort_train`、`test_signed_infinite_diverged_does_not_abort_train`（接真的 RunLogger 與 FedAvg），修前 ValueError／OverflowError。
 - 安全檢查的補充：欄位集合同票時不再整輪跳過，改選上一輪被接受的欄位集合；沒有上一輪可依才跳過（`test_tie_breaks_toward_key_set_of_last_accepted_round`）。全套 434 passed、2 skipped。
 - medium 接受：`scripts/paired_main32.py` 改用 `seed_stats.paired_summary`（配對 t，p < 0.05），輸出平均差、95% CI 與 p（`tests/test_paired_main32.py`）。docs/EXPERIMENTS.md 主表兩張表用原始 summary.csv 重產；10 台裁剪＋中位數對只裁剪 p = 0.046（舊寫的 0.049 由 3 位小數估）；「疊加最好」撤回（對只中位數 p = 0.20）；斷線改寫成 +0.011 [−0.016, +0.037]、p = 0.23，不再說「幾乎一樣」。

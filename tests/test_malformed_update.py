@@ -1,5 +1,6 @@
 """可用性：持有合法金鑰的 VD 送 NaN／形狀不對的更新，不能讓全域模型變 NaN 或讓聚合當掉（沒開串通偵測時也要擋）。"""
 import io
+import math
 import unittest
 
 import numpy as np
@@ -101,6 +102,24 @@ class InconsistentMetricKeysTest(unittest.TestCase):
         out = self.g.aggregate_evaluate(1, [eval_reply(self.keys, 0), eval_reply(self.keys, 1, extra=0)])
         self.assertIsNotNone(out)
         self.assertNotIn("extra", out)
+
+    def test_plurality_without_majority_does_not_set_last(self):
+        # 安全檢查：攻擊者只靠「最多但沒過半」的集合不能改掉之後同票時參考的欄位集合
+        from types import SimpleNamespace
+        from guard import _majority_metric_keys
+        msg = lambda *k: SimpleNamespace(content={"metrics": dict.fromkeys(k, 0)})
+        a = frozenset({"x"})
+        kept, last = _majority_metric_keys([msg("x", "evil"), msg("x", "evil"), msg("x"), msg("x", "y")], a)
+        self.assertEqual(len(kept), 2)  # 這輪仍照最多的集合聚合
+        self.assertEqual(last, a)
+        _, last = _majority_metric_keys([msg("x", "y"), msg("x", "y"), msg("x")], a)
+        self.assertEqual(last, frozenset({"x", "y"}))  # 過半才更新
+
+    def test_zero_num_test_does_not_divide_by_zero(self):
+        # Codex 第 10 回合：只剩一份合法回覆且 num-test=0 時，本地 MAE 除以零讓整輪當掉
+        from results_log import aggregate_train
+        out = aggregate_train([{"num-examples": 10, "train-loss": 0.4, "num-test": 0, "local-mae-kmh": 2.0}])
+        self.assertTrue(math.isnan(out["local_mae_kmh"]))
 
     def _logged_train(self, bad):
         # 接上真的紀錄回呼（server_app 的接法），_flush 換掉不寫檔

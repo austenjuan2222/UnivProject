@@ -134,7 +134,7 @@ _INT_METRICS = ("round", "dp-steps", "diverged", "ft-diverged", "num-test", "num
 
 def _majority_metric_keys(msgs: list, last: frozenset | None = None) -> tuple[list, frozenset | None]:
     """Flower 聚合指標時各回覆欄位不同就丟 InconsistentMessageReplies：合法金鑰多簽一個欄位就能讓整輪當掉。
-    只留欄位集合和多數相同的回覆。最多的集合同票時選上一輪聚合過的集合 last（只剩兩份、一份是攻擊者時不讓它拖垮整輪）；
+    只留欄位集合和多數相同的回覆。最多的集合同票時選上一輪過半的集合 last（只剩兩份、一份是攻擊者時不讓它拖垮整輪）；
     同票的集合裡沒有 last（例如第一輪）才整輪不聚合，不讓先到或任一方決定。回傳 (留下的回覆, 採用的集合)。
     shortcut: 用多數決＋上一輪而不是依伺服器設定列出預期欄位（欄位隨 DP、安全聚合、微調、攻擊模擬而變），
     被入侵的 VD 過半時會由它們決定，但那時聚合本來就守不住。"""
@@ -146,7 +146,9 @@ def _majority_metric_keys(msgs: list, last: frozenset | None = None) -> tuple[li
     pick = top[0] if len(top) == 1 else (last if last in top else None)
     if pick is None:
         return [], last
-    return [m for m, s in zip(msgs, sets) if s == pick], pick
+    # 只有過半的集合才記成之後同票時參考的 last：攻擊者靠「最多但沒過半」不能改掉它
+    new_last = pick if 2 * dict(counts)[pick] > len(msgs) else last
+    return [m for m, s in zip(msgs, sets) if s == pick], new_last
 
 
 _SECAGG_INT_METRICS = ("secagg-clipped", "secagg-self-mask", "secagg-num-vd", "secagg-bits", "secagg-frac-bits",

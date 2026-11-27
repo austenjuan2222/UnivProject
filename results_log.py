@@ -30,7 +30,7 @@ def aggregate_train(replies: list[dict]) -> dict:
            "n_diverged": sum(int(r.get("diverged", 0)) for r in replies)}
     if replies and all("local-mae-kmh" in r and "num-test" in r for r in replies):
         tot = sum(float(r["num-test"]) for r in replies)
-        out["local_mae_kmh"] = sum(float(r["num-test"]) * float(r["local-mae-kmh"]) for r in replies) / tot
+        out["local_mae_kmh"] = sum(float(r["num-test"]) * float(r["local-mae-kmh"]) for r in replies) / tot if tot else float("nan")
     # Edge 運算成本：每個 VD 每輪上傳的模型大小，對比「把原始訓練資料傳上雲」的大小
     if replies and all("upload-bytes" in r for r in replies):
         out["upload_kb"] = sum(float(r["upload-bytes"]) for r in replies) / len(replies) / 1024
