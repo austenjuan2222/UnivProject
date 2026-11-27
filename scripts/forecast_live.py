@@ -99,6 +99,29 @@ def fetch_minutes(end: dt.datetime, keep, minutes: int = LOOKBACK_MIN, fetch=Non
                 for r in rows]
 
 
+def taipei_now() -> dt.datetime:
+    return dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).replace(tzinfo=None, second=0, microsecond=0)
+
+
+def predict_all(model, cfg: dict, stats: dict, vds: list[str], end: dt.datetime, fetch=None) -> dict:
+    """抓資料並預測 vds 每一台；end 加 25 分鐘已經過去時（回測）一併附上實際值。網頁與指令列共用。"""
+    after = 25 if end + dt.timedelta(minutes=25) <= taipei_now() else 0
+    rows = fetch_minutes(end, keep=set(vds).__contains__, after=after, fetch=fetch)
+    t_end = pd.Timestamp(end)
+    full = five_minute_series(rows, t_end + pd.Timedelta(minutes=after))
+    out = []
+    for v in vds:
+        s_all = full.get(v, pd.Series(dtype=float))
+        s = s_all[s_all.index < t_end.floor("5min")]
+        ok = len(s) and not np.isnan(s.iloc[-1])
+        preds = [{"time": f"{t:%H:%M}", "kmh": round(kmh, 1),
+                  "actual": None if not after or np.isnan(s_all.get(t, np.nan)) else round(float(s_all[t]), 1)}
+                 for t, kmh in forecast(model, cfg, s, *stats[v])]
+        out.append({"vdid": v, "last_time": f"{s.index[-1]:%H:%M}" if ok else None,
+                    "last_kmh": round(float(s.iloc[-1]), 1) if ok else None, "preds": preds})
+    return {"end": f"{end:%Y-%m-%d %H:%M}", "minutes": len({r["time"] for r in rows}), "backtest": bool(after), "vds": out}
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--run-dir", required=True, type=Path, help="含 final_model.pt 與 config.json 的訓練結果")
@@ -113,30 +136,16 @@ def main(argv=None):
     unknown = [v for v in vds if v not in stats]
     if unknown:
         raise SystemExit(f"data-dir 裡沒有這些 VD，無法取得標準化參數：{unknown}")
-    if a.at:
-        end = dt.datetime.strptime(a.at, "%Y-%m-%d %H:%M")
-    else:
-        end = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).replace(tzinfo=None, second=0, microsecond=0)
-    wanted = set(vds)
-    now = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).replace(tzinfo=None)
-    after = 25 if end + dt.timedelta(minutes=25) <= now else 0  # 回測：預測的時段已過，順便抓實際值
-    rows = fetch_minutes(end, keep=wanted.__contains__, after=after)
-    t_end = pd.Timestamp(end)
-    full = five_minute_series(rows, t_end + pd.Timedelta(minutes=after))
-    print(f"預測時間點 {end:%Y-%m-%d %H:%M}（台灣時間）；抓到 {len({r['time'] for r in rows})} 分鐘的資料")
-    print("每格是「該時刻開始的 5 分鐘」平均車速 km/h" + ("；括號內是實際值" if after else ""))
+    end = dt.datetime.strptime(a.at, "%Y-%m-%d %H:%M") if a.at else taipei_now()
+    r = predict_all(model, cfg, stats, vds, end)
+    print(f"預測時間點 {r['end']}（台灣時間）；抓到 {r['minutes']} 分鐘的資料")
+    print("每格是「該時刻開始的 5 分鐘」平均車速 km/h" + ("；括號內是實際值" if r["backtest"] else ""))
     print("| VD | 最近一段 | 預測 1 | 預測 2 | 預測 3 |\n|---|---|---|---|---|")
-    for v in vds:
-        s_all = full.get(v, pd.Series(dtype=float))
-        s = s_all[s_all.index < t_end.floor("5min")]
-        f = forecast(model, cfg, s, *stats[v])
-        last = f"{s.iloc[-1]:.1f}（{s.index[-1]:%H:%M}）" if len(s) and not np.isnan(s.iloc[-1]) else "–"
-
-        def cell(t, kmh):
-            act = s_all.get(t, np.nan) if after else np.nan
-            return f"{t:%H:%M} {kmh:.1f}" + ("" if np.isnan(act) else f"（{act:.1f}）")
-        cells = " | ".join(cell(t, kmh) for t, kmh in f) if f else "資料不足 | – | –"
-        print(f"| {v} | {last} | {cells} |")
+    for v in r["vds"]:
+        last = f"{v['last_kmh']:.1f}（{v['last_time']}）" if v["last_kmh"] is not None else "–"
+        cells = " | ".join(f"{q['time']} {q['kmh']:.1f}" + ("" if q["actual"] is None else f"（{q['actual']:.1f}）")
+                           for q in v["preds"]) if v["preds"] else "資料不足 | – | –"
+        print(f"| {v['vdid']} | {last} | {cells} |")
 
 
 if __name__ == "__main__":
