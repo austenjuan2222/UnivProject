@@ -115,21 +115,50 @@ def make_handler(fc: Forecaster, limiter: RateLimit | None = None, timeout: floa
 
 
 class BoundedServer(ThreadingHTTPServer):
-    """同時最多 max_conn 個連線；滿了就直接關掉新連線，不再開執行緒（限流在 do_GET 裡才算，擋不住慢速連線）。"""
+    """同時最多 max_conn 個連線、每個來源最多 max_per_ip 個；超過就直接關掉新連線，不再開執行緒
+    （限流在 do_GET 裡才算，擋不住慢速連線）。trusted_proxies（本機的 Cloudflare 通道）不算單一來源：
+    通道只轉送完整的請求，所有通道使用者也都從本機連進來，用 IP 分不出人。"""
     daemon_threads = True
 
-    def __init__(self, addr, handler, max_conn: int = 64):
+    def __init__(self, addr, handler, max_conn: int = 64, max_per_ip: int = 8,
+                 trusted_proxies: tuple[str, ...] = ("127.0.0.1", "::1")):
         self.slots = threading.BoundedSemaphore(max_conn)
+        self.max_per_ip, self.trusted = max_per_ip, set(trusted_proxies)
+        self.per_ip: dict[str, int] = {}
+        self.ip_lock = threading.Lock()
         super().__init__(addr, handler)
 
+    def _take(self, ip: str) -> bool:
+        if ip in self.trusted:
+            return True
+        with self.ip_lock:
+            if self.per_ip.get(ip, 0) >= self.max_per_ip:
+                return False
+            self.per_ip[ip] = self.per_ip.get(ip, 0) + 1
+            return True
+
+    def _give(self, ip: str) -> None:
+        if ip in self.trusted:
+            return
+        with self.ip_lock:
+            n = self.per_ip.pop(ip, 1) - 1
+            if n > 0:
+                self.per_ip[ip] = n
+
     def process_request(self, request, client_address):
+        ip = client_address[0]
+        if not self._take(ip):
+            self.shutdown_request(request)
+            return
         if not self.slots.acquire(blocking=False):
+            self._give(ip)
             self.shutdown_request(request)
             return
         try:
             super().process_request(request, client_address)
         except Exception:
             self.slots.release()
+            self._give(ip)
             raise
 
     def process_request_thread(self, request, client_address):
@@ -137,10 +166,11 @@ class BoundedServer(ThreadingHTTPServer):
             super().process_request_thread(request, client_address)
         finally:
             self.slots.release()
+            self._give(client_address[0])
 
 
-def make_server(host: str, port: int, fc: Forecaster, timeout: float = 10.0, max_conn: int = 64) -> BoundedServer:
-    return BoundedServer((host, port), make_handler(fc, timeout=timeout), max_conn)
+def make_server(host: str, port: int, fc: Forecaster, timeout: float = 10.0, max_conn: int = 64, **kw) -> BoundedServer:
+    return BoundedServer((host, port), make_handler(fc, timeout=timeout), max_conn, **kw)
 
 
 def main(argv=None):

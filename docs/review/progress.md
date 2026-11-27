@@ -17,6 +17,7 @@
 ## round-13（抓取長度、連線資源、篩選空狀態）
 - `predict_all` 抓取分鐘數改成 `lookback*5 + 10`（lookback=12 仍是 70）：`test_predict_all_fetch_window_scales_with_lookback`（修前要求 0 分鐘、lookback=24 拿不到預測）。
 - `forecast_web.BoundedServer`：同時最多 64 個連線，滿了直接關掉新連線不開執行緒；Handler 連線逾時 10 秒。`make_server()` 給 main 與測試共用。測試：`test_incomplete_headers_connection_times_out`、`test_concurrent_connections_are_bounded`（只在本機 socket，沒有對公開通道壓測）。
+- 提交後的自動安全審查指出：單一來源可佔滿 64 個位置。`BoundedServer` 加上每個來源最多 8 條連線；本機（Cloudflare 通道）不算單一來源，因為通道只轉送完整請求、所有通道使用者都從本機連入。測試 `test_one_client_cannot_take_every_slot`。尚未做「整段標頭的總時限」。
 - 網頁「可能變慢」篩選結果為空時，過期顯示「預測已過期，目前無法判斷…」、全部資料不足顯示「…無法判斷…」，只有真的有預測時才說「沒有預計會變慢」。瀏覽器驗證三種情況。
 
 ## round-12（即時預測：horizon、標準化切點、網頁過期）

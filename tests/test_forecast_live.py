@@ -228,6 +228,22 @@ class ConnectionLimitTest(unittest.TestCase):
         self.assertEqual(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/forecast", timeout=5).status, 200)
 
 
+    def test_one_client_cannot_take_every_slot(self):
+        import socket
+        import urllib.request
+        fw = _web()
+        port = self._serve(fw, timeout=2, max_conn=10, max_per_ip=2, trusted_proxies=())  # 測試裡把本機當一般來源
+        idle = [socket.create_connection(("127.0.0.1", port)) for _ in range(2)]
+        extra = socket.create_connection(("127.0.0.1", port))
+        extra.settimeout(1)
+        self.assertEqual(extra.recv(100), b"")  # 同一個來源第 3 條連線被關掉，其他人的位置還在
+        extra.close()
+        for c in idle:
+            c.close()
+        import time
+        time.sleep(0.3)
+        self.assertEqual(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/forecast", timeout=5).status, 200)
+
 class RateLimitTest(unittest.TestCase):
     def test_rate_limit_per_client_and_window(self):
         spec2 = importlib.util.spec_from_file_location("forecast_web", Path(__file__).parents[1] / "scripts" / "forecast_web.py")
