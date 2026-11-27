@@ -135,6 +135,33 @@ class Round11Test(unittest.TestCase):
                          [("2024-03-30 00:10", -3), ("2024-03-30 00:15", 2), ("2024-03-30 00:20", 7)])
 
 
+class Round12Test(unittest.TestCase):
+    def test_live_rejects_non_unit_horizon(self):
+        import json
+        import tempfile
+        for h in (3, 6):
+            with tempfile.TemporaryDirectory() as d:
+                rc = {"lookback": 12, "hidden-size": 8, "residual": True, "calendar": "tod", "lag-day": False, "horizon": h}
+                (Path(d) / "config.json").write_text(json.dumps({"run_config": rc}), encoding="utf-8")
+                torch.save(TrafficModel(12, 8, True, 2).state_dict(), Path(d) / "final_model.pt")
+                with self.assertRaises(SystemExit):
+                    fl.load_model(Path(d))
+
+    def test_vd_stats_matches_training_with_missing_timestamps(self):
+        import json
+        import tempfile
+        from data import load_client_arrays
+        t = pd.date_range("2024-03-01", periods=288 * 5, freq="5min")
+        speed = np.where(t < pd.Timestamp("2024-03-03"), 60.0, 100.0) + np.arange(len(t)) % 7
+        df = pd.DataFrame({"time": t, "speed": speed})
+        df = df[(df.time < "2024-03-02") | (df.time >= "2024-03-03")]  # 中間缺一天
+        with tempfile.TemporaryDirectory() as d:
+            df.to_csv(Path(d) / "V.csv", index=False)
+            (Path(d) / "manifest.json").write_text(json.dumps({"clients": [{"vdid": "V", "file": "V.csv"}]}), encoding="utf-8")
+            tr = load_client_arrays(d, 0, 1, 12, 0.8, 1, "", False)
+            self.assertEqual(fl.vd_stats(Path(d), 0.8)["V"], (tr["mean"], tr["std"]))
+
+
 class RateLimitTest(unittest.TestCase):
     def test_rate_limit_per_client_and_window(self):
         spec2 = importlib.util.spec_from_file_location("forecast_web", Path(__file__).parents[1] / "scripts" / "forecast_web.py")

@@ -118,7 +118,8 @@ const NS = "http://www.w3.org/2000/svg";
 const cls = v => v == null ? "na" : Math.round(v) >= 80 ? "ok" : Math.round(v) >= 40 ? "slow" : "jam";
 const WORD = {ok: "順暢", slow: "車多", jam: "壅塞"};
 const REFRESH = 60, STEP = 5; // 每 60 秒問一次伺服器；伺服器每 5 分鐘更新
-let data = null, filter = "all", failures = 0;
+const STALE_MIN = 20; // 和伺服器的 STALE_MIN 相同
+let data = null, filter = "all", failures = 0, shownExpired = false;
 
 function place(id) {
   const m = /^VD-N(\d+)-([NS])-([\d.]+)-/.exec(id);
@@ -166,14 +167,20 @@ function heads(vds) {
   });
   return ref ? hhmm(tw(ref.preds[2].at) + 300000) : null;
 }
+function ageMin() { // 最新實測距離「真正的現在」幾分鐘；伺服器卡住時同一份回應也會隨時間變舊
+  const endMs = tw(data.end);
+  let obs = tw(data.end.slice(0, 11) + data.data_until); if (obs > endMs) obs -= 86400000; // 跨午夜
+  return Math.max(0, Math.round((Date.now() - obs) / 60000));
+}
+const expired = () => !!(data && data.end && (data.stale || ageMin() > STALE_MIN));
 function summarize(vds, until) {
   const s = $("summary"); s.replaceChildren();
   const b = t => el("b", "", t);
   const have = vds.filter(v => v.last_kmh != null);
-  if (data.stale) {
-    s.append("開放資料停在 ", b(data.data_until), `，已經 ${data.data_age_min} 分鐘沒有新資料，所以先不預測。下面是最後一次的實測。`);
+  if (expired()) {
+    s.append(data.stale ? "開放資料停在 " : "預測已過期：資料停在 ", b(data.data_until), `，已經 ${ageMin()} 分鐘沒有新資料，所以先不預測。下面是最後一次的實測。`);
   } else if (!have.length) { s.textContent = "目前抓不到任何偵測器的資料，可能是開放資料還沒更新，稍後會自動重試。"; }
-  if (!have.length || data.stale) { $("f-worse").textContent = "可能變慢 0"; $("f-all").textContent = `全部路段 ${vds.length}`; return; }
+  if (!have.length || expired()) { $("f-worse").textContent = "可能變慢 0"; $("f-all").textContent = `全部路段 ${vds.length}`; return; }
   const n = {ok: 0, slow: 0, jam: 0}; have.forEach(v => n[cls(v.last_kmh)]++);
   if (n.slow + n.jam == 0) s.append("最新實測 ", b(`${have.length} 處都順暢`), "。");
   else s.append("最新實測 ", b(`${n.ok} 處順暢`), n.slow ? `、${n.slow} 處車多` : "", n.jam ? `、${n.jam} 處壅塞` : "", "。");
@@ -195,7 +202,9 @@ function summarize(vds, until) {
 function render(fresh) {
   const road = $("road"); road.replaceChildren(); road.classList.toggle("fresh", !!fresh);
   if (!data || !data.vds) { road.appendChild(el("li", "empty", "第一次預測還在進行，大約 1 分鐘。")); return; }
-  const vds = [...data.vds].sort((a, b) => place(a.vdid).km - place(b.vdid).km);
+  shownExpired = expired();
+  // 過期就把預測拿掉：欄頭、摘要、篩選和每一格都不再給已經過去的預報
+  const vds = [...data.vds].map(v => shownExpired ? {...v, preds: []} : v).sort((a, b) => place(a.vdid).km - place(b.vdid).km);
   const until = heads(vds);
   summarize(vds, until);
   const shown = filter == "worse" ? vds.filter(worse) : vds;
@@ -209,7 +218,7 @@ function render(fresh) {
     now.append(el("b", "", v.last_kmh == null ? "–" : v.last_kmh.toFixed(0)), el("small", "", v.last_time ? `${v.last_time} 起` : "沒有資料"));
     li.appendChild(now);
     const fcs = el("div", "fcs");
-    if (!v.preds.length) li.appendChild(el("div", "gap", data.stale ? "資料太舊，先不預測" : "最近 1 小時資料有缺，這一處先不預測"));
+    if (!v.preds.length) li.appendChild(el("div", "gap", shownExpired ? "資料太舊，先不預測" : "最近 1 小時資料有缺，這一處先不預測"));
     else { [0, 1, 2].forEach(i => fcs.appendChild(fcCell(v.preds[i], v.last_kmh))); li.appendChild(fcs); }
     const lastP = v.preds[v.preds.length - 1];
     li.setAttribute("aria-label", `${p.name}，最新實測 ${v.last_kmh == null ? "沒有資料" : `${v.last_time} 起 ${v.last_kmh.toFixed(0)} 公里`}` +
@@ -220,15 +229,14 @@ function render(fresh) {
 function tick() {
   const live = $("live"), age = $("age");
   if (!data || !data.end) return;
-  const endMs = tw(data.end);
-  let obs = tw(data.end.slice(0, 11) + data.data_until); if (obs > endMs) obs -= 86400000; // 跨午夜
-  const mins = Math.max(0, Math.round((Date.now() - obs) / 60000));
+  const endMs = tw(data.end), mins = ageMin();
   age.textContent = `實測到 ${data.data_until}（${mins} 分鐘前）`;
-  const stale = data.stale || mins > 20;
+  const stale = expired();
+  if (stale != shownExpired) render(false);
   live.className = "live" + (failures ? " down" : stale ? " stale" : "");
   const sinceRun = Math.max(0, Math.round((Date.now() - endMs) / 60000));
   $("next").textContent = failures ? "連不到伺服器，自動重試中" : stale ? "資料比平常舊，可能是開放資料延遲" : `約 ${Math.max(1, STEP - sinceRun)} 分鐘後更新`;
-  if (data.vds) heads([...data.vds]); // 「現在這段／幾分後」隨時間更新
+  if (data.vds && !stale) heads([...data.vds]); // 「現在這段／幾分後」隨時間更新
 }
 async function load() {
   try {

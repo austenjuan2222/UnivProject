@@ -14,6 +14,12 @@
 - Edge 與 LPWAN：4 位元量化上傳、int8 推論、LoRaWAN 空中時間、下行群播＋FEC。
 - 可靠度：10 seed、時間區塊交叉驗證、按天 bootstrap（`scripts/reliability/`，2026-11-21）。
 
+## round-12（即時預測：horizon、標準化切點、網頁過期）
+- `forecast_live.load_model` 遇到 `horizon != 1` 直接拒絕（遞迴預測只對單步模型成立）：`test_live_rejects_non_unit_horizon`。
+- 新增 `data.read_vd_csv`（補完整 5 分鐘時間軸），訓練端 `load_client_arrays` 與即時端 `vd_stats` 共用，切點與 mean／std 一致：`test_vd_stats_matches_training_with_missing_timestamps`（中間缺一天，修前 mean 90.49 vs 89.66）。
+- 網頁 `expired()` 用真正的現在時間判斷過期；跨過 20 分鐘時 `tick()` 重新呈現，拿掉所有預測格、欄頭、摘要結論與「可能變慢」篩選。沒有 JS 測試環境，改在瀏覽器驗證：同一份回應、時鐘 +40 分 → 0 個預測格、32 個「資料太舊」、摘要「預測已過期」；時鐘回來後恢復 96 格。
+- 全套 449 passed。
+
 ## round-07（Multi-Krum 斷線後全選）
 - `robust_agg._AllMetrics.aggregate_train` 每輪用有效回覆數重新檢查前提：少於 2f+3（Bulyan 4f+3）回 `(None, None)` 跳過該輪；Multi-Krum 選取份數改成 `min(m 或 本輪回覆數−f, 本輪回覆數−f)`。
 - 測試：`test_multikrum_dropout_does_not_select_every_reply`（n=10、f=2，收到 6 誠實＋2 惡意）、`test_krum_skips_round_below_byzantine_threshold`（krum／multikrum／bulyan）；修前 3 個失敗，修後全套 392 passed。

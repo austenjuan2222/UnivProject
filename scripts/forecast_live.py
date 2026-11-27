@@ -24,7 +24,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
-from data import calendar_features, n_calendar  # noqa: E402
+from data import calendar_features, n_calendar, read_vd_csv  # noqa: E402
 from vd_preprocess import aggregate_5min, fill_short_gaps  # noqa: E402
 
 LOOKBACK_MIN = 70  # 12 個 5 分鐘＋目前還沒滿的那一桶＋幾分鐘緩衝
@@ -34,6 +34,9 @@ def load_model(run_dir: Path):
     import torch
     from task import TrafficModel
     c = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))["run_config"]
+    if int(c.get("horizon", 1)) != 1:
+        # 遞迴預測把每步輸出當成下一個 5 分鐘接回輸入，只對單步模型成立
+        raise SystemExit(f"這個模型是 horizon={c['horizon']}（一次跳 {5 * int(c['horizon'])} 分鐘），即時版本只支援 horizon=1")
     model = TrafficModel(c["lookback"], c["hidden-size"], c["residual"], n_calendar(c["calendar"]) + int(c["lag-day"]))
     # weights_only：模型檔只該有張量，不執行檔案裡的任何程式
     model.load_state_dict(torch.load(run_dir / "final_model.pt", map_location="cpu", weights_only=True), strict=True)
@@ -47,7 +50,7 @@ def vd_stats(data_dir: Path, train_frac: float) -> dict[str, tuple[float, float]
     man = json.loads((data_dir / "manifest.json").read_text(encoding="utf-8"))
     out = {}
     for c in man["clients"]:
-        s = pd.read_csv(data_dir / c["file"])["speed"].to_numpy(float)
+        s = read_vd_csv(data_dir / c["file"])["speed"].to_numpy(float)
         tr = s[: int(len(s) * train_frac)]
         std = float(np.nanstd(tr))
         out[c["vdid"]] = (float(np.nanmean(tr)), std if std > 1e-6 else 1.0)
