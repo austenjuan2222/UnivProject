@@ -1,6 +1,7 @@
 {
+  "framework": null,
   "regions": ["hnd1"],
-  "functions": { "api/forecast.py": { "maxDuration": 60, "excludeFiles": "{api/_lib/__pycache__/**}" } },
+  "functions": { "api/forecast.py": { "maxDuration": 60 } },
   "headers": [
     { "source": "/(.*)", "headers": [
       { "key": "X-Content-Type-Options", "value": "nosniff" },
