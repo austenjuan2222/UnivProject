@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>國道 1 號北向車速預報</title>
+<style>
+:root{
+  --bg:#f4f3ef;--surface:#fffefb;--fg:#1b1c1a;--muted:#5f625c;--line:#e2e0d8;--track:#d9d7cf;
+  --ok:#17784a;--ok-soft:#e1f1e7;--slow:#9a5b00;--slow-soft:#fbeed6;--jam:#b4251c;--jam-soft:#fbe3df;
+  --accent:#1f4fd1;--focus:#1f4fd1;--sel:#d4defa;
+  --shadow:0 1px 2px rgb(20 20 15 / .06),0 6px 20px -8px rgb(20 20 15 / .12);
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#121311;--surface:#1b1c1a;--fg:#ecebe5;--muted:#a3a59d;--line:#2d2f2b;--track:#3a3c37;
+  --ok:#5fd394;--ok-soft:#15301f;--slow:#f0b357;--slow-soft:#3a2a10;--jam:#ff8a7d;--jam-soft:#3d1a16;
+  --accent:#8eaaff;--focus:#8eaaff;--sel:#2a3a66;
+  --shadow:0 1px 2px rgb(0 0 0 / .4),0 8px 24px -10px rgb(0 0 0 / .6);
+}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.55 system-ui,-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;
+  font-variant-numeric:tabular-nums}
+::selection{background:var(--sel)}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:6px}
+main{max-width:760px;margin:0 auto;padding:28px 16px calc(48px + env(safe-area-inset-bottom))}
+header h1{font-size:clamp(22px,4.6vw,30px);line-height:1.2;letter-spacing:-.01em;margin:0 0 6px;text-wrap:balance}
+.h2{display:block;font-size:.62em;font-weight:500;color:var(--muted);letter-spacing:0;margin-top:4px}
+.meta{color:var(--muted);font-size:14px;margin:0;display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center}
+.live{display:inline-flex;align-items:center;gap:6px}
+.live i{width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block}
+.live.stale i{background:var(--slow)}.live.down i{background:var(--jam)}
+.summary{margin:22px 0 18px;font-size:clamp(17px,3.6vw,20px);line-height:1.5;text-wrap:pretty}
+.summary b{font-weight:650}
+.banner{margin:0 0 16px;padding:10px 14px;border-radius:10px;background:var(--jam-soft);color:var(--jam);font-size:14px}
+.banner[hidden]{display:none}
+.bar{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between;margin:0 0 12px}
+.seg{display:inline-flex;background:var(--line);border-radius:999px;padding:3px}
+.seg button{font:inherit;font-size:14px;border:0;background:transparent;color:var(--muted);padding:6px 14px;border-radius:999px;cursor:pointer;min-height:34px}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--fg);box-shadow:var(--shadow);font-weight:600}
+.seg button:hover{color:var(--fg)}
+.legend{display:flex;gap:12px;font-size:13px;color:var(--muted);list-style:none;margin:0;padding:0}
+.legend li{display:inline-flex;align-items:center;gap:5px}
+.legend span{width:10px;height:10px;border-radius:3px;display:inline-block}
+.road{list-style:none;margin:0;padding:6px 0;background:var(--surface);border-radius:14px;box-shadow:var(--shadow)}
+.stop{display:grid;grid-template-columns:28px minmax(84px,1fr) 76px repeat(3,minmax(58px,74px));align-items:center;gap:0 8px;padding:9px 14px 9px 6px;position:relative}
+.stop+.stop{border-top:1px solid var(--line)}
+.track{align-self:stretch;position:relative}
+.track::before{content:"";position:absolute;left:50%;top:-10px;bottom:-10px;width:4px;margin-left:-2px;background:var(--c,var(--track))}
+.stop:first-child .track::before{top:50%}.stop:last-child .track::before{bottom:50%}
+.track::after{content:"";position:absolute;left:50%;top:50%;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:var(--surface);border:3px solid var(--c,var(--track))}
+.where b{display:block;font-size:16px;font-weight:600;line-height:1.25}
+.where small{color:var(--muted);font-size:12px}
+.now{text-align:right}
+.now b{font-size:22px;font-weight:650;line-height:1}
+.now small,.fc small{display:block;font-size:11px;color:var(--muted);margin-top:3px}
+.fc{text-align:center;border-radius:8px;padding:5px 2px;background:var(--soft,transparent)}
+.fc b{font-size:15px;font-weight:600;display:inline-flex;align-items:center;gap:2px;color:var(--c,var(--muted))}
+.fc svg{width:12px;height:12px}
+.ok{--c:var(--ok);--soft:transparent}.slow{--c:var(--slow);--soft:var(--slow-soft)}.jam{--c:var(--jam);--soft:var(--jam-soft)}
+.now.ok b{color:var(--ok)}.now.slow b{color:var(--slow)}.now.jam b{color:var(--jam)}
+.na b{color:var(--muted);font-weight:400}
+.cols{display:grid;grid-template-columns:28px minmax(84px,1fr) 76px repeat(3,minmax(58px,74px));gap:0 8px;padding:0 14px 6px 6px;font-size:12px;color:var(--muted)}
+.cols span:nth-child(3){text-align:right}.cols span:nth-child(n+4){text-align:center;line-height:1.25}
+.cols small{display:block;font-size:10px;opacity:.85}
+.gap{grid-column:2/-1;color:var(--muted);font-size:12px;padding:2px 0}
+.empty{padding:28px 16px;text-align:center;color:var(--muted)}
+.note{color:var(--muted);font-size:13px;line-height:1.6;margin:20px 2px 0;max-width:68ch}
+.note p{margin:0 0 6px}
+@media (max-width:560px){
+  .stop,.cols{grid-template-columns:18px minmax(48px,1fr) 46px repeat(3,minmax(44px,54px));gap:0 4px;padding-right:8px;padding-left:2px}
+  .stop{padding-top:8px;padding-bottom:8px}
+  .cols{font-size:11px}
+  .where b{font-size:15px}.now b{font-size:19px}.fc b{font-size:15px}
+  .fc small,.now small{display:none}
+  .track::after{width:10px;height:10px;margin:-5px 0 0 -5px}
+}
+.cols{position:sticky;top:0;z-index:1;background:var(--bg);padding-top:6px}
+.fcs{display:contents}
+@media (prefers-reduced-motion:no-preference){
+  .road.fresh .stop{animation:in .45s cubic-bezier(.16,1,.3,1) both}
+  @keyframes in{from{opacity:.35;transform:translateY(3px)}}
+}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>國道 1 號北向<span class="h2">接下來幾分鐘的車速預報</span></h1>
+  <p class="meta"><span class="live" id="live"><i></i><span id="age">載入中…</span></span><span id="next"></span></p>
+</header>
+<p class="summary" id="summary">正在抓最新的路況資料，大約 1 分鐘。</p>
+<p class="banner" id="banner" role="status" hidden></p>
+<div class="bar">
+  <div class="seg" role="group" aria-label="顯示哪些路段">
+    <button type="button" id="f-all" aria-pressed="true">全部路段</button>
+    <button type="button" id="f-worse" aria-pressed="false">可能變慢</button>
+  </div>
+  <ul class="legend" aria-label="顏色說明">
+    <li><span style="background:var(--ok)"></span>順暢 80+</li>
+    <li><span style="background:var(--slow)"></span>車多 40–80</li>
+    <li><span style="background:var(--jam)"></span>壅塞 &lt;40</li>
+  </ul>
+</div>
+<div class="cols" aria-hidden="true"><span></span><span>里程</span><span>最新實測</span><span id="h0">預測</span><span id="h1"></span><span id="h2"></span></div>
+<ol class="road" id="road" aria-label="各偵測器的車速與預測"></ol>
+<div class="note">
+  <p>單位 km/h。每格是那個時刻開始的 5 分鐘平均車速。高公局開放資料要晚幾分鐘才上傳，所以「最新實測」是幾分鐘前的路況；預測欄最上面標的是實際時刻，第一欄通常就是現在這 5 分鐘。</p>
+  <p>預測模型以聯邦學習＋差分隱私訓練，各偵測器的原始資料不離開本地。塞車時預測的回升通常比實際快，僅供參考，請以現場路況與官方資訊為準。</p>
+</div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+// 用顯示出來的整數判斷顏色，避免 79.6 顯示成 80 卻標成車多
+const cls = v => v == null ? "na" : Math.round(v) >= 80 ? "ok" : Math.round(v) >= 40 ? "slow" : "jam";
+const WORD = {ok: "順暢", slow: "車多", jam: "壅塞"};
+const REFRESH = 60, STEP = 5; // 每 60 秒問一次伺服器；伺服器每 5 分鐘更新
+const STALE_MIN = 20; // 和伺服器的 STALE_MIN 相同
+let data = null, filter = "all", failures = 0, shownExpired = false;
+
+function place(id) {
+  const m = /^VD-N(\d+)-([NS])-([\d.]+)-/.exec(id);
+  return m ? {name: `${(+m[3]).toFixed(1)}K`, sub: `國道${m[1]}號${m[2] == "N" ? "北" : "南"}向`, km: +m[3]} : {name: id, sub: "", km: 0};
+}
+function el(tag, cl, text) { const e = document.createElement(tag); if (cl) e.className = cl; if (text != null) e.textContent = text; return e; }
+function arrow(dir) {
+  const s = document.createElementNS(NS, "svg"); s.setAttribute("viewBox", "0 0 12 12"); s.setAttribute("aria-hidden", "true");
+  const p = document.createElementNS(NS, "path");
+  p.setAttribute("d", dir > 0 ? "M6 9.5V2.5M3 5.5l3-3 3 3" : "M6 2.5v7M3 6.5l3 3 3-3");
+  p.setAttribute("fill", "none"); p.setAttribute("stroke", "currentColor"); p.setAttribute("stroke-width", "1.6");
+  p.setAttribute("stroke-linecap", "round"); p.setAttribute("stroke-linejoin", "round");
+  s.appendChild(p); return s;
+}
+function worse(v) {
+  const last = v.preds[2]; if (!last || v.last_kmh == null) return false;
+  const order = {ok: 0, slow: 1, jam: 2};
+  return v.last_kmh - last.kmh >= 5 || order[cls(last.kmh)] > order[cls(v.last_kmh)];
+}
+const tw = s => new Date(s.replace(" ", "T") + ":00+08:00").getTime(); // "YYYY-MM-DD HH:MM" 台灣時間
+const hhmm = ms => new Date(ms).toLocaleTimeString("zh-TW", {hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Taipei"});
+function rel(at) { // 目標 5 分鐘時段相對於「真正的現在」
+  const start = tw(at), now = Date.now();
+  if (now >= start && now < start + 300000) return "現在這段";
+  const m = Math.round((start - now) / 60000);
+  return m > 0 ? `${m} 分後` : `${-m} 分前`;
+}
+function fcCell(p, base) {
+  const d = el("div", "fc " + (p ? cls(p.kmh) : "na"));
+  const b = el("b");
+  if (p) {
+    b.append(p.kmh.toFixed(0));
+    if (base != null && Math.abs(p.kmh - base) >= 3) b.appendChild(arrow(p.kmh > base ? 1 : -1));
+    d.title = `${p.time} 起 5 分鐘（${rel(p.at)}）：預測 ${p.kmh.toFixed(1)} km/h（${WORD[cls(p.kmh)]}）`;
+  } else b.textContent = "–";
+  d.appendChild(b); d.appendChild(el("small", "", p ? p.time : ""));
+  return d;
+}
+function heads(vds) {
+  const ref = vds.find(v => v.preds.length == 3);
+  ["h0", "h1", "h2"].forEach((id, i) => {
+    const h = $(id); h.replaceChildren();
+    if (ref) h.append(ref.preds[i].time, el("small", "", rel(ref.preds[i].at)));
+    else h.textContent = i ? "" : "預測";
+  });
+  return ref ? hhmm(tw(ref.preds[2].at) + 300000) : null;
+}
+function ageMin() { // 最新實測距離「真正的現在」幾分鐘；伺服器卡住時同一份回應也會隨時間變舊
+  const endMs = tw(data.end);
+  let obs = tw(data.end.slice(0, 11) + data.data_until); if (obs > endMs) obs -= 86400000; // 跨午夜
+  return Math.max(0, Math.round((Date.now() - obs) / 60000));
+}
+const expired = () => !!(data && data.end && (data.stale || ageMin() > STALE_MIN));
+function summarize(vds, until) {
+  const s = $("summary"); s.replaceChildren();
+  const b = t => el("b", "", t);
+  const have = vds.filter(v => v.last_kmh != null);
+  if (expired()) {
+    s.append(data.stale ? "開放資料停在 " : "預測已過期：資料停在 ", b(data.data_until), `，已經 ${ageMin()} 分鐘沒有新資料，所以先不預測。下面是最後一次的實測。`);
+  } else if (!have.length) { s.textContent = "目前抓不到任何偵測器的資料，可能是開放資料還沒更新，稍後會自動重試。"; }
+  if (!have.length || expired()) { $("f-worse").textContent = "可能變慢 0"; $("f-all").textContent = `全部路段 ${vds.length}`; return; }
+  const n = {ok: 0, slow: 0, jam: 0}; have.forEach(v => n[cls(v.last_kmh)]++);
+  if (n.slow + n.jam == 0) s.append("最新實測 ", b(`${have.length} 處都順暢`), "。");
+  else s.append("最新實測 ", b(`${n.ok} 處順暢`), n.slow ? `、${n.slow} 處車多` : "", n.jam ? `、${n.jam} 處壅塞` : "", "。");
+  const can = vds.filter(v => v.preds.length == 3), miss = vds.length - can.length, w = can.filter(worse);
+  if (!can.length) s.append("目前沒有路段的資料足夠做預測。");
+  else {
+    s.append(`到 ${until} 前，可預測的 ${can.length} 處中`);
+    if (!w.length) s.append("沒有路段明顯變慢");
+    else {
+      w.sort((a, c) => (c.last_kmh - c.preds[2].kmh) - (a.last_kmh - a.preds[2].kmh));
+      const top = w.slice(0, 2).map(v => `${place(v.vdid).name}（${v.last_kmh.toFixed(0)}→${v.preds[2].kmh.toFixed(0)}）`).join("、");
+      s.append(b(`${w.length} 處可能變慢`), `：${top}${w.length > 2 ? " 等" : ""}`);
+    }
+    s.append(miss ? `；另 ${miss} 處資料不足，無法判斷。` : "。");
+  }
+  $("f-worse").textContent = `可能變慢 ${w.length}`;
+  $("f-all").textContent = `全部路段 ${vds.length}`;
+}
+function render(fresh) {
+  const road = $("road"); road.replaceChildren(); road.classList.toggle("fresh", !!fresh);
+  if (!data || !data.vds) { road.appendChild(el("li", "empty", "第一次預測還在進行，大約 1 分鐘。")); return; }
+  shownExpired = expired();
+  // 過期就把預測拿掉：欄頭、摘要、篩選和每一格都不再給已經過去的預報
+  const vds = [...data.vds].map(v => shownExpired ? {...v, preds: []} : v).sort((a, b) => place(a.vdid).km - place(b.vdid).km);
+  const until = heads(vds);
+  summarize(vds, until);
+  const shown = filter == "worse" ? vds.filter(worse) : vds;
+  if (!shown.length) {
+    // 沒有可預測的路段時是「無法判斷」，不是「不會變慢」
+    const msg = shownExpired ? "預測已過期，目前無法判斷哪些路段可能變慢。"
+      : !vds.some(v => v.preds.length == 3) ? "目前沒有路段的資料足夠做預測，無法判斷哪些路段可能變慢。" : "目前沒有預計會變慢的路段。";
+    road.appendChild(el("li", "empty", msg)); return;
+  }
+  for (const v of shown) {
+    const p = place(v.vdid), c = cls(v.last_kmh);
+    const li = el("li", "stop " + c); li.title = v.vdid;
+    li.appendChild(el("span", "track"));
+    const w = el("div", "where"); w.append(el("b", "", p.name)); li.appendChild(w);
+    const now = el("div", "now " + c);
+    now.append(el("b", "", v.last_kmh == null ? "–" : v.last_kmh.toFixed(0)), el("small", "", v.last_time ? `${v.last_time} 起` : "沒有資料"));
+    li.appendChild(now);
+    const fcs = el("div", "fcs");
+    if (!v.preds.length) li.appendChild(el("div", "gap", shownExpired ? "資料太舊，先不預測" : "最近 1 小時資料有缺，這一處先不預測"));
+    else { [0, 1, 2].forEach(i => fcs.appendChild(fcCell(v.preds[i], v.last_kmh))); li.appendChild(fcs); }
+    const lastP = v.preds[v.preds.length - 1];
+    li.setAttribute("aria-label", `${p.name}，最新實測 ${v.last_kmh == null ? "沒有資料" : `${v.last_time} 起 ${v.last_kmh.toFixed(0)} 公里`}` +
+      (lastP ? `，預測 ${lastP.time} 起 ${lastP.kmh.toFixed(0)} 公里` : "，沒有預測"));
+    road.appendChild(li);
+  }
+}
+function tick() {
+  const live = $("live"), age = $("age");
+  if (!data || !data.end) return;
+  const endMs = tw(data.end), mins = ageMin();
+  age.textContent = `實測到 ${data.data_until}（${mins} 分鐘前）`;
+  const stale = expired();
+  if (stale != shownExpired) render(false);
+  live.className = "live" + (failures ? " down" : stale ? " stale" : "");
+  const sinceRun = Math.max(0, Math.round((Date.now() - endMs) / 60000));
+  $("next").textContent = failures ? "連不到伺服器，自動重試中" : stale ? "資料比平常舊，可能是開放資料延遲" : `約 ${Math.max(1, STEP - sinceRun)} 分鐘後更新`;
+  if (data.vds && !stale) heads([...data.vds]); // 「現在這段／幾分後」隨時間更新
+}
+async function load() {
+  try {
+    const r = await fetch("api/forecast", {cache: "no-store"});
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json(); failures = 0;
+    const changed = !data || d.end != data.end;
+    if (d.error && !d.vds) { $("summary").textContent = d.error; }
+    else { data = d; if (changed) render(true); }
+    const ban = $("banner");
+    if (d.error && d.vds) { ban.textContent = "這次更新失敗，先顯示上一次的預測：" + d.error; ban.hidden = false; } else ban.hidden = true;
+  } catch (e) {
+    failures++;
+    const ban = $("banner"); ban.textContent = "連不到伺服器，畫面是最後一次成功的資料；會自動重試。"; ban.hidden = false;
+  }
+  tick();
+}
+function setFilter(f) {
+  filter = f; $("f-all").setAttribute("aria-pressed", f == "all"); $("f-worse").setAttribute("aria-pressed", f == "worse"); render(false);
+}
+$("f-all").addEventListener("click", () => setFilter("all"));
+$("f-worse").addEventListener("click", () => setFilter("worse"));
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+load(); setInterval(load, REFRESH * 1000); setInterval(tick, 15000);
+</script>
+</body>
+</html>

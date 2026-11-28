@@ -1,0 +1,11 @@
+{
+  "regions": ["hnd1"],
+  "functions": { "api/forecast.py": { "maxDuration": 60, "excludeFiles": "{api/_lib/__pycache__/**}" } },
+  "headers": [
+    { "source": "/(.*)", "headers": [
+      { "key": "X-Content-Type-Options", "value": "nosniff" },
+      { "key": "Referrer-Policy", "value": "no-referrer" },
+      { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'" }
+    ]}
+  ]
+}
